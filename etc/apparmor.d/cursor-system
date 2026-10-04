@@ -1,0 +1,7 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile cursor-system /usr/share/cursor/cursor flags=(unconfined) {
+  userns,
+  include if exists <local/cursor-system>
+}

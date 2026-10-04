@@ -1,0 +1,7 @@
+[Unit]
+Description=DeepSeek review of new commits in strix-halo-lab (skips if no new commits or server down)
+RequiresMountsFor=/data
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/projects/strix-halo-lab/orchestrator/orch.py review %h/projects/strix-halo-lab

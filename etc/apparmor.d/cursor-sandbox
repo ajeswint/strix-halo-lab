@@ -1,0 +1,80 @@
+profile cursor_sandbox /usr/share/cursor/resources/app/resources/helpers/cursorsandbox {
+  capability dac_override,
+  file,
+  /** ix,
+
+  capability sys_admin,
+  capability net_admin,
+  capability chown,
+  capability setuid,
+  capability setgid,
+  capability setpcap,
+  network unix,
+  network inet stream,
+  network inet6 stream,
+  network netlink raw,
+
+  # Allow unconfined host processes (e.g. root running `kill`) to signal sandboxed processes.
+  signal (receive) peer=unconfined,
+
+  ## Uncomment this on AppArmor 4.0
+  #userns,
+
+  mount,
+  remount,
+  umount,
+
+  /usr/share/cursor/resources/app/resources/helpers/cursorsandbox mr,
+}
+
+profile cursor_sandbox_remote /home/*/.cursor-server/bin/*/*/resources/helpers/cursorsandbox {
+  file,
+  /** ix,
+
+  capability sys_admin,
+  capability net_admin,
+  capability chown,
+  capability setuid,
+  capability setgid,
+  capability setpcap,
+  network unix,
+  network inet stream,
+  network inet6 stream,
+  network netlink raw,
+  signal (receive) peer=unconfined,
+
+  ## Uncomment this on AppArmor 4.0
+  #userns,
+
+  mount,
+  remount,
+  umount,
+
+  /home/*/.cursor-server/bin/*/*/resources/helpers/cursorsandbox mr,
+}
+
+profile cursor_sandbox_agent_cli /home/*/.local/share/cursor-agent/versions/*/cursorsandbox {
+  file,
+  /** ix,
+
+  capability sys_admin,
+  capability net_admin,
+  capability chown,
+  capability setuid,
+  capability setgid,
+  capability setpcap,
+  network unix,
+  network inet stream,
+  network inet6 stream,
+  network netlink raw,
+  signal (receive) peer=unconfined,
+
+  ## Uncomment this on AppArmor 4.0
+  #userns,
+
+  mount,
+  remount,
+  umount,
+
+  /home/*/.local/share/cursor-agent/versions/*/cursorsandbox mr,
+}

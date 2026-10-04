@@ -1,0 +1,17 @@
+[Unit]
+Description=llama-server DeepSeek V4 Flash IQ2_M (HIP, 64k ctx, localhost:8080)
+After=network.target
+
+[Service]
+User=aj
+Environment=ROCBLAS_USE_HIPBLASLT=1
+ExecStart=/data/src/llama.cpp/build-hip/bin/llama-server \
+  -m /data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf \
+  --alias deepseek-v4-flash -ngl 999 -fa on -lm none \
+  -c 65536 -np 1 --cache-reuse 256 --slot-save-path /data/llama-slots \
+  --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

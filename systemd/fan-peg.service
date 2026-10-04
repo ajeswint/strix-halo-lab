@@ -1,0 +1,10 @@
+[Unit]
+Description=Set all Framework EC fans to 100% (at boot and after resume)
+After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/framework_tool --fansetduty 100
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

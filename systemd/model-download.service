@@ -1,0 +1,15 @@
+[Unit]
+Description=Resumable LLM model download to /data/models
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/data
+
+[Service]
+Type=simple
+User=aj
+ExecStart=/data/models/fetch.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
