@@ -97,8 +97,32 @@ t 2 'ionice --class 3 python3 x.py'
 t 2 'stdbuf --output L python3 x.py'
 t 2 'time --output f python3 x.py'
 t 0 'timeout --signal TERM 5 free -g'
+# added 2026-10-05: env -a/--argv0/-f/--file, script value flags, command-string scan
+t 2 'env --argv0 cat python3 x.py'
+t 2 'env -a cat python3 x.py'
+t 2 'env --file /tmp/e python3 x.py'
+t 2 "script --echo always -c 'python3 x.py' /tmp/t"
+t 2 "script -E always -c 'python3 x.py' /tmp/t"
+t 0 'script --log-io /tmp/l -q /tmp/t'
+t 2 "script -qc 'systemctl stop llama-deepseek' /tmp/t"
+t 0 "script -qc 'free -g' /tmp/t"
+t 2 'sudo -nu aj python3 x.py'
+t 2 'sudo -nu aj systemctl stop llama-deepseek'
+t 0 'script --log-io /tmp/l -c ls /tmp/t'
+t 2 "env -S 'systemctl stop llama-deepseek'"
+t 2 "env --split-string 'python3 x.py'"
+t 2 "env --split-string='python3 x.py'"
+t 2 "env -S'python3 x.py'"
+t 2 "script -c 'systemctl stop llama-deepseek' /tmp/t"
+t 2 "script --command='llama-bench -m m.gguf' /tmp/t"
+t 2 "script -qc 'python3 x.py' /tmp/t"
+t 0 "env -S 'ls -la'"
+t 0 "script -c 'free -g' /tmp/t"
 # documented gaps: tripwire, not sandbox. If one starts failing, the gap closed; move it up.
 t 0 'eval "systemctl stop llama-deepseek"'
+t 0 'systemd-run python3 x.py'
+t 0 "runuser -u aj -- python3 x.py"
+t 0 "su -c 'python3 x.py' aj"
 t 0 'echo llama-deepseek | xargs systemctl stop'
 t 0 'echo $(systemctl stop llama-deepseek)'
 

@@ -38,17 +38,34 @@ WRAPPERS = {
     "doas": {"-u", "-C"},
     "nohup": set(), "setsid": set(), "command": set(), "unbuffer": set(),
     "time": {"-f", "-o", "--format", "--output"},
-    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
+    # env here is uutils coreutils 0.10.0 (env --version); -f/--file is uutils-only.
+    # --block/default/ignore-signal take an optional =SIG only, so they need no entry.
+    "env": {"-u", "-C", "-S", "-a", "-f",
+            "--unset", "--chdir", "--split-string", "--argv0", "--file"},
     "nice": {"-n", "--adjustment"},
     "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "chrt": set(), "taskset": set(),
-    "script": {"-c", "--command"},
+    # util-linux 2.41.3 (script --help). -t takes an optional attached file only.
+    "script": {"-c", "-I", "-O", "-B", "-T", "-m", "-E", "-o",
+               "--command", "--log-in", "--log-out", "--log-io", "--log-timing",
+               "--logging-format", "--echo", "--output-limit"},
     "timeout": {"-k", "-s", "--kill-after", "--signal"},
 }
 # wrappers that take a positional before the program (taskset 3 cmd, chrt 10 cmd)
 POSITIONAL = {"taskset": 1, "chrt": 1, "timeout": 1}
+# wrapper flags whose argument is itself a command line: scan it, do not drop it
+CMD_FLAGS = {"env": ("-S", "--split-string"), "script": ("-c", "--command")}
+
+def cmd_arg(w, flag):
+    """For env -S/script -c in attached form (-S'cmd', --command=cmd) return the command."""
+    for f in CMD_FLAGS.get(w, ()):
+        if f.startswith("--") and flag.startswith(f + "="):
+            return flag[len(f) + 1:]
+        if not f.startswith("--") and flag.startswith(f) and len(flag) > len(f):
+            return flag[len(f):]
+    return None
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
@@ -65,8 +82,9 @@ PY_RE = re.compile(r"^python[0-9.]*$")
 def is_bench_script(tok):
     return tok.endswith(".sh") and ("bench/" in tok or os.path.basename(tok) in BENCH_SCRIPTS)
 
-def strip_prefix(toks):
-    """Drop VAR=val assignments and wrappers plus their flags, so the real program is toks[0]."""
+def strip_prefix(toks, depth=0):
+    """Drop VAR=val assignments and wrappers plus their flags, so the real program is toks[0].
+    Command-string arguments (env -S, script -c) are checked recursively."""
     while toks:
         t = toks[0]
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
@@ -76,8 +94,18 @@ def strip_prefix(toks):
             toks.pop(0)
             while toks and toks[0].startswith("-"):
                 flag = toks.pop(0)
+                # short-flag cluster ending in a value flag: sudo -nu aj, script -qc 'cmd'
+                if (re.match(r"^-[A-Za-z]{2,}$", flag) and "-" + flag[-1] in WRAPPERS[w]
+                        and not any("-" + c in WRAPPERS[w] for c in flag[1:-1])):
+                    flag = "-" + flag[-1]
                 if flag in WRAPPERS[w] and toks:
-                    toks.pop(0)
+                    arg = toks.pop(0)
+                    if flag in CMD_FLAGS.get(w, ()):
+                        check(arg, depth + 1)
+                else:
+                    attached = cmd_arg(w, flag)
+                    if attached is not None:
+                        check(attached, depth + 1)
             for _ in range(POSITIONAL.get(w, 0)):
                 if toks and not toks[0].startswith("-"):
                     toks.pop(0)
@@ -108,7 +136,7 @@ def check(cmd, depth=0):
             toks = shlex.split(seg, comments=True)
         except ValueError:
             toks = seg.split()
-        toks = strip_prefix(toks)
+        toks = strip_prefix(toks, depth)
         if not toks:
             continue
         first = os.path.basename(toks[0])
