@@ -4,8 +4,9 @@
 # Fails open: if mem_info_gtt_used cannot be read, GTT counts as 0 and the guard is off,
 # even with a model resident (same as the old exit when the service was down).
 # Armed while GTT used is above 16 GiB, i.e. while any model is resident. Then it denies
-# commands that can load a model, `systemctl start` of llama-deepseek, and commands that
-# would stop that service (CLAUDE.md: ask before stopping it).
+# commands that can load a model (incl. scripts/llm-serve.sh start), `systemctl start` of
+# llama-deepseek, and commands that would stop that service (CLAUDE.md: ask before
+# stopping it).
 # Mechanism of the 2026-10-04 OOM: a second model load beside DeepSeek (~85 GiB GTT).
 # The cutoff is GTT, not service state, because DeepSeek also loads outside the service
 # (bench/fanpeg-suite.sh, bench.sh), and a resident small model must block DeepSeek too.
@@ -19,7 +20,7 @@ set -u
 # see header). The python matcher applies the cutoff, so the matrix can test it.
 GUARD_GTT_USED=0
 for f in /sys/class/drm/card*/device/mem_info_gtt_used; do
-    read -r v < "$f" 2>/dev/null || continue
+    { read -r v < "$f"; } 2>/dev/null || continue
     [ "$v" -gt "$GUARD_GTT_USED" ] 2>/dev/null && GUARD_GTT_USED=$v
 done
 export GUARD_GTT_USED
@@ -97,6 +98,10 @@ PY_RE = re.compile(r"^python[0-9.]*$")
 def is_bench_script(tok):
     return tok.endswith(".sh") and ("bench/" in tok or os.path.basename(tok) in BENCH_SCRIPTS)
 
+def is_serve_start(toks):
+    """scripts/llm-serve.sh start ...: loads a model. stop/status/logs pass."""
+    return bool(toks) and os.path.basename(toks[0]) == "llm-serve.sh" and "start" in toks[1:2]
+
 def take_flags(w, flag, toks, depth):
     """Consume one option token of wrapper w the way getopt does. A value flag takes
     the rest of its own token (-uaj, -qc'cmd', --user=aj) or else the next token.
@@ -168,10 +173,10 @@ def check(cmd, depth=0):
                 if a.startswith("-") and "c" in a[1:] and i + 1 < len(rest):
                     check(rest[i + 1], depth + 1)
                     break
-            if rest and is_bench_script(rest[0]):
+            if rest and (is_bench_script(rest[0]) or is_serve_start(rest)):
                 deny(seg.strip())
             continue
-        if first in {"source", "."} and rest and is_bench_script(rest[0]):
+        if first in {"source", "."} and rest and (is_bench_script(rest[0]) or is_serve_start(rest)):
             deny(seg.strip())
 
         if first == "systemctl":
@@ -203,7 +208,7 @@ def check(cmd, depth=0):
             deny(seg.strip())
         if first.startswith("llama-"):
             deny(seg.strip())
-        if is_bench_script(toks[0]):
+        if is_bench_script(toks[0]) or is_serve_start(toks):
             deny(seg.strip())
 
 check(cmd)

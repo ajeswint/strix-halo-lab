@@ -11,6 +11,7 @@
 - Own errors plainly and correct forward.
 - Stay in this repo's scope (the Roadmap in README.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
 - Install the entire stack for a step first, then test. Never test one component while other installs are pending or running.
-- Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `free -g`, GTT used (`/sys/class/drm/card*/device/mem_info_gtt_used`), `systemctl is-active llama-deepseek`. Never load beside the DeepSeek server (~85 GiB GTT); ask before stopping it. If a check says not ready, stop. (2026-10-04 OOM incident, README Security.)
+- Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `scripts/preflight.sh` with the model path (`preflight` skill), right before the load. NOT READY = stop. Never load beside the DeepSeek server (~85 GiB GTT); ask before stopping it. (2026-10-04 OOM incident, README Security.)
+- Procedures live in `.claude/skills/` (preflight, llm-serve, bench, measure, orch-review, live-sync, torch-install, model-add, handoff). Use the skill instead of re-deriving the steps. When a procedure changes, amend its skill in the same commit.
 - After presenting options or a list, stop and wait for the user's choice.
 - History before 2026-10-04 lives in the archived ajeswint/strix-halo-setup repo.
