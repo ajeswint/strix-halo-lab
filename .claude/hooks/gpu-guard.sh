@@ -18,7 +18,8 @@ export GUARD_CMD
 # segment by its first real token after wrappers. Arguments (cat bench/bench.sh,
 # git diff -- x.py) are never matched. bash -c "..." is recursed into.
 # Known gaps: $(...) and backticks are not split; a new script name that wraps
-# python passes; eval and xargs are not followed. This is a tripwire, not a sandbox.
+# python passes; eval and xargs are not followed; a bare `kill <pid>` with no
+# "llama" or pgrep in the segment passes. This is a tripwire, not a sandbox.
 python3 - <<'PY'
 import os, re, shlex, sys
 
@@ -40,15 +41,21 @@ WRAPPERS = {
     "stdbuf": {"-i", "-o", "-e"},
     "chrt": set(), "taskset": set(),
     "script": {"-c"},
+    "timeout": {"-k", "-s"},
 }
 # wrappers that take a positional before the program (taskset 3 cmd, chrt 10 cmd)
-POSITIONAL = {"taskset": 1, "chrt": 1}
+POSITIONAL = {"taskset": 1, "chrt": 1, "timeout": 1}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
 # python scripts that talk to the live server or read results; they do not load a model
 ALLOWED_PY = ("bench/report.py", "orchestrator/orch.py")
 SERVICE_VERBS = {"stop", "restart", "try-restart", "kill", "reload-or-restart", "try-reload-or-restart"}
+# disable/mask only stop a running unit with --now; plain disable/mask affect next boot only
+NOW_VERBS = {"disable", "mask"}
+# Unit has Restart=on-failure: a SIGTERM that exits 0 stays down, and repeated SIGKILLs
+# hit the start limit (5 in 10 s) and leave it failed. Either way the hook goes idle.
+KILLERS = {"kill", "pkill", "killall"}
 PY_RE = re.compile(r"^python[0-9.]*$")
 
 def is_bench_script(tok):
@@ -116,7 +123,19 @@ def check(cmd, depth=0):
             deny(seg.strip())
 
         if first == "systemctl":
-            if any(a in SERVICE_VERBS for a in rest) and any(a.split(".service")[0] == "llama-deepseek" for a in rest):
+            # isolate stops every unit not wanted by the target; llama-deepseek is started
+            # by hand and not enabled, so isolate stops it without naming it
+            if "isolate" in rest:
+                deny(seg.strip())
+            names_unit = any(a.split(".service")[0] == "llama-deepseek" for a in rest)
+            if names_unit and any(a in SERVICE_VERBS for a in rest):
+                deny(seg.strip())
+            if names_unit and "--now" in rest and any(a in NOW_VERBS for a in rest):
+                deny(seg.strip())
+            continue
+
+        if first in KILLERS:
+            if any("llama" in a for a in rest) or "pgrep" in seg:
                 deny(seg.strip())
             continue
 
