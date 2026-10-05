@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse hook on Bash for the trainer and evaluator agents.
-# Denies commands that can load a model while llama-deepseek.service holds the GPU.
+# PreToolUse hook on Bash for the trainer, evaluator and systems agents.
+# Denies commands that can load a model while llama-deepseek.service holds the GPU,
+# and commands that would stop that service (which would also disarm this hook).
 # Mechanism of the 2026-10-04 OOM: a second model load beside DeepSeek (~85 GiB GTT).
 # Exit 2 blocks the call; any other exit allows it.
 set -u
@@ -25,12 +26,29 @@ cmd = os.environ.get("GUARD_CMD", "")
 if not cmd:
     sys.exit(0)
 
-WRAPPERS = {"sudo", "doas", "nohup", "time", "env", "nice", "ionice", "setsid", "exec", "stdbuf", "command", "chrt", "taskset", "unbuffer", "script"}
-# wrapper flags that take a separate argument (sudo -u aj, nice -n 10, env -u VAR)
-FLAG_WITH_ARG = {"-u", "-g", "-n", "-c", "-C", "-o", "-p", "-f", "-S", "-i"}
+# wrapper -> its flags that take a separate argument (sudo -u aj, nice -n 10, env -u VAR).
+# Per wrapper, because sudo -n and nice -n differ: sudo -n takes none, nice -n takes one.
+WRAPPERS = {
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"},
+    "doas": {"-u", "-C"},
+    "nohup": set(), "setsid": set(), "command": set(), "unbuffer": set(),
+    "time": {"-f", "-o"},
+    "env": {"-u", "-C", "-S"},
+    "nice": {"-n"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u"},
+    "exec": {"-a"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "chrt": set(), "taskset": set(),
+    "script": {"-c"},
+}
+# wrappers that take a positional before the program (taskset 3 cmd, chrt 10 cmd)
+POSITIONAL = {"taskset": 1, "chrt": 1}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
+# python scripts that talk to the live server or read results; they do not load a model
+ALLOWED_PY = ("bench/report.py", "orchestrator/orch.py")
+SERVICE_VERBS = {"stop", "restart", "try-restart", "kill", "reload-or-restart", "try-reload-or-restart"}
 PY_RE = re.compile(r"^python[0-9.]*$")
 
 def is_bench_script(tok):
@@ -42,13 +60,15 @@ def strip_prefix(toks):
         t = toks[0]
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
             toks.pop(0); continue
-        if os.path.basename(t) in WRAPPERS:
+        w = os.path.basename(t)
+        if w in WRAPPERS:
             toks.pop(0)
             while toks and toks[0].startswith("-"):
                 flag = toks.pop(0)
-                # env -i / time -v style flags take no arg; -u/-n/-c style take one.
-                # "sh -c" is handled by the caller before this; here -c means e.g. ionice -c 2.
-                if flag in FLAG_WITH_ARG and toks and flag not in {"-i"}:
+                if flag in WRAPPERS[w] and toks:
+                    toks.pop(0)
+            for _ in range(POSITIONAL.get(w, 0)):
+                if toks and not toks[0].startswith("-"):
                     toks.pop(0)
             continue
         break
@@ -62,7 +82,7 @@ def deny(reason):
         except OSError:
             pass
     sys.stderr.write(f"gpu-guard: llama-deepseek is active (GTT used: {gtt} bytes). "
-                     f"Refusing `{reason}`: it can load a model. Ask the user to stop the service first.\n")
+                     f"Refusing `{reason}`: it can load a model or disarm this guard. Report to the user and wait.\n")
     sys.exit(2)
 
 # Segment separators: || && ; | & and newline. Lone & covers `true & python3 x`;
@@ -95,8 +115,13 @@ def check(cmd, depth=0):
         if first in {"source", "."} and rest and is_bench_script(rest[0]):
             deny(seg.strip())
 
+        if first == "systemctl":
+            if any(a in SERVICE_VERBS for a in rest) and any(a.split(".service")[0] == "llama-deepseek" for a in rest):
+                deny(seg.strip())
+            continue
+
         if PY_RE.match(first):
-            if rest and rest[0].endswith("bench/report.py") and not any(a.endswith(".py") for a in rest[1:]):
+            if rest and rest[0].endswith(ALLOWED_PY) and not any(a.endswith(".py") for a in rest[1:]):
                 continue
             deny(seg.strip())
         if first.endswith(".py"):           # ./train_lora.py run by path via shebang
