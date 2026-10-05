@@ -29,19 +29,23 @@ if not cmd:
 
 # wrapper -> its flags that take a separate argument (sudo -u aj, nice -n 10, env -u VAR).
 # Per wrapper, because sudo -n and nice -n differ: sudo -n takes none, nice -n takes one.
+# Long forms must be listed too: `--flag value` is two tokens; `--flag=value` is one and
+# needs no entry.
 WRAPPERS = {
-    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"},
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U",
+             "--user", "--group", "--close-from", "--chdir", "--host", "--prompt",
+             "--role", "--type", "--command-timeout", "--other-user"},
     "doas": {"-u", "-C"},
     "nohup": set(), "setsid": set(), "command": set(), "unbuffer": set(),
-    "time": {"-f", "-o"},
-    "env": {"-u", "-C", "-S"},
-    "nice": {"-n"},
-    "ionice": {"-c", "-n", "-p", "-P", "-u"},
+    "time": {"-f", "-o", "--format", "--output"},
+    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
     "exec": {"-a"},
-    "stdbuf": {"-i", "-o", "-e"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "chrt": set(), "taskset": set(),
-    "script": {"-c"},
-    "timeout": {"-k", "-s"},
+    "script": {"-c", "--command"},
+    "timeout": {"-k", "-s", "--kill-after", "--signal"},
 }
 # wrappers that take a positional before the program (taskset 3 cmd, chrt 10 cmd)
 POSITIONAL = {"taskset": 1, "chrt": 1, "timeout": 1}
