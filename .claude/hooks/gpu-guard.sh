@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook on Bash for the trainer, evaluator and systems agents.
 # Not on the parent session: a decision recorded in README.md (Claude agents).
+# Fails open: if mem_info_gtt_used cannot be read, GTT counts as 0 and the guard is off,
+# even with a model resident (same as the old exit when the service was down).
 # Armed while GTT used is above 16 GiB, i.e. while any model is resident. Then it denies
 # commands that can load a model, `systemctl start` of llama-deepseek, and commands that
 # would stop that service (CLAUDE.md: ask before stopping it).
@@ -13,8 +15,8 @@
 # Exit 2 blocks the call; any other exit allows it.
 set -u
 
-# Real state, not a flag file. Highest card wins; unreadable counts as 0 (no amdgpu,
-# nothing on the GPU). The python matcher applies the cutoff, so the matrix can test it.
+# Real state, not a flag file. Highest card wins; unreadable counts as 0 (fail-open,
+# see header). The python matcher applies the cutoff, so the matrix can test it.
 GUARD_GTT_USED=0
 for f in /sys/class/drm/card*/device/mem_info_gtt_used; do
     read -r v < "$f" 2>/dev/null || continue
