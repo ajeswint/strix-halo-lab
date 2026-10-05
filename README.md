@@ -100,6 +100,31 @@ python3 orchestrator/orch.py runs
 
 First full review (run 2): 18,644 prompt tokens, 6,489 generated, 534 s. All three findings were false positives (rejected #1-#3 with reasons): the model judged `bench.sh`'s JSONL writer with `results.jsonl` omitted. Run 3 (two small commits, 5,313 prompt tokens, 415 s): 0 findings, but it missed a real doc error (this section claimed the timer was running). Only 138 tokens came from cache because README.md, which sits early in the prompt, changed in those commits. Every run so far used the full 6,144-token reasoning budget, so a review costs ~7 min of GPU regardless of diff size.
 
+## Small-model loop v0 (2026-10-05)
+
+`bench/loop/` (live copy `/data/bench/loop`): `tasks.py` holds 20 held-out Python tasks written for this set (spec, unit tests, reference solution); none was used for prompt iteration or as a few-shot example. `run.py --selftest` checks that every reference passes and an empty solution fails every task; a brute-force cross-check of the tie-break tasks (lis, knapsack, shortest_path) found 0 mismatches in 1,200 random cases. `run.py --label L -n 4` samples 4 candidates per task from `llm-8081` and grades them only by the tests, each candidate in bwrap (no network, read-only `/usr`, scratch dir only, 4 GiB address-space cap, 60 s timeout). Results go to `bench/loop/results/L.jsonl` (per sample, code included) and `L.summary.json`.
+
+Stated before the run (measure skill):
+- Question: does test-selected best-of-4 beat pass@1 for Qwen3.6-35B-A3B on loop-v0?
+- Metric: pass@1 = mean pass rate over all 80 samples, spread = min-max over the 4 seeds. best-of-4 = share of tasks where any of the 4 samples passes the tests (the tests pick the candidate, which is how the loop uses them).
+- Threshold: keep best-of-4 as the loop's default if it beats pass@1 by >= 10 points. If pass@1 >= 95%, the set is saturated and says nothing; it needs harder tasks before any keep/drop.
+- Fixed: Qwen3.6-35B-A3B UD-Q4_K_XL, Vulkan, `-c 65536 -np 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20, seeds 0-3, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests.
+
+Result, `qwen-vk-np4-2026-10-05` (preflight READY, served by `scripts/llm-serve.sh start qwen vk 65536 4`, stopped after):
+
+```
+question:  test-selected best-of-4 vs pass@1, Qwen3.6-35B-A3B, loop-v0 (20 tasks x 4 samples)
+pass@1:    86.25% (69/80)   per-seed spread 75% / 100% / 80% / 90%
+best-of-4: 100% (20/20)
+delta:     +13.75 points    threshold: >= 10   -> keep best-of-4 as the loop default
+```
+
+- Ceiling: best-of-4 hit 100%, so the delta is capped by the set, not the method. Not saturated on pass@1 (86% < 95%), but the next set needs harder tasks to measure best-of-N beyond 4 or to compare models.
+- Failures (11), each on a case the spec states: csv_split 3 (quoted `"x,y"` field: one MemoryError at the 4 GiB cap, one rejected as a stray quote; one lost the trailing empty field), eval_expr 2 (both `UnboundLocalError` on `pos`, a missing `nonlocal`), glob_match 2 (`[abc]x` vs `bx`: bracket classes broken), roman_to_int 1 (accepted "IIII"), parse_duration 1 (rejected "1h30m"), justify 1 (the textbook 16-wide example), knapsack 1 (spent all 12,288 tokens reasoning, no code block). Read from the per-sample `err`; no test or harness fault.
+- Reasoning budget: 36/80 samples ran past 8,192 completion tokens and passed 27/36 (75%); the other 44 passed 42/44 (95%). Correlation only: hard tasks both run long and fail more. Whether a bigger budget helps is a separate one-variable run.
+- Cost: 547,913 completion tokens, median 7,452 per sample, 4,585 s wall (76 min), ~120 t/s aggregate over 4 slots, median 246 s per sample. GTT 5.15 GiB before (another GPU client, not llama), peak 27.76 GiB: Qwen at 65k ctx / 4 slots is ~22.6 GiB.
+- Diversity: every passing solution is textually distinct after whitespace removal (weak measure; identifiers differ). A structural measure is needed before any self-training on these outputs.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
