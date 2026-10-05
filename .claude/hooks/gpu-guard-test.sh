@@ -118,11 +118,25 @@ t 2 "script --command='llama-bench -m m.gguf' /tmp/t"
 t 2 "script -qc 'python3 x.py' /tmp/t"
 t 0 "env -S 'ls -la'"
 t 0 "script -c 'free -g' /tmp/t"
+# added 2026-10-05: getopt-style glued values and clusters
+t 2 "script -qc'systemctl stop llama-deepseek' /tmp/t"
+t 2 "script -qc'python3 x.py' /tmp/t"
+t 0 "script -qc'free -g' /tmp/t"
+t 2 "env -iS'python3 x.py'"
+t 2 'env -iu X python3 x.py'
+t 2 'env -iuX python3 x.py'
+t 2 'sudo -uaj python3 x.py'
+t 2 'sudo --user=aj systemctl stop llama-deepseek'
+t 2 'nice -n10 python3 x.py'
+t 2 'timeout -k2 5 systemctl stop llama-deepseek'
+t 2 'timeout -sKILL 5 systemctl stop llama-deepseek'
 # documented gaps: tripwire, not sandbox. If one starts failing, the gap closed; move it up.
 t 0 'eval "systemctl stop llama-deepseek"'
 t 0 'systemd-run python3 x.py'
 t 0 "runuser -u aj -- python3 x.py"
 t 0 "su -c 'python3 x.py' aj"
+t 0 'flock /tmp/l python3 x.py'
+t 0 'strace -f python3 x.py'
 t 0 'echo llama-deepseek | xargs systemctl stop'
 t 0 'echo $(systemctl stop llama-deepseek)'
 

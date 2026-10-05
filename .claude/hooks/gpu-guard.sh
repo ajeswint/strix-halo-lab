@@ -19,7 +19,8 @@ export GUARD_CMD
 # git diff -- x.py) are never matched. bash -c "..." is recursed into.
 # Known gaps: $(...) and backticks are not split; a new script name that wraps
 # python passes; eval and xargs are not followed; a bare `kill <pid>` with no
-# "llama" or pgrep in the segment passes. This is a tripwire, not a sandbox.
+# "llama" or pgrep in the segment passes; programs not in WRAPPERS that run a
+# command (systemd-run, runuser, su -c, flock, strace) are not followed. This is a tripwire, not a sandbox.
 python3 - <<'PY'
 import os, re, shlex, sys
 
@@ -58,14 +59,6 @@ POSITIONAL = {"taskset": 1, "chrt": 1, "timeout": 1}
 # wrapper flags whose argument is itself a command line: scan it, do not drop it
 CMD_FLAGS = {"env": ("-S", "--split-string"), "script": ("-c", "--command")}
 
-def cmd_arg(w, flag):
-    """For env -S/script -c in attached form (-S'cmd', --command=cmd) return the command."""
-    for f in CMD_FLAGS.get(w, ()):
-        if f.startswith("--") and flag.startswith(f + "="):
-            return flag[len(f) + 1:]
-        if not f.startswith("--") and flag.startswith(f) and len(flag) > len(f):
-            return flag[len(f):]
-    return None
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
@@ -82,6 +75,28 @@ PY_RE = re.compile(r"^python[0-9.]*$")
 def is_bench_script(tok):
     return tok.endswith(".sh") and ("bench/" in tok or os.path.basename(tok) in BENCH_SCRIPTS)
 
+def take_flags(w, flag, toks, depth):
+    """Consume one option token of wrapper w the way getopt does. A value flag takes
+    the rest of its own token (-uaj, -qc'cmd', --user=aj) or else the next token.
+    A short cluster is read left to right until the first value flag (-nu aj).
+    Values of command-string flags (env -S, script -c) are checked recursively."""
+    takes = WRAPPERS[w]
+    if flag.startswith("--"):
+        name, eq, val = flag.partition("=")
+        if not eq:
+            if name not in takes or not toks:
+                return
+            val = toks.pop(0)
+        if name in CMD_FLAGS.get(w, ()):
+            check(val, depth + 1)
+        return
+    for i, c in enumerate(flag[1:], 1):
+        if "-" + c in takes:
+            val = flag[i + 1:] or (toks.pop(0) if toks else "")
+            if "-" + c in CMD_FLAGS.get(w, ()):
+                check(val, depth + 1)
+            return
+
 def strip_prefix(toks, depth=0):
     """Drop VAR=val assignments and wrappers plus their flags, so the real program is toks[0].
     Command-string arguments (env -S, script -c) are checked recursively."""
@@ -93,19 +108,7 @@ def strip_prefix(toks, depth=0):
         if w in WRAPPERS:
             toks.pop(0)
             while toks and toks[0].startswith("-"):
-                flag = toks.pop(0)
-                # short-flag cluster ending in a value flag: sudo -nu aj, script -qc 'cmd'
-                if (re.match(r"^-[A-Za-z]{2,}$", flag) and "-" + flag[-1] in WRAPPERS[w]
-                        and not any("-" + c in WRAPPERS[w] for c in flag[1:-1])):
-                    flag = "-" + flag[-1]
-                if flag in WRAPPERS[w] and toks:
-                    arg = toks.pop(0)
-                    if flag in CMD_FLAGS.get(w, ()):
-                        check(arg, depth + 1)
-                else:
-                    attached = cmd_arg(w, flag)
-                    if attached is not None:
-                        check(attached, depth + 1)
+                take_flags(w, toks.pop(0), toks, depth)
             for _ in range(POSITIONAL.get(w, 0)):
                 if toks and not toks[0].startswith("-"):
                     toks.pop(0)
