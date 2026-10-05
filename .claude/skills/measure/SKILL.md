@@ -14,6 +14,7 @@ description: Protocol for any keep/drop decision based on numbers. Covers tuning
 3. **Metric and threshold**: what you count, and the delta that would justify keeping the change. Example: "keep if best-of-8 beats pass@1 by >= 10 points on the held-out set". State it before the run, never after.
 4. **n**: repetitions or tasks, enough for the delta to exceed run-to-run spread. llama-bench: `-r 3` minimum. Task evals: a held-out set of fixed size, named.
 5. **Cost**: GPU minutes, and whether DeepSeek must be unloaded. The user's yes covers this cost.
+6. **Commit 1-4 and the fixed settings before any GPU work** (before preflight and the server start), in their own commit with no results. The result cites that hash. Written down first but committed together with the results, the history cannot show the order (loop-v0, 1035d5e).
 
 ## During
 
@@ -23,7 +24,7 @@ description: Protocol for any keep/drop decision based on numbers. Covers tuning
 ## After (report format)
 
 ```
-question:  ...
+question:  ...          stated in: <hash of the pre-run commit>
 baseline:  <label/commit>   result: <value ± spread, n>
 change:    <label/commit>   result: <value ± spread, n>
 delta:     <abs and %>      threshold: <stated before>   -> keep | drop | inconclusive

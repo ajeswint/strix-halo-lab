@@ -8,8 +8,13 @@ Grading runs each candidate in bwrap: no network, read-only /usr, only a scratch
 writable, 4 GiB address-space cap, 60 s wall timeout. pass@1 = mean pass rate over all
 samples (unbiased for k=1); best-of-N = share of tasks where any sample passes, i.e. the
 tests pick the candidate (oracle selection, the loop's intended use of tests).
+
+GTT: a thread samples mem_info_gtt_used every 1 s while candidates are in flight and stores
+the maximum as gtt_peak_gib. The idle baseline is not measured here (the server is already
+loaded when run.py starts); pass preflight's pre-load gtt_used with --gtt-baseline to get
+gtt_baseline_gib and gtt_model_gib = peak - baseline in the summary.
 """
-import argparse, concurrent.futures as cf, json, os, re, resource, shutil, subprocess, sys, tempfile, time
+import argparse, concurrent.futures as cf, glob, json, os, re, resource, shutil, subprocess, sys, tempfile, threading, time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +31,27 @@ SUFFIX = ("\n\nAnswer with one complete Python 3 module in a single ```python co
 BWRAP = ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
          "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
          "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--setenv", "PATH", "/usr/bin"]
+
+
+def gtt_used():
+    with open(sorted(glob.glob("/sys/class/drm/card*/device/mem_info_gtt_used"))[0]) as f:
+        return int(f.read())
+
+
+class GttPeak(threading.Thread):
+    """Max of mem_info_gtt_used, sampled every `period` s until stop()."""
+    def __init__(self, period=1.0):
+        super().__init__(daemon=True)
+        self.period, self.peak, self._stop_ev = period, gtt_used(), threading.Event()
+
+    def run(self):
+        while not self._stop_ev.wait(self.period):
+            self.peak = max(self.peak, gtt_used())
+
+    def stop(self):
+        self._stop_ev.set(); self.join()
+        self.peak = max(self.peak, gtt_used())
+        return self.peak
 
 
 def _limits():
@@ -92,6 +118,7 @@ def main():
     ap.add_argument("--model", default="qwen3.6-35b-a3b")
     ap.add_argument("-n", type=int, default=4)
     ap.add_argument("--parallel", type=int, default=4, help="concurrent requests; match the server's -np")
+    ap.add_argument("--gtt-baseline", type=float, help="idle GTT used in GiB, from preflight before the server started")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
@@ -102,6 +129,7 @@ def main():
     jobs = [(t, s) for t in TASKS for s in range(a.n)]
     t0 = time.time()
     rows = []
+    gtt = GttPeak(); gtt.start()
 
     def one(job):
         t, seed = job
@@ -120,6 +148,7 @@ def main():
             print(f"{row['task']:24} seed={row['seed']} {'PASS' if row['passed'] else 'fail'} "
                   f"tok={row['completion_tokens']} {row['gen_s']}s", flush=True)
     wall = time.time() - t0
+    gtt_peak = gtt.stop() / (1 << 30)
 
     by_task = {}
     for r in rows:
@@ -138,7 +167,11 @@ def main():
         "finish_length": sum(r["finish"] == "length" for r in rows),
         "completion_tokens_total": sum(r["completion_tokens"] or 0 for r in rows),
         "wall_s": round(wall, 1),
+        "gtt_peak_gib": round(gtt_peak, 2),
     }
+    if a.gtt_baseline is not None:
+        summary["gtt_baseline_gib"] = a.gtt_baseline
+        summary["gtt_model_gib"] = round(gtt_peak - a.gtt_baseline, 2)
     with open(os.path.join(HERE, "results", f"{a.label}.summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(json.dumps({k: v for k, v in summary.items() if k not in ("per_task_passes", "distinct_passing_solutions")}, indent=1))
