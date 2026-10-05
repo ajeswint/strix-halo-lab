@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Matrix for gpu-guard.sh. Runs only the python matcher, so llama-deepseek is
-# simulated active regardless of its real state. Loads nothing; safe to run anytime.
+# Matrix for gpu-guard.sh. Runs only the python matcher with GTT used simulated
+# (default: DeepSeek's 86 GiB peak), regardless of real state. Loads nothing; safe to run anytime.
 # Usage: bash .claude/hooks/gpu-guard-test.sh
 set -u
 here=$(dirname "$0")
@@ -8,12 +8,40 @@ py=$(mktemp)
 trap 'rm -f "$py"' EXIT
 sed -n "/^python3 - <<'PY'$/,/^PY$/p" "$here/gpu-guard.sh" | sed '1d;$d' > "$py"
 
+GiB=$((1<<30))
+DEEPSEEK=$((86*GiB)); QWEN=22360456160; LAGUNA=20548085120; IDLE=$((GiB/2)); CUT=$((16*GiB))
+DS=/data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf
+
 fail=0; n=0
-t() {  # t <expected rc: 2 deny, 0 allow> <command>
+tg() {  # tg <expected rc: 2 deny, 0 allow> <GTT used bytes> <command>
     n=$((n+1))
-    GUARD_CMD="$2" python3 "$py" 2>/dev/null; rc=$?
-    if [ "$rc" != "$1" ]; then fail=$((fail+1)); printf 'FAIL want %s got %s: %s\n' "$1" "$rc" "$2"; fi
+    GUARD_GTT_USED="$2" GUARD_CMD="$3" python3 "$py" 2>/dev/null; rc=$?
+    if [ "$rc" != "$1" ]; then fail=$((fail+1)); printf 'FAIL want %s got %s (gtt %s): %s\n' "$1" "$rc" "$2" "$3"; fi
 }
+t() { tg "$1" "$DEEPSEEK" "$2"; }  # t <expected rc> <command>, with DeepSeek resident
+
+# GTT cutoff (added 2026-10-05): armed above 16 GiB, whichever model is resident
+tg 0 "$IDLE" 'llama-bench -m m.gguf'
+tg 0 "$IDLE" 'systemctl start llama-deepseek'
+tg 0 "$IDLE" "bash bench/fanpeg-suite.sh"
+tg 0 "$CUT" 'llama-server -m m.gguf'
+tg 0 0 'python3 train.py'
+tg 2 $((CUT+1)) 'llama-server -m m.gguf'
+tg 2 "$QWEN" 'systemctl start llama-deepseek'
+tg 2 "$QWEN" 'sudo systemctl start llama-deepseek.service'
+tg 2 "$LAGUNA" 'systemctl enable --now llama-deepseek'
+tg 2 "$LAGUNA" "llama-bench -m $DS"
+tg 2 "$QWEN" "bench/bench.sh x $DS"
+tg 2 "$QWEN" 'bash bench/fanpeg-suite.sh'
+tg 2 "$LAGUNA" 'llama-server -m /data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'
+tg 2 "$QWEN" 'llama-cli -m /data/models/Laguna-XS-2.1-Q4_K_M.gguf'
+tg 0 "$QWEN" 'python3 orchestrator/orch.py --task x'
+tg 0 "$QWEN" 'python3 bench/report.py'
+tg 0 "$QWEN" 'systemctl status llama-deepseek'
+# DeepSeek resident, run outside the service (fanpeg-suite.sh): same denies
+t 2 'systemctl start llama-deepseek'
+t 2 'systemctl enable --now llama-deepseek'
+t 0 'systemctl enable llama-deepseek'
 
 # model loaders
 t 2 'python3 train.py'

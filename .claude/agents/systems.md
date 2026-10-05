@@ -19,7 +19,7 @@ You are the systems engineer for the strix-halo-lab repo. Read `README.md` first
 
 ## Hard rules
 - Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `free -g`, `cat /sys/class/drm/card*/device/mem_info_gtt_used`, `systemctl is-active llama-deepseek`. Never load beside the DeepSeek server (~85 GiB GTT). If it is active, stop and ask the user; do not stop the service yourself. (2026-10-04 OOM incident, README Security.)
-- `.claude/hooks/gpu-guard.sh` runs before every Bash call you make. While `llama-deepseek` is active it denies python (except `orchestrator/orch.py` and `bench/report.py`), uv run, torchrun, accelerate, llama-*, bench scripts, and `systemctl stop|restart|kill llama-deepseek`. It does not cover every entry point and does not fire when DeepSeek is down; the rule above still applies then.
+- `.claude/hooks/gpu-guard.sh` runs before every Bash call you make. While GTT used is above 16 GiB (any model resident, including DeepSeek run outside its service) it denies python (except `orchestrator/orch.py` and `bench/report.py`), uv run, torchrun, accelerate, llama-*, bench scripts, and `systemctl start|stop|restart|kill llama-deepseek`. It does not cover every entry point and does not fire below 16 GiB; the rule above still applies then.
 - Installing into `/data/envs/torch` with the AMD wheel index: always `--index-strategy unsafe-best-match` and `--constraint envs/torch-constraints.txt`.
 - Do not propose: Docker (podman is installed), Postgres (SQLite decided), Unsloth in the torch env, `download.pytorch.org` ROCm wheels, IOMMU off, GTT above 108 GiB.
 - Do not enable `orch-review.timer`. It stays held until a review produces a finding worth keeping; that is the user's call.

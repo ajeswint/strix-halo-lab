@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # PreToolUse hook on Bash for the trainer, evaluator and systems agents.
-# Denies commands that can load a model while llama-deepseek.service holds the GPU,
-# and commands that would stop that service (which would also disarm this hook).
+# Not on the parent session: a decision recorded in README.md (Claude agents).
+# Armed while GTT used is above 16 GiB, i.e. while any model is resident. Then it denies
+# commands that can load a model, `systemctl start` of llama-deepseek, and commands that
+# would stop that service (CLAUDE.md: ask before stopping it).
 # Mechanism of the 2026-10-04 OOM: a second model load beside DeepSeek (~85 GiB GTT).
+# The cutoff is GTT, not service state, because DeepSeek also loads outside the service
+# (bench/fanpeg-suite.sh, bench.sh), and a resident small model must block DeepSeek too.
+# Sizes: idle ~0.5 GiB; Qwen 20.8, Laguna 19.1, DeepSeek 86 GiB peak; GTT total 108 GiB.
+# Qwen and Laguna cannot be resident together under this cutoff; revisit when a real run
+# needs both.
 # Exit 2 blocks the call; any other exit allows it.
 set -u
 
-# Only gate while DeepSeek actually holds the GPU. Real state, not a flag file.
-systemctl is-active --quiet llama-deepseek || exit 0
+# Real state, not a flag file. Highest card wins; unreadable counts as 0 (no amdgpu,
+# nothing on the GPU). The python matcher applies the cutoff, so the matrix can test it.
+GUARD_GTT_USED=0
+for f in /sys/class/drm/card*/device/mem_info_gtt_used; do
+    read -r v < "$f" 2>/dev/null || continue
+    [ "$v" -gt "$GUARD_GTT_USED" ] 2>/dev/null && GUARD_GTT_USED=$v
+done
+export GUARD_GTT_USED
 
 # Hook JSON arrives on stdin; the python script also arrives on stdin, so hand the
 # command over via the environment.
@@ -23,6 +36,12 @@ export GUARD_CMD
 # command (systemd-run, runuser, su -c, flock, strace) are not followed. This is a tripwire, not a sandbox.
 python3 - <<'PY'
 import os, re, shlex, sys
+
+# 16 GiB: above idle (~0.5 GiB), below the smallest installed model (Laguna, 19.1 GiB).
+GTT_CUTOFF = 16 * 2**30
+gtt = int(os.environ.get("GUARD_GTT_USED", "0") or 0)
+if gtt <= GTT_CUTOFF:
+    sys.exit(0)
 
 cmd = os.environ.get("GUARD_CMD", "")
 if not cmd:
@@ -64,9 +83,10 @@ LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
 # python scripts that talk to the live server or read results; they do not load a model
 ALLOWED_PY = ("bench/report.py", "orchestrator/orch.py")
-SERVICE_VERBS = {"stop", "restart", "try-restart", "kill", "reload-or-restart", "try-reload-or-restart"}
-# disable/mask only stop a running unit with --now; plain disable/mask affect next boot only
-NOW_VERBS = {"disable", "mask"}
+# start: a resident model plus DeepSeek is the 2026-10-04 OOM in reverse order
+SERVICE_VERBS = {"start", "stop", "restart", "try-restart", "kill", "reload-or-restart", "try-reload-or-restart"}
+# enable/disable/mask change the running unit only with --now; without it, next boot only
+NOW_VERBS = {"enable", "disable", "mask"}
 # Unit has Restart=on-failure: a SIGTERM that exits 0 stays down, and repeated SIGKILLs
 # hit the start limit (5 in 10 s) and leave it failed. Either way the hook goes idle.
 KILLERS = {"kill", "pkill", "killall"}
@@ -117,14 +137,9 @@ def strip_prefix(toks, depth=0):
     return toks
 
 def deny(reason):
-    gtt = "?"
-    for p in sorted(os.popen("ls /sys/class/drm/card*/device/mem_info_gtt_used 2>/dev/null").read().split()):
-        try:
-            gtt = open(p).read().strip(); break
-        except OSError:
-            pass
-    sys.stderr.write(f"gpu-guard: llama-deepseek is active (GTT used: {gtt} bytes). "
-                     f"Refusing `{reason}`: it can load a model or disarm this guard. Report to the user and wait.\n")
+    sys.stderr.write(f"gpu-guard: a model is resident (GTT used {gtt / 2**30:.1f} GiB > 16 GiB). "
+                     f"Refusing `{reason}`: it can load a second model or stop llama-deepseek. "
+                     f"Report to the user and wait.\n")
     sys.exit(2)
 
 # Segment separators: || && ; | & and newline. Lone & covers `true & python3 x`;
