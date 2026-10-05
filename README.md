@@ -125,6 +125,18 @@ delta:     +13.75 points    threshold: >= 10   -> keep best-of-4 as the loop def
 - Cost: 547,913 completion tokens, median 7,452 per sample, 4,585 s wall (76 min), ~120 t/s aggregate over 4 slots, median 246 s per sample. GTT 5.15 GiB before (another GPU client, not llama), peak 27.76 GiB: Qwen at 65k ctx / 4 slots is ~22.6 GiB.
 - Diversity: every passing solution is textually distinct after whitespace removal (weak measure; identifiers differ). A structural measure is needed before any self-training on these outputs.
 
+## Small-model loop v1: Qwen vs Laguna (2026-10-05)
+
+`bench/loop/tasks_v1.py`: 30 new tasks written after loop-v0 hit best-of-4 = 100%: parsers with error cases (regex subset, strict JSON, UTF-8 with maximal-subpart replacement, cron, polynomial expansion, exact rational expressions, boolean equivalence, ISO 8601 durations), exact tie-breaks (alien order, weighted intervals, word ladders) and performance limits. Most tests compare against a brute-force oracle inside the test on seeded random inputs. Where a stdlib call would solve the task (re, json, codecs, `bytes.decode`, eval), `_banned()` in run.py's test prelude rejects the solution. `run.py --selftest --set v1`: all 30 references pass, empty solutions fail all 30, and each banned shortcut tried was rejected. None of the tasks was used for prompt iteration or as a few-shot example.
+
+Stated before the run (measure skill step 6; this section is committed before any preflight, results empty):
+- Question: does Laguna XS 2.1 solve loop-v1 tasks that Qwen3.6-35B-A3B does not, enough to keep it as a second model in the loop with tests as referee?
+- Metric: per model, pass@1 (mean over 120 samples, per-seed spread) and best-of-4 (tasks with any passing sample). Per-task overlap at best-of-4: only Qwen, only Laguna, both, neither. Union best-of-4 = tasks solved by either.
+- Threshold: keep Laguna if union best-of-4 exceeds Qwen best-of-4 by >= 3 tasks (10 points of 30). Otherwise drop it from the loop. If Qwen best-of-4 is 30/30 the comparison is inconclusive, which means drop (and the set was not hard enough).
+- Harder than v0: counts as harder if Qwen pass@1 on v1 is below its v0 value, 86.25%.
+- Fixed for both models: Vulkan, `scripts/llm-serve.sh start <model> vk 65536 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20 (Qwen3's thinking-mode recommendation, also applied to Laguna so sampling is not a variable), seeds 0-3, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests, same prompt suffix. One model resident at a time: Qwen first, then Laguna. `--gtt-baseline` = the `gtt_used` printed by the preflight right before each start.
+- Cost: loop-v0 took 76 min for 80 samples; v1 is 120 samples per model on harder tasks, so an estimated 2-3 h per model.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.

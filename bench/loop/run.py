@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """loop-v0 runner: N samples per task from the :8081 server, graded only by unit tests.
 
-  run.py --selftest                 refs must pass, empty solutions must fail (tests have teeth)
+  run.py --selftest [--set v1]      refs must pass, empty solutions must fail (tests have teeth)
   run.py --label qwen-vk-np4 -n 4   generate + grade; writes results/<label>.jsonl and .summary.json
 
 Grading runs each candidate in bwrap: no network, read-only /usr, only a scratch dir
@@ -19,7 +19,39 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from tasks import TASKS  # noqa: E402
+import importlib  # noqa: E402
+
+SETS = {"v0": "tasks", "v1": "tasks_v1"}
+TASKS = []  # filled by load_set()
+
+
+def load_set(name):
+    global TASKS
+    TASKS = importlib.import_module(SETS[name]).TASKS
+    return TASKS
+
+
+# Prepended to every test file. _banned() fails the test if solution.py imports a listed
+# module, references a listed name (eval, exec...), or uses a listed attribute (.decode...).
+PRELUDE = '''import ast as _ast
+
+def _banned(mods=(), names=(), attrs=()):
+    _t = _ast.parse(open("solution.py").read())
+    for _n in _ast.walk(_t):
+        if isinstance(_n, _ast.Import):
+            _m = [a.name.split(".")[0] for a in _n.names]
+        elif isinstance(_n, _ast.ImportFrom):
+            _m = [(_n.module or "").split(".")[0]]
+        else:
+            _m = []
+        for _x in _m:
+            assert _x not in mods, "banned import " + _x
+        if isinstance(_n, _ast.Name):
+            assert _n.id not in names, "banned name " + _n.id
+        if isinstance(_n, _ast.Attribute):
+            assert _n.attr not in attrs, "banned attribute " + _n.attr
+
+'''
 
 API = "http://127.0.0.1:8081"
 # Sampling: Qwen3 thinking-mode recommendation (temperature 0.6, top_p 0.95, top_k 20).
@@ -64,7 +96,7 @@ def grade(code, tests, timeout=60):
         with open(os.path.join(d, "solution.py"), "w") as f:
             f.write(code)
         with open(os.path.join(d, "test_solution.py"), "w") as f:
-            f.write("from solution import *\n" + tests + "\n")
+            f.write(PRELUDE + "from solution import *\n" + tests + "\n")
         cmd = BWRAP + ["--bind", d, "/w", "--chdir", "/w", "python3", "-E", "-s", "test_solution.py"]
         try:
             p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -114,12 +146,14 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--set", default="v0", choices=sorted(SETS))
     ap.add_argument("--label")
     ap.add_argument("--model", default="qwen3.6-35b-a3b")
     ap.add_argument("-n", type=int, default=4)
     ap.add_argument("--parallel", type=int, default=4, help="concurrent requests; match the server's -np")
     ap.add_argument("--gtt-baseline", type=float, help="idle GTT used in GiB, from preflight before the server started")
     a = ap.parse_args()
+    load_set(a.set)
     if a.selftest:
         return selftest()
     if not a.label:
@@ -156,7 +190,7 @@ def main():
     per_seed = [sum(r["passed"] for r in rows if r["seed"] == s) / len(TASKS) for s in range(a.n)]
     norm = lambda c: re.sub(r"\s+", "", c or "")
     summary = {
-        "label": a.label, "model": a.model, "tasks": len(TASKS), "n": a.n, "sampling": SAMPLING,
+        "label": a.label, "set": a.set, "model": a.model, "tasks": len(TASKS), "n": a.n, "sampling": SAMPLING,
         "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS, "parallel": a.parallel,
         "pass_at_1": round(sum(r["passed"] for r in rows) / len(rows), 4),
         "pass_at_1_per_seed": [round(x, 4) for x in per_seed],
