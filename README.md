@@ -259,7 +259,7 @@ Result (run 2026-10-06; preflight READY at 5.5 GiB GTT used before the start, `l
 question:  does the loop beat early-stop best-of-16 on 30 unseen tasks?   stated in: 27e2be7
 baseline:  early-stop best-of-16 (qwen-v2-bo16es-vk-np4)   solved 23/30 (fresh seed)   1,733,092 completion tokens, 175 turns, 16,115 s
 change:    loop K=4 E=4 (qwen-v2-agent-k4e4-vk-np4)       solved 29/30 (fresh seed)     965,594 completion tokens,  97 turns, 10,016 s
-delta:     +6 tasks at 55.7% of the tokens, 62% of the wall time   threshold: +2 at <= 100%, or +0 at <= 75%   -> confirmed (both clauses met)
+delta:     +6 tasks at 55.7% of the tokens, 62% of the wall time   threshold: +2 at <= 100%, or +0 at <= 75%   -> confirmed (clause 1; clause 2 needs the same count)
 ```
 
 | Task | loop turns | passed at (episode, turn) | loop tokens | baseline |
@@ -279,8 +279,8 @@ delta:     +6 tasks at 55.7% of the tokens, 62% of the wall time   threshold: +2
 
 - Verdict by the stated threshold: confirmed. The loop is the default for Roadmap 2; early-stop best-of-N is the baseline it was measured against.
 - Feedback credit: of the 6 tasks only the loop solved, 4 passed on a feedback turn (turn > 0: int_eval, str_literal, xml_lite, tree_max_path) and 2 on the first turn of a later episode, i.e. a fresh sample with no feedback (min_cost_flow, best_rational). Counting only the 4 feedback wins (27 vs 23), the +2 clause still holds. Over all 29 solved tasks: 12 passed on a turn > 0, 17 on turn 0.
-- Same seed, different result: an episode's turn 0 uses the baseline's seed for that sample index (1000 + 10 x episode), with the same prompt. min_cost_flow (episode 2, seed 1020) and best_rational (episode 3, seed 1030) passed in the loop where the baseline's seed-1020 and seed-1030 samples failed. With 4 slots batching, llama.cpp sampling is not reproducible per seed, so those 2 count as independent draws.
-- No task was solved by the baseline and missed by the loop. The loop was slower to its first pass on earliest_order and iso_week (feedback turns cost as much as fresh samples).
+- Same seed, different result: an episode's turn 0 uses the baseline's seed for that sample index (1000 + 10 x episode), with the same prompt. min_cost_flow (episode 2, seed 1020) and best_rational (episode 3, seed 1030) passed in the loop where the baseline's seed-1020 and seed-1030 samples failed. Over all 44 matched turn-0 draws (same task, seed and prompt size), 5 disagree: those 2, b64_strict and shell_split at seed 1000 (loop passed; the baseline solved both on a later sample), and iso_week at seed 1020 (baseline passed; the loop solved it on a feedback turn). With 4 slots batching, llama.cpp sampling is not reproducible per seed, so turn-0 samples count as independent draws. The 4 feedback wins are not among the 5: their turn-0 samples failed in both runs.
+- No task was solved by the baseline and missed by the loop. The loop was slower to its first pass on earliest_order (8 -> 10 turns), iso_week (3 -> 9) and perfect_power (2 -> 3) (feedback turns cost as much as fresh samples).
 - Hard-coding check: visible passes = fresh passes in both runs (23 = 23, 29 = 29). `agent.py --regrade` on each JSONL gives the same counts. All 30 tasks have a fresh seed (no no_fresh).
 - Stops, loop: 44 episodes, 29 `pass`, 7 `max_turns`, 6 `repeat_error`, 2 `repeat_code`, no `task_budget`; 16 of 97 turns ended at the 12,288-token cap. Baseline: 175 single-turn episodes, 23 `pass`, 152 failed.
 - One run each on 30 tasks: no spread estimate. The 6-task gap is large next to v1's +2 on 12, and points the same way.
