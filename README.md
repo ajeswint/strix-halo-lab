@@ -209,12 +209,44 @@ Stated before the run (measure skill step 6; committed before the loop's preflig
 - Fixed settings, identical to the baseline: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4`, temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, prompt suffix from run.py, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL, one model resident. Loop seeds 1000 + 10 x episode + turn. 4 tasks in flight, episodes within a task sequential. `--gtt-baseline` = the preflight `gtt_used` before the start. Command: `bench/loop/agent.py --set v1 --tasks ... -k 4 -e 4 --label qwen-v1-weak12-agent-k4e4-vk-np4`.
 - Cost: at most 192 turns (~3.8 h at the baseline's rate); expected less, since an episode ends at the first green run. Runs after best-of-16 finishes, never beside it.
 
+Result (label `qwen-v1-weak12-agent-k4e4-vk-np4`, run 2026-10-06; preflight READY at 5.3 GiB GTT used before the start; `llm-8081` stopped after):
+
+```
+question:  does the feedback loop beat best-of-16 at <= its tokens?   stated in: 22fb4a4
+baseline:  best-of-16 (2b4045e)   solved 10/12 (fresh seed)   1,801,480 completion tokens, 192 samples
+change:    loop K=4 E=4           solved 12/12 (fresh seed)     354,128 completion tokens, 37 turns
+delta:     +2 tasks at 19.7% of the tokens   threshold: +2 at <= 100%, or +0 at <= 50%   -> keep (both clauses met)
+```
+
+| Task | turns | passed at (episode, turn) | tokens | best-of-16 tokens to first pass |
+|---|---|---|---|---|
+| regex_match | 5 | (1, 0) | 52,065 | unsolved (171,814 for 16) |
+| add_duration | 10 | (2, 3) | 92,399 | unsolved (143,099 for 16) |
+| json_parse | 2 | (0, 1) | 19,825 | 9,898 |
+| utf8_decode | 2 | (0, 1) | 19,429 | 10,096 |
+| cron_next | 6 | (1, 2) | 59,092 | 27,431 |
+| poly_expand | 3 | (0, 2) | 28,657 | 19,254 |
+| rational_eval | 1 | (0, 0) | 9,692 | 18,276 |
+| skyline | 2 | (0, 1) | 17,485 | 8,460 |
+| min_window_subseq | 1 | (0, 0) | 8,463 | 17,127 |
+| bool_equiv | 3 | (0, 2) | 28,756 | 19,789 |
+| count_digit | 1 | (0, 0) | 9,535 | 9,496 |
+| fraction_to_base | 1 | (0, 0) | 8,730 | 26,441 |
+
+- Verdict by the stated threshold: keep the loop over independent best-of-N. Limits on what it shows:
+  - regex_match passed on the first turn of episode 1, a fresh single-shot sample with no feedback. That is one independent draw passing where 16 earlier draws had not, so feedback gets no credit for it. Episode 0's 4 feedback turns fixed one crash and then failed on other stated cases.
+  - add_duration is the task feedback solved: episode 2, turn 4, after `ValueError` on `2026-02-28` handling and an `UnboundLocalError` were fed back. Its tests have fixed cases only (no fresh seed), so it was checked separately: the passing code matches the reference on 3,000 random valid and invalid inputs in the bwrap sandbox (seed 777). No hard-coding.
+  - Most of the token saving is the early stop, not the feedback. A sequential best-of-16 that stops at the first pass would have used 481,181 tokens and solved 10; the loop used 26% fewer and solved 12. On 6 of the 10 easy tasks the loop's first pass came later than best-of-16's, because a feedback turn costs as much as a fresh sample.
+  - One run on 12 tasks, so the +2 has no spread estimate. Confirmation belongs on tasks the loop has not seen.
+- Hard-coding check: visible passes 12 = fresh passes 12 (11 with a fresh seed, add_duration by the reference comparison above). Stops: 13 episodes, 12 `pass`, 2 `max_turns`, 1 `repeat_code`, 1 `repeat_error`, no `task_budget`.
+- Cost: 3,955 s (66 min) wall, `gtt_model_gib` 22.99 (peak 28.29).
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
 2. Small-model agentic loop: Qwen3.6-35B-A3B in a reason -> act -> observe -> retry cycle with hard feedback, not single-shot sampling.
    - Done: best-of-N harness, `bench/loop/run.py` (loop-v0 1035d5e: best-of-4 kept; loop-v1 10fc559: Laguna as a second sampler dropped). It samples independently and never shows the model its test failure, so it is the baseline, not the loop.
-   - Next: `bench/loop/agent.py`, one model. Action at first is submitting `solution.py`; the harness runs the tests in bwrap and feeds the failure back. Critic = tests and compiler, which the model cannot write to (bwrap, `_banned()`). Context per turn: task + current code + latest failure, no chat history (fits a 16k slot). Brakes: max K turns, a token budget per task, stop on a repeated error or code hash. Final grade on a fresh oracle seed the loop never saw, so hard-coding a fed-back case does not count (27 of 30 v1 tasks have a single `random.seed(N)`; the other 3 are flagged).
+   - Kept 2026-10-06: `bench/loop/agent.py`, one model, K=4 E=4: 12/12 vs best-of-16 10/12 at 19.7% of the tokens (see the v1 agentic loop results; regex_match's pass was a fresh sample, not feedback). Next: confirm on tasks the loop has not seen, then a second small model in a role, each with its own pre-run commit. Design: Action at first is submitting `solution.py`; the harness runs the tests in bwrap and feeds the failure back. Critic = tests and compiler, which the model cannot write to (bwrap, `_banned()`). Context per turn: task + current code + latest failure, no chat history (fits a 16k slot). Brakes: max K turns, a token budget per task, stop on a repeated error or code hash. Final grade on a fresh oracle seed the loop never saw, so hard-coding a fed-back case does not count (27 of 30 v1 tasks have a single `random.seed(N)`; the other 3 are flagged).
    - Kept only if it beats independent best-of-N at equal tokens; K and the threshold go in its pre-run commit. Baseline: best-of-16 on the 12 weak v1 tasks (pre-run 52f0a05).
    - Later, each with its own pre-run commit: tools beyond submit-code; a second small model in a role (fixer or second sampler; two small models fit in GTT but need a deliberate change to the one-model guard); DeepSeek as judge only as a separate pass, since it cannot be resident beside Qwen (~85 + ~23 GiB = all 108 GiB of GTT). Tests outrank any judge.
 3. One timed LoRA job, kept only if it beats the base model on held-out tasks. Verdicts are not training pairs; a dataset has to be built. Risks: model collapse, bad judge.
