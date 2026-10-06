@@ -306,11 +306,12 @@ rule:      solved <= 26/30 -> v3 reserved for the next role/memory comparison; >
 verdict:   25 <= 26 -> v3 has room: 5 unsolved tasks. Reserved as the held-out set. Not a keep/drop.
 ```
 
-- Unsolved (all 16 turns used, 136,919-163,272 tokens each): forth_vm (13 turns), farthest_vertex (14), mod_sqrts (14), hist_calendar (13), billiard (13). A later arm needs +2 over 25, i.e. 27/30, to clear the same bar; 5 tasks of headroom leaves room for that, but see the noise note below.
+- Unsolved (all 4 episodes used, each stopping early on a repeated error, repeated code or the turn cap; 136,919-163,272 tokens each): forth_vm (13 turns), farthest_vertex (14), mod_sqrts (14), hist_calendar (13), billiard (13). Headroom is 5 tasks; this run sets no bar for a later arm (the next pre-run picks one; +2 here would mean 27/30).
 - Solved: 25. 15 on a cold turn (turn 0 of an episode; 14 of those on the very first turn), 10 on a feedback turn: url_normalize, sexpr_eval, mustache, proto_wire, rpn_infix, digit_kth, persistent_multiset, dlog, monthly_rule, root_digits. Slowest solves: sexpr_eval 12 turns, root_digits 11.
 - Hard-coding check: visible passes 25 = fresh passes 25; `agent.py --regrade` on the JSONL gives 25. All 30 tasks have a fresh seed (no no_fresh).
 - Stops, 52 episodes: 25 `pass`, 12 `max_turns`, 14 `repeat_error`, 1 `repeat_code`, no `task_budget`. 29 of 131 turns ended at the 12,288-token cap (22%; v2: 16 of 97).
-- One run, 30 tasks, no spread estimate. v2 showed 5 of 44 matched opening draws flipping under 4-slot batching (about 11%), so a v3 arm needs a larger bar than +2 or repeats on the sometimes-solved tasks.
+- One run, 30 tasks, no spread estimate. The ~11% opening-draw flip rate (5 of 44) is from the v2 pair, not a v3 measurement; whether +2 on 30 tasks is distinguishable from sampling noise is open, so the next pre-run states its bar (or repeats on sometimes-solved tasks) before its run.
+- Cap hits by task (29 of 131 turns): 24 are on the five unsolved tasks (farthest_vertex 9 of 14 turns, mod_sqrts 6 of 14, forth_vm 4 of 13, billiard 3 of 13, hist_calendar 2 of 13), 5 on solved tasks, none on a passing turn. A reasoning-budget arm can only move farthest_vertex and mod_sqrts, where most turns hit the cap, so it could add at most 2 tasks here.
 - Cost: 3.61 h GPU (estimate was 5-10 h; the 30-task runs cost 2.8-4.5 h so far); `gtt_model_gib` 22.74, peak 28.34 GiB. The run log (`/tmp/v3/run.log`) is buffered when stdout goes to a file; read the JSONL for progress.
 
 ## Roadmap (active)
