@@ -159,6 +159,22 @@ union:     28/30 = Qwen alone       delta: +0 tasks   threshold: >= +3   -> drop
 - `gtt_model_gib` (peak minus the preflight baseline): Qwen 22.65, Laguna 22.57, both at `-c 65536 -np 4`. Peaks 27.85 and 27.77 GiB.
 - Tokens and time: Qwen 1,023,491 completion tokens, 8,542 s (2.4 h), 4 samples hit `max_tokens`. Laguna 1,123,783 tokens, 7,523 s (2.1 h), 18 hit `max_tokens`. Median completion: Qwen 8,742, Laguna 8,856, so most samples on both models ran past the 8,192 reasoning budget. Next measurement: Qwen best-of-16 on the 12 v1 tasks it passed at most 2/4. A one-variable reasoning-budget run (Qwen only, its own pre-run commit) waits on that result.
 
+## Small-model loop v1: Qwen best-of-16 on the weak tasks (2026-10-05)
+
+Stated before the run (measure skill step 6; committed before any preflight, results empty):
+- Question: with 16 samples per task instead of 4, does Qwen3.6-35B-A3B solve add_duration and regex_match, the two v1 tasks nobody solved in 10fc559?
+- Tasks (12, every v1 task Qwen passed at most 2/4 in `qwen-v1-vk-np4-2026-10-05`): regex_match 0, add_duration 0, json_parse 1, cron_next 1, poly_expand 1, bool_equiv 1, fraction_to_base 1, utf8_decode 2, rational_eval 2, skyline 2, min_window_subseq 2, count_digit 2.
+- Samples: seeds 4-15 (12 new per task, 144 total), combined with seeds 0-3 from 10fc559 for best-of-16. The other 18 v1 tasks are already solved at 3-4/4 and are not rerun.
+- Metric: per task, passes out of 16 and finish reasons (`stop` with code vs `length` without code). Qwen best-of-16 on v1 = 28 + the number of the two unsolved tasks solved.
+- Reading, fixed now:
+  - Both solved: Qwen reaches 30/30 on v1, so this set has nothing left for a second model.
+  - Either way, a second model can add at most 2 v1 tasks, under the >= 3 bar from b9b211e; no new model is justified on v1.
+  - add_duration still unsolved: wrong code, not the cap (all 4 earlier samples stopped normally with code at 8,709-8,901 tokens).
+  - regex_match still unsolved: not proof Qwen cannot do it, since 3 of its 4 earlier samples hit the 12,288 cap with no code. That is the reasoning-budget run, Qwen only, with its own pre-run commit.
+  - The reasoning-budget run, Q8 and any coding-model search wait on this result. Laguna returns only if a later pre-run commit names it.
+- Fixed settings, identical to the Qwen v1 run: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests, same prompt suffix, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL. One model resident; one-model guard unchanged. `--gtt-baseline` = the preflight `gtt_used` right before the start. Runner: `bench/loop/run.py --set v1 --tasks ... --seed-start 4 -n 12` (4fbde71), label `qwen-v1-weak12-s4-15-vk-np4-2026-10-05`.
+- Cost: about 3 h (v1 Qwen averaged 71 s per sample over 120; these tasks run longer). DeepSeek is already inactive.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
