@@ -214,7 +214,7 @@ Result (label `qwen-v1-weak12-agent-k4e4-vk-np4`, run 2026-10-06; preflight READ
 ```
 question:  does the feedback loop beat best-of-16 at <= its tokens?   stated in: 22fb4a4
 baseline:  best-of-16 (2b4045e)   solved 10/12 (fresh seed)   1,801,480 completion tokens, 192 samples
-change:    loop K=4 E=4           solved 12/12 (fresh seed)     354,128 completion tokens, 37 turns
+change:    loop K=4 E=4           solved 12/12 (11 fresh seed + add_duration visible, no_fresh)     354,128 completion tokens, 37 turns
 delta:     +2 tasks at 19.7% of the tokens   threshold: +2 at <= 100%, or +0 at <= 50%   -> keep (both clauses met)
 ```
 
@@ -235,10 +235,10 @@ delta:     +2 tasks at 19.7% of the tokens   threshold: +2 at <= 100%, or +0 at 
 
 - Verdict by the stated threshold: keep the loop over independent best-of-N. Limits on what it shows:
   - regex_match passed on the first turn of episode 1, a fresh single-shot sample with no feedback. That is one independent draw passing where 16 earlier draws had not, so feedback gets no credit for it. Episode 0's 4 feedback turns fixed one crash and then failed on other stated cases.
-  - add_duration is the task feedback solved: episode 2, turn 4, after three fed-back failures: a duration-parse `ValueError`, a month clamp that dropped the time (`P1M` from `2026-01-31T10:00:00` gave `2026-02-28T00:00:00`), and an `UnboundLocalError`. Its tests have fixed cases only (no fresh seed), so it was checked separately: the passing code matches the reference on 3,000 random valid and invalid inputs in the bwrap sandbox (seed 777). No hard-coding.
+  - add_duration is the task feedback solved: episode 2, turn 4, after three fed-back failures: a duration-parse `ValueError`, a month clamp that dropped the time (`P1M` from `2026-01-31T10:00:00` gave `2026-02-28T00:00:00`), and an `UnboundLocalError`. Its tests have fixed cases only (no fresh seed), so it was checked separately: the passing code matches the reference on 3,000 random valid and invalid inputs in the bwrap sandbox (seed 777; `bench/loop/oracle_add_duration.py <result jsonl>` reruns it). No hard-coding.
   - Most of the token saving is the early stop, not the feedback. A sequential best-of-16 that stops at the first pass would have used 481,181 tokens and solved 10; the loop used 26% fewer and solved 12. On 6 of the 10 easy tasks the loop's first pass came later than best-of-16's, because a feedback turn costs as much as a fresh sample.
   - One run on 12 tasks, so the +2 has no spread estimate. Confirmation belongs on tasks the loop has not seen.
-- Hard-coding check: visible passes 12 = fresh passes 12 (11 with a fresh seed, add_duration by the reference comparison above). Stops: 13 episodes, 12 `pass`, 2 `max_turns`, 1 `repeat_code`, 1 `repeat_error`, no `task_budget`.
+- Hard-coding check: visible passes 12 = fresh passes 12 (11 with a fresh seed, add_duration by the reference comparison above). Stops: 16 episodes, 12 `pass`, 2 `max_turns`, 1 `repeat_code`, 1 `repeat_error`, no `task_budget`.
 - Cost: 3,955 s (66 min) wall, `gtt_model_gib` 22.99 (peak 28.29).
 
 ## Roadmap (active)
