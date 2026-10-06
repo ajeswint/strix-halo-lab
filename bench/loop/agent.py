@@ -4,6 +4,8 @@
   agent.py --selftest [--set v1]                       loop logic against a scripted fake model; no server
   agent.py --label L --set v1 --tasks id,id -k 4 -e 4  run against the :8081 server
   agent.py --regrade results/X.jsonl --set v1          fresh-seed regrade of a run.py result file
+  agent.py --label L --set v3 --tasks id,id --fix-from results/X.jsonl -k 4 -e 2 --model M
+                                                       fix mode: start every episode from a stored failure
 
 One model, one action: write solution.py. The critic is the test file, run in run.py's
 bwrap sandbox; the model never writes to it. Each turn is a fresh single message
@@ -13,6 +15,12 @@ Brakes per episode: at most K turns; stop when the tests pass, when an error mes
 repeats, or when the model resubmits code it already tried. Per task: at most E episodes
 run one after another, stopping at the first episode whose code passes the tests, or
 when the task's completion tokens reach --task-budget.
+
+Fix mode (--fix-from): a second model, or the same one, repairs a failure an earlier run left. Each
+episode starts at turn 0 from the stored failure (the last code block and its test error from that
+run's JSONL) instead of the bare task; the stored code counts as already tried for the repeat-code
+stop, the stored error as the previous error for the repeat-error stop. Everything else is the loop
+above: grading, fresh seed, stops, budget. Sampling seeds are FIX_SEED_BASE + 10 x episode + turn.
 
 Fresh seed: the model sees failures from the tests' own random.seed(N). The episode's
 final passing code is re-graded with that line replaced by random.seed(FRESH_SEED), a seed
@@ -28,6 +36,7 @@ sys.path.insert(0, HERE)
 import run  # noqa: E402  grade, extract, ask, load_set, GttPeak, sampling constants
 
 FRESH_SEED = 104729
+FIX_SEED_BASE = 2000   # fix-mode sampling seeds; disjoint from run.py's 0-15 and the loop's 1000-1033
 SEED_RE = re.compile(r"^random\.seed\(\d+\)$", re.M)
 
 
@@ -56,12 +65,29 @@ def turn_prompt(task_prompt, code, err):
             "Find the cause and write a corrected complete module.")
 
 
-def episode(task, ep, k, ask):
-    """Up to k turns. Returns (turn rows, stop reason)."""
-    code = err = None
+def stored_failure(path, task_id):
+    """(code, err) of the last turn of task_id in a loop jsonl that has a code block; it must have failed."""
+    last = None
+    for line in open(path):
+        r = json.loads(line)
+        if r["task"] == task_id and r["code"] is not None:
+            last = r
+    if last is None:
+        raise SystemExit(f"{path}: no turn with code for {task_id}")
+    if last["passed"]:
+        raise SystemExit(f"{path}: the last coded turn of {task_id} passed; it is not a stored failure")
+    return last["code"], last["err"]
+
+
+def episode(task, ep, k, ask, start=None):
+    """Up to k turns. start = (code, err) of a stored failure (fix mode). Returns (turn rows, stop reason)."""
+    code, err = start if start else (None, None)
     seen_code, rows = set(), []
+    if code is not None:
+        seen_code.add(hashlib.sha256(code.encode()).hexdigest())
+    seed0 = FIX_SEED_BASE if start else 1000   # loop seeds are disjoint from run.py's 0-15
     for turn in range(k):
-        seed = 1000 + ep * 10 + turn   # disjoint from run.py's seeds 0-15
+        seed = seed0 + ep * 10 + turn
         r = ask(turn_prompt(task["prompt"], code, err), seed)
         new = run.extract(r["content"])
         passed, new_err = run.grade(new, task["tests"]) if new else (False, "no code block")
@@ -83,13 +109,13 @@ def episode(task, ep, k, ask):
     return rows, "max_turns"
 
 
-def solve_task(task, k, e, budget, ask):
+def solve_task(task, k, e, budget, ask, start=None):
     rows, eps, tokens = [], [], 0
     for ep in range(e):
         if tokens >= budget:
             eps.append({"episode": ep, "stop": "task_budget"})
             break
-        er, stop = episode(task, ep, k, ask)
+        er, stop = episode(task, ep, k, ask, start)
         rows += er
         tokens += sum(r["completion_tokens"] or 0 for r in er)
         rec = {"episode": ep, "turns": len(er), "stop": stop, "tokens": sum(r["completion_tokens"] or 0 for r in er)}
@@ -177,6 +203,36 @@ def selftest():
     # 5. task budget stops new episodes
     rows, s = solve_task(t, 1, 4, 150, fake([bad, bad, bad, bad]))
     check("task budget stops after 2 episodes", s["turns"] == 2 and s["episodes"][-1]["stop"] == "task_budget")
+    # 6. fix mode: every episode starts from the stored failure, not the bare task; the stored code counts as tried
+    stored = (run.extract(f"```python\n{bad}\n```"), "AssertionError: stored failure marker")   # code as stored: extracted
+    rows, s = solve_task(t, 4, 2, 10**9, fake([t["ref"]]), stored)
+    check("fix mode: turn 0 prompt carries stored code and error",
+          stored[0].strip() in fake.prompts[0] and "stored failure marker" in fake.prompts[0]
+          and "failed the tests" in fake.prompts[0] and s["solved"] and s["turns"] == 1)
+    rows, s = solve_task(t, 4, 2, 10**9, fake([bad, t["ref"]]), stored)
+    check("fix mode: resubmitting the stored code ends episode 0; episode 1 restarts from the stored failure",
+          s["episodes"][0]["stop"] == "repeat_code" and s["solved"] and fake.prompts[1] == fake.prompts[0]
+          and fake.prompts[1] != t["prompt"])
+    check("fix mode: seeds 2000 + 10 x episode + turn", [r["seed"] for r in rows] == [2000, 2010])
+    rows, s = solve_task(t, 4, 1, 10**9, fake([t["ref"]]))
+    check("loop mode keeps seeds 1000 + 10 x episode + turn", [r["seed"] for r in rows] == [1000])
+    # stored_failure reads the last coded turn of a task from a jsonl and refuses a passing one
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        fp = os.path.join(d, "x.jsonl")
+        with open(fp, "w") as f:
+            for r in ({"task": "a", "passed": False, "err": "e1", "code": "c1"},
+                      {"task": "a", "passed": False, "err": "no code block", "code": None},
+                      {"task": "b", "passed": False, "err": "eb", "code": "cb"},
+                      {"task": "a", "passed": False, "err": "e2", "code": "c2"},
+                      {"task": "c", "passed": True, "err": "", "code": "cc"}):
+                f.write(json.dumps(r) + "\n")
+        check("stored_failure takes the last turn with code", stored_failure(fp, "a") == ("c2", "e2"))
+        try:
+            stored_failure(fp, "c"); passed_refused = False
+        except SystemExit:
+            passed_refused = True
+        check("stored_failure refuses a task whose last coded turn passed", passed_refused)
     print(f"selftest {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
 
@@ -195,8 +251,11 @@ def main():
                     help="completion tokens per task before no new episode starts (default: best-of-16 hard cap)")
     ap.add_argument("--parallel", type=int, default=4, help="tasks in flight; match the server's -np")
     ap.add_argument("--gtt-baseline", type=float)
+    ap.add_argument("--fix-from", metavar="JSONL", help="fix mode: start each episode from the stored failure of each task in this loop jsonl")
     a = ap.parse_args()
     run.load_set(a.set)
+    if a.fix_from and not a.tasks:
+        ap.error("--fix-from needs --tasks")
     if a.tasks:
         want = a.tasks.split(",")
         unknown = set(want) - {t["id"] for t in run.TASKS}
@@ -213,11 +272,12 @@ def main():
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     base = os.path.join(HERE, "results", a.label)
     ask = server_ask(a.model)
+    starts = {t["id"]: stored_failure(a.fix_from, t["id"]) for t in run.TASKS} if a.fix_from else {}
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
     tasks_out = []
     with open(base + ".jsonl", "w") as f, cf.ThreadPoolExecutor(a.parallel) as ex:
-        for rows, s in ex.map(lambda t: solve_task(t, a.k, a.e, a.task_budget, ask), run.TASKS):
+        for rows, s in ex.map(lambda t: solve_task(t, a.k, a.e, a.task_budget, ask, starts.get(t["id"])), run.TASKS):
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             f.flush()
@@ -228,6 +288,7 @@ def main():
     summary = {
         "label": a.label, "set": a.set, "model": a.model, "tasks": len(run.TASKS), "k": a.k, "e": a.e,
         "task_budget": a.task_budget, "fresh_seed": FRESH_SEED, "sampling": run.SAMPLING,
+        "fix_from": os.path.basename(a.fix_from) if a.fix_from else None,
         "reasoning_budget": run.REASONING_BUDGET, "max_tokens": run.MAX_TOKENS, "parallel": a.parallel,
         "solved": sum(s["solved"] for s in tasks_out), "visible_pass": sum(s["visible_pass"] for s in tasks_out),
         "completion_tokens_total": sum(s["completion_tokens"] for s in tasks_out),
