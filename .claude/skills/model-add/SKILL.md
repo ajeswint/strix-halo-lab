@@ -30,10 +30,10 @@ curl -s "https://huggingface.co/api/models/bartowski/Laguna-XS-2.1-GGUF/tree/mai
 - README Software state, Models row: repo, quant, size, sha256 prefix, date verified, purpose.
 - `scripts/llm-serve.sh` `case` entry with a short name and alias, if it will be served on :8081.
 - `.claude/hooks/gpu-guard.sh` header "Sizes" line, and a matrix case in `gpu-guard-test.sh` if the 16 GiB cutoff no longer sits below the smallest model.
-- `models/urls.txt` / `models/manifest.tsv` if `models/fetch.sh` should manage it; then run `live-sync`.
+- To have `models/fetch.sh` manage it, add a `files("repo", "prefix")` entry in its Python block. That script rewrites `manifest.tsv` on every run, and it does not read `urls.txt`. Then run `live-sync` so `/data/models/fetch.sh` matches.
 
 ## First load = smoke test
 Use the `preflight` skill, then `llm-serve` start, then one completion. Report load time, GTT used, pp/tg from one short request, and whether the chat template rendered (no raw special tokens in the output). Then the `bench` skill with a new label if it will be used seriously.
 
 ## Retiring
-Deleting a model file is destructive: ask first. Remove it from README, llm-serve and the guard comment in the same commit.
+Deleting a model file is destructive: ask first. Remove it from README, llm-serve, the guard comment, and the `files()` entry in `models/fetch.sh` if one was added, in the same commit.
