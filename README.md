@@ -178,7 +178,11 @@ Stated before the run (measure skill step 6; committed before any preflight, res
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
-2. Small-model loop: Qwen3.6-35B-A3B made strong via tools, tests and best-of-N, with DeepSeek as judge. Tests and compiler outrank the judge.
+2. Small-model agentic loop: Qwen3.6-35B-A3B in a reason -> act -> observe -> retry cycle with hard feedback, not single-shot sampling.
+   - Done: best-of-N harness, `bench/loop/run.py` (loop-v0 1035d5e: best-of-4 kept; loop-v1 10fc559: Laguna as a second sampler dropped). It samples independently and never shows the model its test failure, so it is the baseline, not the loop.
+   - Next: `bench/loop/agent.py`, one model. Action at first is submitting `solution.py`; the harness runs the tests in bwrap and feeds the failure back. Critic = tests and compiler, which the model cannot write to (bwrap, `_banned()`). Context per turn: task + current code + latest failure, no chat history (fits a 16k slot). Brakes: max K turns, a token budget per task, stop on a repeated error or code hash. Final grade on a fresh oracle seed the loop never saw, so hard-coding a fed-back case does not count (27 of 30 v1 tasks have a single `random.seed(N)`; the other 3 are flagged).
+   - Kept only if it beats independent best-of-N at equal tokens; K and the threshold go in its pre-run commit. Baseline: best-of-16 on the 12 weak v1 tasks (pre-run 52f0a05).
+   - Later, each with its own pre-run commit: tools beyond submit-code; a second small model in a role (fixer or second sampler; two small models fit in GTT but need a deliberate change to the one-model guard); DeepSeek as judge only as a separate pass, since it cannot be resident beside Qwen (~85 + ~23 GiB = all 108 GiB of GTT). Tests outrank any judge.
 3. One timed LoRA job, kept only if it beats the base model on held-out tasks. Verdicts are not training pairs; a dataset has to be built. Risks: model collapse, bad judge.
 4. DaVinci Resolve Studio in a container: davincibox chosen; licence type and install deferred.
 5. Server-class hardware research, criterion bandwidth per dollar with confirmed software support.
