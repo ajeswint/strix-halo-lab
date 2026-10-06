@@ -175,6 +175,17 @@ Stated before the run (measure skill step 6; committed before any preflight, res
 - Fixed settings, identical to the Qwen v1 run: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests, same prompt suffix, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL. One model resident; one-model guard unchanged. `--gtt-baseline` = the preflight `gtt_used` right before the start. Runner: `bench/loop/run.py --set v1 --tasks ... --seed-start 4 -n 12` (4fbde71), label `qwen-v1-weak12-s4-15-vk-np4-2026-10-05`.
 - Cost: about 3 h (v1 Qwen averaged 71 s per sample over 120; these tasks run longer). DeepSeek is already inactive.
 
+## Small-model loop v1: agentic loop vs best-of-16 on the weak tasks (pre-run)
+
+Stated before the run (measure skill step 6; committed before the loop's preflight, results empty):
+- Question: on the same 12 weak v1 tasks, does the feedback loop (`bench/loop/agent.py`, 685a33b: test failure fed back, up to K turns) solve more tasks than independent best-of-16 at no more tokens?
+- Baseline: best-of-16 = `qwen-v1-vk-np4-2026-10-05` seeds 0-3 + `qwen-v1-weak12-s4-15-vk-np4-2026-10-05` seeds 4-15 (pre-run 52f0a05). Baseline solved = tasks with any sample passing the fresh-seed regrade (`agent.py --regrade`); baseline tokens = completion tokens of all 192 samples.
+- Change: the loop, K = 4 turns per episode, E = 4 episodes per task (at most 16 turns, the same sample count as best-of-16), task budget 196,608 completion tokens (16 x 12,288). Solved = the episode's passing code also passes on `random.seed(104729)`, which no turn saw. add_duration has fixed cases only, so its fresh grade equals its visible grade (flagged no_fresh).
+- Threshold: keep the loop if it solves >= 2 more of the 12 than best-of-16 with total completion tokens <= best-of-16's, or the same number or more with <= 50% of best-of-16's tokens. Otherwise drop (best-of-N stays the loop default). If best-of-16 solves 11 or 12, the +2 clause cannot be met and only the token clause can keep the loop.
+- Also reported: per task turns and stop reasons (pass, repeat_code, repeat_error, max_turns, task_budget), visible-pass vs fresh-pass (hard-coding check), and tokens to first pass for both methods.
+- Fixed settings, identical to the baseline: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4`, temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, prompt suffix from run.py, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL, one model resident. Loop seeds 1000 + 10 x episode + turn. 4 tasks in flight, episodes within a task sequential. `--gtt-baseline` = the preflight `gtt_used` before the start. Command: `bench/loop/agent.py --set v1 --tasks ... -k 4 -e 4 --label qwen-v1-weak12-agent-k4e4-vk-np4`.
+- Cost: at most 192 turns (~3.8 h at the baseline's rate); expected less, since an episode ends at the first green run. Runs after best-of-16 finishes, never beside it.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
