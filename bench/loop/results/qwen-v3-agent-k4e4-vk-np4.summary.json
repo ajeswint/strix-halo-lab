@@ -1,0 +1,715 @@
+{
+ "label": "qwen-v3-agent-k4e4-vk-np4",
+ "set": "v3",
+ "model": "qwen3.6-35b-a3b",
+ "tasks": 30,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 25,
+ "visible_pass": 25,
+ "completion_tokens_total": 1398114,
+ "turns_total": 131,
+ "wall_s": 13002.0,
+ "gtt_peak_gib": 28.34,
+ "per_task": [
+  {
+   "task": "v3_01_ini_interp",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9086,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9086,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_02_forth_vm",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43126
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 43645
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 22695
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 31583
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 141049,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_03_url_normalize",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19560,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19560,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_04_md_table",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8953,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8953,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_05_sexpr_eval",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 33890
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44031
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 21954
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 31657,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 12,
+   "completion_tokens": 131532,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_06_mustache",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 28956,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 28956,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_07_proto_wire",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 17960,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 17960,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_08_strftime",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 10052,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 10052,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_09_rpn_infix",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 28149,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 28149,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_10_bencode",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9471,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9471,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_11_bridges_2ecc",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8934,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8934,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_12_min_cut",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9187,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9187,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_13_farthest_vertex",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46115
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 48437
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19568
+    }
+   ],
+   "turns": 14,
+   "completion_tokens": 163272,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_14_route_lex",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9233,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9233,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_15_digit_kth",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 33334
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 20871,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 5,
+   "completion_tokens": 54205,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_16_persistent_multiset",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19005,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19005,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_17_path_max_edge",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9690,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9690,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_18_steiner_tree",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9626,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9626,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_19_min_mean_cycle",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9362,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9362,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_20_tree_iso_classes",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 36819
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8845,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 5,
+   "completion_tokens": 45664,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_21_mod_sqrts",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 47187
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44715
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 22718
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 45848
+    }
+   ],
+   "turns": 14,
+   "completion_tokens": 160468,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_22_dlog",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 31323,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 31323,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_23_pell",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9297,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9297,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_24_clip_area",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9048,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9048,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_25_hist_calendar",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42348
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19139
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 33764
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41668
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 136919,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_26_apportion",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 10203,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 10203,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_27_lp2d",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 11126,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 11126,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_28_monthly_rule",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19906,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19906,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_29_root_digits",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 33957
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 42510
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "pass",
+     "tokens": 46497,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 11,
+   "completion_tokens": 122964,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_30_billiard",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 45467
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 34252
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19512
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44683
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 143914,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 5.6,
+ "gtt_model_gib": 22.74
+}

@@ -297,6 +297,22 @@ Stated before the run (measure skill step 6; committed before the preflight, res
 - Fixed settings, as v2: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4`, temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, prompt suffix from run.py, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL, one model resident, `--parallel 4`. Seeds 1000 + 10 x episode + turn. `--gtt-baseline` = the preflight `gtt_used` before the start. v3 prompts are up to 2,859 chars (v2: 2,031), so a late feedback turn with long code can reach the 16k slot end before 12,288 tokens; same slot as v2, recorded via `finish`.
 - Cost: at most 480 turns (~5.9M tokens). At v2's loop rate (~413 s per turn per slot), 5-10 h if tasks average 8-16 turns; ceiling ~14 h. One run, no baseline arm.
 
+Result (run 2026-10-06 13:54-17:31; preflight READY at 5.6 GiB GTT used before the start, `llama-deepseek` inactive; `llm-8081` stopped after, GTT 5.8 GiB). This is also the v3 loop-alone baseline arm: a later role or memory arm on v3 compares against it and does not rerun it.
+
+```
+question:  does loop K=4 E=4 leave room on v3?   stated in: 99f919a
+arm:       loop K=4 E=4 (qwen-v3-agent-k4e4-vk-np4)   solved 25/30 (fresh seed)   1,398,114 completion tokens, 131 turns, 13,002 s (3.61 h)
+rule:      solved <= 26/30 -> v3 reserved for the next role/memory comparison; >= 27/30 -> v3 too easy, write v4
+verdict:   25 <= 26 -> v3 has room: 5 unsolved tasks. Reserved as the held-out set. Not a keep/drop.
+```
+
+- Unsolved (all 16 turns used, 136,919-163,272 tokens each): forth_vm (13 turns), farthest_vertex (14), mod_sqrts (14), hist_calendar (13), billiard (13). A later arm needs +2 over 25, i.e. 27/30, to clear the same bar; 5 tasks of headroom leaves room for that, but see the noise note below.
+- Solved: 25. 15 on a cold turn (turn 0 of an episode; 14 of those on the very first turn), 10 on a feedback turn: url_normalize, sexpr_eval, mustache, proto_wire, rpn_infix, digit_kth, persistent_multiset, dlog, monthly_rule, root_digits. Slowest solves: sexpr_eval 12 turns, root_digits 11.
+- Hard-coding check: visible passes 25 = fresh passes 25; `agent.py --regrade` on the JSONL gives 25. All 30 tasks have a fresh seed (no no_fresh).
+- Stops, 52 episodes: 25 `pass`, 12 `max_turns`, 14 `repeat_error`, 1 `repeat_code`, no `task_budget`. 29 of 131 turns ended at the 12,288-token cap (22%; v2: 16 of 97).
+- One run, 30 tasks, no spread estimate. v2 showed 5 of 44 matched opening draws flipping under 4-slot batching (about 11%), so a v3 arm needs a larger bar than +2 or repeats on the sometimes-solved tasks.
+- Cost: 3.61 h GPU (estimate was 5-10 h; the 30-task runs cost 2.8-4.5 h so far); `gtt_model_gib` 22.74, peak 28.34 GiB. The run log (`/tmp/v3/run.log`) is buffered when stdout goes to a file; read the JSONL for progress.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
