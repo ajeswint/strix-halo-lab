@@ -1,13 +1,13 @@
 ---
 name: model-add
-description: Add a new GGUF model to /data/models with full validation (sha256 against the HF LFS oid, GGUF header parse, llama.cpp arch support), then register it in README, llm-serve, gpu-guard sizes and preflight. Use when downloading, replacing or retiring a model.
+description: Add a new GGUF model to /data/models with full validation (sha256 against the HF LFS oid, GGUF header parse, llama.cpp arch support), then register it in README, llm-serve, and the gpu-guard sizes line. Use when downloading, replacing or retiring a model.
 ---
 
 # Adding a model
 
 ## Decide first
 - Why this model: which roadmap item, and what it should beat. Check the licence on the model card and cite the URL.
-- Fit: file size + 16 GiB must be under ~107 GiB free GTT, alone. Anything over ~20 GiB means it cannot share the box with Qwen or Laguna.
+- Fit: file size + 16 GiB under ~107 GiB free GTT. One model at a time, any size. After the file is local, the `preflight` skill is the check.
 - Quant: prefer unsloth UD or bartowski quants that match the existing ones. Check the arch is supported by the built llama.cpp (`/data/src/llama.cpp` HEAD 836d57176). A new arch may need a rebuild, which is a separate step.
 
 ## Download

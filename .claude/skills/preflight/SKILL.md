@@ -23,7 +23,7 @@ No argument checks the box only. For split GGUFs pass shard 1; the script sums a
 
 One model at a time (2026-10-04 OOM, README Security): llama-deepseek inactive, no `llama-*` process, GTT used <= 16 GiB (gpu-guard's cutoff), and with a model given, MemAvailable and free GTT both >= model size + 16 GiB. The margin is a floor for KV cache and buffers, not a fit prediction.
 
-Reference sizes: idle ~0.5 GiB GTT; Qwen 20.8 GiB file; Laguna 19.1 file / 21.2 GiB GTT peak at 32k ctx; DeepSeek 84.7 file / ~86 GiB GTT peak at 64k ctx; GTT total 108 GiB.
+The script prints the live figures. Measured peaks live in the README; do not copy them here.
 
 ## Rules
 

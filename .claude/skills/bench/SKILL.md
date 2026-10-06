@@ -1,6 +1,6 @@
 ---
 name: bench
-description: Run llama-bench under Framework's fixed conditions with bench/bench.sh, summarise with bench/report.py, and compare against the README tables. Use for any throughput claim, backend choice, or tuning keep/drop decision.
+description: Run llama-bench under Framework's fixed conditions with bench/bench.sh, summarise with bench/report.py, and compare against the README tables. Use for throughput numbers and backend comparisons.
 ---
 
 # Benchmarks
@@ -24,7 +24,7 @@ Baseline to compare against: `t3-fan-qwen` and `t3-fan-dsv4-*` (README Benchmark
 
 ## Reading results
 
-- Report pp and tg per backend with ± stddev and n (`-r`). One run is not a result.
+- Report pp and tg per backend with ± stddev and n (`-r`). Keep/drop follows the `measure` skill.
 - Token generation is memory-bandwidth bound (~117 GB/s effective). A tg change of a few % from a power/clock knob is noise unless it repeats.
 - `fanpeg-suite.sh` is the cooling A/B suite (long, loads DeepSeek). Do not run it without a specific question it answers.
 - `post-reboot.sh <label>` is for after BIOS/kernel/cmdline changes only.

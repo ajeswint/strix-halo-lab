@@ -22,10 +22,10 @@ API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35
 
 ## Rules
 
-- One model at a time. Qwen and Laguna cannot both be resident (gpu-guard cutoff, user's decision). Switching = `stop`, then `start` the other.
-- Stop what you started when the task is done. A forgotten server holds ~21 GiB and blocks every other load.
+- One model at a time. `start` runs preflight and refuses while another model is resident. Switching = `stop`, then `start`.
+- Stop what you started when the task is done. A forgotten server stays resident and blocks every other load.
 - Backend default `vk` comes from the depth-0 table only (Vulkan tg +16% for Qwen, pp equal). At long prompts HIP may win. Measure before changing the default; see the `measure` skill.
 - Load time: start waits up to 180 s for `/health`. If it times out, read `logs` before retrying. Do not loop.
 - Laguna smoke-tested 2026-10-05 at the defaults: GTT peak 21.2 GiB, tg ~80 t/s. It is a reasoning model: give it a `max_tokens` well above the answer length (a 256 cap returned empty `content`), or cap thinking with `reasoning_budget_tokens` the way orch.py does.
 - Linger is on: a running `llm-8081` survives logout until stopped (it is transient, so not across a reboot). `stop` is required, not tidy-up.
-- New model or flags: edit the `case` in `scripts/llm-serve.sh` (systems agent) and add a gpu-guard matrix case if the entry point changes.
+- New model: the `model-add` skill (case, README, manifest, guard sizes). A new entry point also needs a gpu-guard matrix case.
