@@ -3,6 +3,7 @@
 
   run.py --selftest [--set v1]      refs must pass, empty solutions must fail (tests have teeth)
   run.py --label qwen-vk-np4 -n 4   generate + grade; writes results/<label>.jsonl and .summary.json
+  --tasks id,id --seed-start 4      subset of the set, seeds 4..4+n-1 (extends an earlier run)
 
 Grading runs each candidate in bwrap: no network, read-only /usr, only a scratch dir
 writable, 4 GiB address-space cap, 60 s wall timeout. pass@1 = mean pass rate over all
@@ -150,17 +151,26 @@ def main():
     ap.add_argument("--label")
     ap.add_argument("--model", default="qwen3.6-35b-a3b")
     ap.add_argument("-n", type=int, default=4)
+    ap.add_argument("--seed-start", type=int, default=0, help="seeds are seed-start .. seed-start+n-1")
+    ap.add_argument("--tasks", help="comma-separated task ids; default all tasks in the set")
     ap.add_argument("--parallel", type=int, default=4, help="concurrent requests; match the server's -np")
     ap.add_argument("--gtt-baseline", type=float, help="idle GTT used in GiB, from preflight before the server started")
     a = ap.parse_args()
     load_set(a.set)
+    if a.tasks:
+        want = a.tasks.split(",")
+        unknown = set(want) - {t["id"] for t in TASKS}
+        if unknown:
+            ap.error(f"unknown task ids: {sorted(unknown)}")
+        TASKS[:] = [t for t in TASKS if t["id"] in want]
     if a.selftest:
         return selftest()
     if not a.label:
         ap.error("--label required")
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     out = os.path.join(HERE, "results", f"{a.label}.jsonl")
-    jobs = [(t, s) for t in TASKS for s in range(a.n)]
+    seeds = range(a.seed_start, a.seed_start + a.n)
+    jobs = [(t, s) for t in TASKS for s in seeds]
     t0 = time.time()
     rows = []
     gtt = GttPeak(); gtt.start()
@@ -187,10 +197,10 @@ def main():
     by_task = {}
     for r in rows:
         by_task.setdefault(r["task"], []).append(r)
-    per_seed = [sum(r["passed"] for r in rows if r["seed"] == s) / len(TASKS) for s in range(a.n)]
+    per_seed = [sum(r["passed"] for r in rows if r["seed"] == s) / len(TASKS) for s in seeds]
     norm = lambda c: re.sub(r"\s+", "", c or "")
     summary = {
-        "label": a.label, "set": a.set, "model": a.model, "tasks": len(TASKS), "n": a.n, "sampling": SAMPLING,
+        "label": a.label, "set": a.set, "model": a.model, "tasks": len(TASKS), "n": a.n, "seeds": [seeds[0], seeds[-1]], "sampling": SAMPLING,
         "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS, "parallel": a.parallel,
         "pass_at_1": round(sum(r["passed"] for r in rows) / len(rows), 4),
         "pass_at_1_per_seed": [round(x, 4) for x in per_seed],
