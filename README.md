@@ -137,6 +137,28 @@ Stated before the run (measure skill step 6; this section is committed before an
 - Fixed for both models: Vulkan, `scripts/llm-serve.sh start <model> vk 65536 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20 (Qwen3's thinking-mode recommendation, also applied to Laguna so sampling is not a variable), seeds 0-3, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests, same prompt suffix. One model resident at a time: Qwen first, then Laguna. `--gtt-baseline` = the `gtt_used` printed by the preflight right before each start.
 - Cost: loop-v0 took 76 min for 80 samples; v1 is 120 samples per model on harder tasks, so an estimated 2-3 h per model.
 
+Result (labels `qwen-v1-vk-np4-2026-10-05`, `laguna-v1-vk-np4-2026-10-05`; each started by `scripts/llm-serve.sh` after its preflight printed READY at 5.2 GiB GTT used; `llm-8081` stopped after each):
+
+```
+question:  does Laguna add loop-v1 tasks Qwen cannot solve?   stated in: b9b211e
+Qwen:      pass@1 68.33% (82/120)  per-seed 70.0 / 76.7 / 70.0 / 56.7%   best-of-4 93.33% (28/30)
+Laguna:    pass@1 45.00% (54/120)  per-seed 46.7 / 46.7 / 43.3 / 43.3%   best-of-4 66.67% (20/30)
+union:     28/30 = Qwen alone       delta: +0 tasks   threshold: >= +3   -> drop Laguna from the loop
+```
+
+| Best-of-4 overlap | Tasks |
+|---|---|
+| Only Qwen (8) | json_parse, utf8_decode, cron_next, rational_eval, sliding_median, min_window_subseq, next_palindrome, merge_stones |
+| Only Laguna (0) | none |
+| Both (20) | the other 20 |
+| Neither (2) | regex_match, add_duration |
+
+- Laguna's solved tasks are a subset of Qwen's, so on this evidence a second model adds nothing to test-selected best-of-N. Spending the GPU time on more Qwen samples is the better use. On no task did Laguna do markedly better: its pass counts beat Qwen's only on calendar_k (4/4 vs 3/4), poly_expand (2 vs 1) and reach_target (4 vs 3).
+- Harder than v0: yes. Qwen pass@1 fell from 86.25% to 68.33%, and best-of-4 dropped below 100%, so this set can separate models.
+- Neither solved regex_match or add_duration in 8 attempts. Every failure is a model error on a case the spec states (`ab*c` vs `ac`, `(ab)*`, `PT45M` read as months, no month-end clamp), or the 12,288-token cap was hit before any code. No test or harness fault found.
+- `gtt_model_gib` (peak minus the preflight baseline): Qwen 22.65, Laguna 22.57, both at `-c 65536 -np 4`. Peaks 27.85 and 27.77 GiB.
+- Tokens and time: Qwen 1,023,491 completion tokens, 8,542 s (2.4 h), 4 samples hit `max_tokens`. Laguna 1,123,783 tokens, 7,523 s (2.1 h), 18 hit `max_tokens`. Median completion: Qwen 8,742, Laguna 8,856, so most samples on both models ran past the 8,192 reasoning budget. A one-variable reasoning-budget run on v1 is the next measurement that could move Qwen's pass@1.
+
 ## Roadmap (active)
 
 1. Orchestrator + SQLite memory: structured verdicts (finding, file, severity, accepted/rejected + reason) retrieved into prompts. DeepSeek as an hourly adversarial reviewer of diffs; static system/rules/repo summary first in the prompt, changing material last, for cache hits.
