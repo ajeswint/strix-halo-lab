@@ -1,0 +1,70 @@
+{
+ "label": "qwen-v1-weak12-s4-15-vk-np4-2026-10-05",
+ "set": "v1",
+ "model": "qwen3.6-35b-a3b",
+ "tasks": 12,
+ "n": 12,
+ "seeds": [
+  4,
+  15
+ ],
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "pass_at_1": 0.4375,
+ "pass_at_1_per_seed": [
+  0.5,
+  0.3333,
+  0.5,
+  0.4167,
+  0.4167,
+  0.5,
+  0.3333,
+  0.25,
+  0.5,
+  0.5,
+  0.5833,
+  0.4167
+ ],
+ "best_of_n": 0.8333,
+ "per_task_passes": {
+  "v1_01_regex_match": 0,
+  "v1_02_json_parse": 3,
+  "v1_03_utf8_decode": 3,
+  "v1_04_cron_next": 2,
+  "v1_08_poly_expand": 6,
+  "v1_09_rational_eval": 9,
+  "v1_14_skyline": 11,
+  "v1_18_min_window_subseq": 7,
+  "v1_19_bool_equiv": 4,
+  "v1_22_count_digit": 8,
+  "v1_24_add_duration": 0,
+  "v1_29_fraction_to_base": 10
+ },
+ "distinct_passing_solutions": {
+  "v1_01_regex_match": 0,
+  "v1_02_json_parse": 3,
+  "v1_03_utf8_decode": 3,
+  "v1_04_cron_next": 2,
+  "v1_08_poly_expand": 6,
+  "v1_09_rational_eval": 9,
+  "v1_14_skyline": 11,
+  "v1_18_min_window_subseq": 7,
+  "v1_19_bool_equiv": 4,
+  "v1_22_count_digit": 8,
+  "v1_24_add_duration": 0,
+  "v1_29_fraction_to_base": 10
+ },
+ "no_code_block": 5,
+ "finish_length": 6,
+ "completion_tokens_total": 1345915,
+ "wall_s": 11210.3,
+ "gtt_peak_gib": 28.14,
+ "gtt_baseline_gib": 5.2,
+ "gtt_model_gib": 22.94
+}

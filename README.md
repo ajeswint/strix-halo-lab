@@ -175,6 +175,29 @@ Stated before the run (measure skill step 6; committed before any preflight, res
 - Fixed settings, identical to the Qwen v1 run: Vulkan, `scripts/llm-serve.sh start qwen vk 65536 4` (16k per slot), temperature 0.6, top_p 0.95, top_k 20, `reasoning_budget_tokens` 8192 inside `max_tokens` 12288, 4 concurrent requests, same prompt suffix, llama.cpp 836d57176 `build-vk`, Qwen3.6-35B-A3B UD-Q4_K_XL. One model resident; one-model guard unchanged. `--gtt-baseline` = the preflight `gtt_used` right before the start. Runner: `bench/loop/run.py --set v1 --tasks ... --seed-start 4 -n 12` (4fbde71), label `qwen-v1-weak12-s4-15-vk-np4-2026-10-05`.
 - Cost: about 3 h (v1 Qwen averaged 71 s per sample over 120; these tasks run longer). DeepSeek is already inactive.
 
+Result (label `qwen-v1-weak12-s4-15-vk-np4-2026-10-05`, seeds 4-15, combined with seeds 0-3 of `qwen-v1-vk-np4-2026-10-05`; preflight READY at 5.2 GiB GTT used before the start):
+
+```
+question:  do 16 samples let Qwen solve add_duration and regex_match?   stated in: 52f0a05
+best-of-4:   10/12 of these tasks (0/4 on both targets)
+best-of-16:  10/12   regex_match 0/16, add_duration 0/16   -> neither solved
+```
+
+| Task | seeds 0-3 | seeds 4-15 | | Task | seeds 0-3 | seeds 4-15 |
+|---|---|---|---|---|---|---|
+| regex_match | 0/4 | 0/12 | | rational_eval | 2/4 | 9/12 |
+| add_duration | 0/4 | 0/12 | | skyline | 2/4 | 11/12 |
+| json_parse | 1/4 | 3/12 | | min_window_subseq | 2/4 | 7/12 |
+| utf8_decode | 2/4 | 3/12 | | bool_equiv | 1/4 | 4/12 |
+| cron_next | 1/4 | 2/12 | | count_digit | 2/4 | 8/12 |
+| poly_expand | 1/4 | 6/12 | | fraction_to_base | 1/4 | 10/12 |
+
+- Reading, as stated: Qwen best-of-16 on v1 = 28/30; a second model can add at most 2, under the >= 3 bar. add_duration unsolved = wrong code: 16/16 stopped normally with code (parse errors on `-PT1S`, `-P1M`, `P1DT`, no rejection of `2026-1-05`). regex_match unsolved is not proof of inability, but the cap is less of the story than 4 samples suggested: 7/16 hit 12,288 tokens (6 with no code); the other 9 wrote code that crashed (`UnboundLocalError`, `TypeError`) or failed a stated case (`a.c` vs `ac`, `ab*c` vs `ac`, empty pattern).
+- Pass@1 on these 12: 40.6% (78/192); seeds 4-15 alone 43.75% (63/144), per-seed 25.0-58.3%.
+- Fresh-seed regrade (`agent.py --regrade`, seed 104729): 63 visible passes = 63 fresh passes (seeds 0-3: 82 = 82 over all 30 tasks). Best-of-16 solved stays 10/12.
+- Baseline for the loop run: 192 samples, 1,801,480 completion tokens.
+- Cost: 1,345,915 completion tokens, 11,210 s (3.1 h) for 144 samples, not the 1-1.5 h first estimated. `gtt_model_gib` 22.94 (peak 28.14).
+
 ## Small-model loop v1: agentic loop vs best-of-16 on the weak tasks (pre-run)
 
 Stated before the run (measure skill step 6; committed before the loop's preflight, results empty):
