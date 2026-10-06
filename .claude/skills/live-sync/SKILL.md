@@ -23,7 +23,7 @@ Find out which side is right before copying anything:
 - The repo changed but was never deployed: deploying is a live config change. Ask the user, and give the exact `sudo install` command.
 - Never silently "fix" drift in either direction. Report what changed and when.
 
-Known case: Cursor upgrades can replace `/etc/apparmor.d/cursor-sandbox` and drop `capability dac_override,`. The repo copy is the intended state. Restoring it needs `sudo install -m 644 etc/apparmor.d/cursor-sandbox /etc/apparmor.d/cursor-sandbox && sudo apparmor_parser -r /etc/apparmor.d/cursor-sandbox`, with the user's yes.
+Known case: Cursor upgrades can replace `/etc/apparmor.d/cursor-sandbox` and drop `capability dac_override,`. The repo copy is the intended state. A second file in that directory which defines `cursor_sandbox` (a `.bak` sorts later and boot reloads it last) has to be moved out first; never copy a backup back into `/etc/apparmor.d/`. Restoring the live file needs the user's yes: `sudo install -m 644 etc/apparmor.d/cursor-sandbox /etc/apparmor.d/cursor-sandbox && sudo apparmor_parser -r /etc/apparmor.d/cursor-sandbox`. Then `grep -n dac_override /etc/apparmor.d/cursor-sandbox` shows the capability, and `test "$(/sbin/apparmor_parser -N /etc/apparmor.d | grep -c '^cursor_sandbox$')" = 1` shows the profile once.
 
 ## Adding a mirrored file
 
