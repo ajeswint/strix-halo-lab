@@ -3537,5 +3537,4871 @@ def proper_bracelets(n, k, m=10**9 + 7):
 
 # --- tasks 11-30 are appended here (seeds 4011-4030) ---
 
+task("v4_11_hdlc_unframe", r'''
+Write `hdlc_unframe(data)` that splits a byte stream in HDLC-style framing into frame payloads and returns them as a list of `bytes`, in stream order. `data` must be a `bytes` or `bytearray`, else ValueError. Every error below raises ValueError.
+Bytes: 0x7E is the flag, 0x7D is the escape. The stream is read left to right in one of two states. Before the first flag it is hunting: every byte except 0x7E is ignored, and a 0x7E starts a frame. From then on it is inside a frame, for good (it never returns to hunting).
+Inside a frame bytes are collected into a buffer, after unescaping:
+- an ordinary byte is appended as it is;
+- 0x7D must be followed by a second byte E. If E is 0x5E, append 0x7E; if E is 0x5D, append 0x7D (the escape pair is consumed as a unit). If E is 0x7E, it is the abort sequence: the buffer is emptied (the frame is discarded unchecked) and that 0x7E counts as a flag, so a new frame starts at once. Any other E is a ValueError;
+- 0x7E is the flag: if the buffer is empty it is ignored (a repeated flag), otherwise the buffer is a complete frame, which is checked as below and then the buffer is emptied. Either way the same flag also opens the next frame, so one flag can end a frame and start the next.
+- If the buffer ever holds more than 1024 bytes, that is a ValueError at once, even if a later abort would have discarded the frame.
+Checking a frame: the last two buffer bytes are a CRC-16 (big-endian) of all the bytes before them, and what remains is the payload, which must be at least 1 byte; so a frame shorter than 3 bytes is a ValueError. The CRC is CRC-16/CCITT-FALSE: polynomial 0x1021, initial value 0xFFFF, bits processed most significant first, no reflection, no final xor (the CRC of b"123456789" is 0x29B1). A wrong CRC is a ValueError. The CRC bytes are escaped on the wire like any other byte.
+At the end of the data, if it is inside a frame and the buffer is not empty or an escape byte 0x7D is still waiting for its second byte, the stream is truncated: ValueError. An empty buffer there is fine (the last flag simply opened a frame that never began), and data that never contained a flag returns [].
+Errors found inside a frame are raised even if the frame would later have been aborted, because the stream is read in order; an aborted frame is only exempt from the frame checks (length and CRC).
+Examples (hex):
+7e41b9157e -> [b"A"]
+7e7d5e7d5ea97e -> [b"~"] (payload 0x7E, CRC 0x7EA9, all three escaped as needed)
+7e41b97d7e41b9157e -> [b"A"] (the first frame was aborted)
+7e41b915 -> ValueError (truncated); 7e41b9167e -> ValueError (bad CRC); 7e7d417e -> ValueError (bad escape)
+''', r'''
+import binascii, random, re
+
+def frame(p, crc=None):
+    c = binascii.crc_hqx(p, 0xFFFF) if crc is None else crc
+    return p + bytes([c >> 8, c & 255])
+
+def esc(b):
+    out = bytearray()
+    for x in b:
+        if x == 0x7E:
+            out += b"\x7d\x5e"
+        elif x == 0x7D:
+            out += b"\x7d\x5d"
+        else:
+            out.append(x)
+    return bytes(out)
+
+def wire(p, crc=None):
+    return esc(frame(p, crc))
+
+F = b"\x7e"
+
+def bad(d):
+    try:
+        hdlc_unframe(d)
+    except ValueError:
+        return True
+    return False
+
+def eq(d, exp):
+    got = hdlc_unframe(d)
+    assert got == exp and type(got) is list and all(type(x) is bytes for x in got), (d, got, exp)
+
+eq(bytes.fromhex("7e41b9157e"), [b"A"])
+eq(bytes.fromhex("7e7d5e7d5ea97e"), [b"~"])
+eq(bytes.fromhex("7e41b97d7e41b9157e"), [b"A"])
+assert bad(bytes.fromhex("7e41b915"))
+assert bad(bytes.fromhex("7e41b9167e"))
+assert bad(bytes.fromhex("7e7d417e"))
+eq(b"", [])
+eq(b"hello world", [])
+eq(b"hello\x7d", [])
+eq(b"\x7d\x41\x7d", [])
+eq(F, [])
+eq(F + F + F, [])
+assert bad(b"junk" + F + F + b"more")
+eq(b"junk" + F + wire(b"A") + F, [b"A"])
+eq(F + wire(b"A") + F + wire(b"BC") + F, [b"A", b"BC"])
+assert bad(F + wire(b"A") + wire(b"BC") + F)
+eq(F + F + F + wire(b"A") + F + F + F + wire(b"A") + F + F, [b"A", b"A"])
+eq(F + wire(b"A") + F, [b"A"])
+assert bad(F + wire(b"A") + F + b"x")
+assert bad(F + wire(b"A") + F + b"\x7d")
+assert bad(F + wire(b"A") + b"\x7d")
+assert bad(F + b"\x7d")
+assert bad(F + b"x")
+# the abort sequence
+eq(F + b"abc" + b"\x7d\x7e" + wire(b"Z") + F, [b"Z"])
+eq(F + b"\x7d\x7e" + wire(b"Z") + F, [b"Z"])
+eq(b"\x7d\x7e" + wire(b"Z") + F, [b"Z"])
+eq(b"zz\x7d\x7e" + wire(b"Z") + F, [b"Z"])
+assert bad(b"zz\x7d\x7ezz" + F + wire(b"Z") + F)
+eq(b"\x7d\x7e" + b"\x7d\x7e" + wire(b"Z") + F, [b"Z"])
+eq(F + wire(b"Q") + F + b"\x7d\x7e" + F, [b"Q"])
+eq(F + wire(b"Q") + b"\x7d\x7e", [])
+eq(F + b"\x01\x02\x03\x04" + b"\x7d\x7e" + F + b"\x01" + b"\x7d\x7e", [])
+assert bad(F + b"\x7d\x41" + b"\x7d\x7e" + F)     # bad escape then abort: still an error
+assert bad(F + b"\x7d\x7d" + b"\x7d\x7e" + F)
+eq(b"\x7d\x41\x7d\x7d" + F + wire(b"A") + F, [b"A"])   # hunting ignores bad escapes
+eq(b"\x7d\x7d\x7d" + F + wire(b"A") + F, [b"A"])
+# frame checks
+assert bad(F + frame(b"")[:2] + F)     # CRC only, no payload
+assert bad(F + b"\x01" + F)
+assert bad(F + b"\x01\x02" + F)
+assert bad(F + wire(b"A", 0) + F)
+assert bad(F + wire(b"A", 0xB914) + F)
+assert bad(F + wire(b"A", 0xB815) + F)
+eq(F + wire(b"A", 0xB915) + F, [b"A"])
+eq(F + wire(bytes(range(256))) + F, [bytes(range(256))])
+eq(F + wire(b"\x7e\x7d\x7e\x7d\x5e\x5d") + F, [b"\x7e\x7d\x7e\x7d\x5e\x5d"])
+eq(F + wire(b"\x00") + F, [b"\x00"])
+eq(F + wire(b"123456789") + F, [b"123456789"])
+assert binascii.crc_hqx(b"123456789", 0xFFFF) == 0x29B1
+# the 1024 limit counts unescaped bytes, payload + CRC
+eq(F + wire(b"a" * 1022) + F, [b"a" * 1022])
+assert bad(F + wire(b"a" * 1023) + F)
+assert bad(F + wire(b"a" * 1023) + b"\x7d\x7e")
+eq(F + wire(b"\x7e" * 1022) + F, [b"\x7e" * 1022])
+assert bad(F + wire(b"\x7e" * 1023) + F)
+assert bad(F + b"b" * 1025 + b"\x7d\x7e" + F)
+eq(F + b"b" * 1024 + b"\x7d\x7e" + F, [])
+assert bad(F + b"b" * 1024 + b"b" + b"\x7d\x7e" + F)
+# types
+for d in ["abc", None, 12, [1, 2], memoryview(b"~")]:
+    assert bad(d), d
+eq(bytearray(F + wire(b"A") + F), [b"A"])
+r = hdlc_unframe(bytearray(F + wire(b"A") + F))
+assert type(r[0]) is bytes
+
+# oracle: tokens (abort | escape pair | lone escape | flag | run of ordinary bytes)
+TOK = re.compile(rb"\x7d\x7e|\x7d.?|\x7e|[^\x7d\x7e]+", re.S)
+
+def oracle(d):
+    started = False
+    cur = bytearray()
+    out = []
+    for t in TOK.findall(d):
+        if t in (b"\x7e", b"\x7d\x7e"):
+            if t == b"\x7d\x7e":
+                cur = bytearray()
+            elif cur:
+                if len(cur) < 3 or binascii.crc_hqx(bytes(cur[:-2]), 0xFFFF) != int.from_bytes(cur[-2:], "big"):
+                    raise ValueError("frame")
+                out.append(bytes(cur[:-2]))
+                cur = bytearray()
+            started = True
+            continue
+        if not started:
+            continue
+        if t[0] == 0x7D:
+            if len(t) == 1:
+                raise ValueError("trunc")
+            if t[1] not in (0x5E, 0x5D):
+                raise ValueError("escape")
+            cur.append(0x7E if t[1] == 0x5E else 0x7D)
+        else:
+            cur += t
+        if len(cur) > 1024:
+            raise ValueError("long")
+    if started and cur:
+        raise ValueError("trunc")
+    return out
+
+def both(d):
+    try:
+        exp = oracle(d)
+    except ValueError:
+        exp = ValueError
+    try:
+        got = hdlc_unframe(d)
+    except ValueError:
+        got = ValueError
+    assert got == exp, (d.hex(), got, exp)
+    return exp
+
+random.seed(4011)
+def rbytes(n, hot=0.0):
+    return bytes(random.choice([0x7E, 0x7D, 0x5E, 0x5D]) if random.random() < hot else random.randrange(256) for _ in range(n))
+
+def piece():
+    r = random.random()
+    if r < 0.40:
+        p = rbytes(random.choice([1, 1, 2, 3, 5, 12, 40]), random.choice([0.0, 0.3, 0.7]))
+        c = None if random.random() < 0.93 else random.randrange(65536)
+        return wire(p, c)
+    if r < 0.55:
+        return F
+    if r < 0.65:
+        return b"\x7d\x7e"
+    if r < 0.75:
+        return rbytes(random.randint(1, 4), 0.0).replace(b"\x7e", b"x").replace(b"\x7d", b"y")
+    if r < 0.80:
+        return b"\x7d" + bytes([random.choice([0x5E, 0x5D, 0x41, 0x7D, 0x00, 0x7E, 0x5F])])
+    if r < 0.85:
+        return b"\x7d"
+    if r < 0.88:
+        return wire(rbytes(random.choice([1021, 1022, 1023, 1024]), 0.1))
+    return wire(random.choice([b"A", b"hello", b"\x7e", b"\x7d\x7e"]))
+
+nerr = nok = 0
+for _ in range(220):
+    n = random.choice([1, 2, 3, 4, 6, 9])
+    d = b"".join(piece() for _ in range(n))
+    if random.random() < 0.5:
+        d = random.choice([b"", F, b"\x01\x02", F + F]) + d
+    r = both(d)
+    if r is ValueError:
+        nerr += 1
+    else:
+        nok += 1
+assert nok > 30 and nerr > 30, (nok, nerr)
+
+# clean streams built from known payloads, with abort noise and shared flags
+for _ in range(120):
+    pls = [rbytes(random.randint(1, 30), random.choice([0.0, 0.5])) for _ in range(random.randint(0, 6))]
+    d = bytearray(random.choice([b"", b"noise", b"\x7d\x01", b"\x00\x7d"]))
+    d += F
+    for p in pls:
+        for _ in range(random.choice([0, 0, 1, 2])):
+            d += F
+        if random.random() < 0.3:
+            junk = esc(rbytes(random.randint(0, 20)))
+            d += junk + b"\x7d\x7e"
+        d += wire(p) + F
+    for _ in range(random.choice([0, 1, 3])):
+        d += F
+    assert both(bytes(d)) == pls
+    assert hdlc_unframe(bytes(d)) == pls
+    if pls:
+        e = bytes(d)
+        k = random.randrange(len(e))
+        t = e[:k]
+        both(t)
+        both(e + bytes([random.randrange(256)]))
+''', r'''
+def _crc(b):
+    c = 0xFFFF
+    for x in b:
+        c ^= x << 8
+        for _ in range(8):
+            c = ((c << 1) ^ 0x1021) & 0xFFFF if c & 0x8000 else (c << 1) & 0xFFFF
+    return c
+
+
+def hdlc_unframe(data):
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data must be bytes")
+    out = []
+    inside = False
+    pend = False
+    buf = bytearray()
+    for b in data:
+        if not inside:
+            if b == 0x7E:
+                inside = True
+            continue
+        if pend:
+            pend = False
+            if b == 0x7E:
+                buf = bytearray()
+                continue
+            if b == 0x5E:
+                buf.append(0x7E)
+            elif b == 0x5D:
+                buf.append(0x7D)
+            else:
+                raise ValueError("bad escape")
+        elif b == 0x7D:
+            pend = True
+            continue
+        elif b == 0x7E:
+            if buf:
+                if len(buf) < 3:
+                    raise ValueError("short frame")
+                if _crc(buf[:-2]) != (buf[-2] << 8 | buf[-1]):
+                    raise ValueError("bad crc")
+                out.append(bytes(buf[:-2]))
+                buf = bytearray()
+            continue
+        else:
+            buf.append(b)
+        if len(buf) > 1024:
+            raise ValueError("frame too long")
+    if inside and (pend or buf):
+        raise ValueError("truncated")
+    return out
+''')
+
+task("v4_12_markov_run", r'''
+Write `markov_run(program, text, limit)` that runs a Markov-algorithm program (a string rewriting system) on `text` and returns `(result, steps)`, a str and an int. `program` and `text` must be str and `limit` an int that is not a bool and is >= 0, else ValueError. Every failure below raises ValueError.
+Program syntax. `program.split("\n")` gives the lines. Strip spaces, tabs and "\r" from both ends of each line; a line that is then empty or starts with "#" is skipped (there are no end-of-line comments). Every other line is a rule `LHS -> RHS` or a terminating rule `LHS ->. RHS`.
+The arrow is the first "->" that is not inside a quoted string. A quoted string starts at a `"` and ends at the next `"` that is not escaped; inside quotes a backslash skips the character after it. A line with no arrow, or with an unterminated quote, is an error. The text after the arrow is the RHS part, except that if its very first character is "." (no space before it) the rule is terminating and that "." is dropped. The LHS part and the RHS part are each stripped of spaces, tabs and "\r" at both ends, then read as a pattern:
+- if it contains no `"`, it is the literal text as it stands (backslashes are ordinary characters; it may be empty);
+- otherwise it must be exactly one quoted string: first and last character are `"` (so length >= 2), and between them there is no unescaped `"`. The only escapes are \" \\ \n (newline) \t (tab); any other backslash sequence, or a backslash just before the closing quote, is an error.
+Quoting is how a pattern keeps edge spaces, contains "->", starts with "#", or holds a newline. The whole program is parsed before anything runs, so a syntax error in any line is an error even if that rule would never fire.
+Running. Rules are tried in program order. Repeat: take the first rule whose LHS occurs in the current text (an empty LHS occurs everywhere, at index 0). In the text, replace the leftmost occurrence of that LHS, one occurrence only, by the RHS; this is one step. If the rule is terminating, return `(text, steps)` at once. If no rule applies, return `(text, steps)`. A step that would be the (limit+1)-th is a ValueError, so a run that halts after exactly `limit` steps is fine, and limit 0 only accepts texts to which no rule applies. The text may never be longer than 10000 characters: the initial text and the text after every step are checked, and the result of a terminating step too.
+Examples:
+markov_run("a -> bb\n\"bb\" ->. X", "a", 5) == ("X", 2)
+markov_run("ba -> ab", "bbaa", 9) == ("aabb", 4)
+markov_run("-> x", "", 3) raises ValueError (an empty LHS applies forever)
+markov_run('"a -> b" ->. [ok]\n x ->. .', "a -> b", 1) == ("[ok]", 1)
+markov_run("a ->.x\na -> .y", "a", 1) == ("x", 1); markov_run("a -> .y", "a", 1) == (".y", 1)
+''', r'''
+import random
+
+def bad(*a):
+    try:
+        markov_run(*a)
+    except ValueError:
+        return True
+    return False
+
+def eq(p, t, n, exp):
+    got = markov_run(p, t, n)
+    assert got == exp and type(got) is tuple and type(got[0]) is str and type(got[1]) is int, (p, t, n, got, exp)
+
+eq("a -> bb\n\"bb\" ->. X", "a", 5, ("X", 2))
+eq("ba -> ab", "bbaa", 9, ("aabb", 4))
+assert bad("-> x", "", 3)
+eq('"a -> b" ->. [ok]\n x ->. .', "a -> b", 1, ("[ok]", 1))
+eq("a ->.x\na -> .y", "a", 1, ("x", 1))
+eq("a -> .y", "a", 1, (".y", 1))
+eq("a -> .b\nb ->. c", "a", 5, (".c", 2))
+eq("a -> . b\nb ->. c", "a", 5, (". c", 2))
+eq("a ->\t.b\nb ->. c", "a", 5, (".c", 2))
+eq("", "abc", 0, ("abc", 0))
+eq("# nothing\n\n   \n\t\r", "abc", 0, ("abc", 0))
+eq("x -> y", "abc", 0, ("abc", 0))
+assert bad("b -> y", "abc", 0)
+eq("b -> y", "abc", 1, ("ayc", 1))
+eq("b ->. y", "abc", 1, ("ayc", 1))
+assert bad("b ->. y", "abc", 0)
+assert bad("b -> c", "abb", 1)       # second step would be the 2nd
+eq("b -> c", "abb", 2, ("acc", 2))
+# first matching rule wins, then leftmost occurrence
+eq("b ->. X\na -> Y", "ab", 1, ("aX", 1))
+eq("a -> X\nb ->. Y", "ba", 2, ("YX", 2))
+eq("aa -> X", "aaaa", 5, ("XX", 2))
+eq("aa -> a", "aaaa", 9, ("a", 3))
+eq("a -> b\nb ->. c", "a", 5, ("c", 2))
+# empty patterns
+eq("->. start", "mid", 1, ("startmid", 1))
+assert bad("->", "", 5)
+assert bad("->", "x", 5)
+eq("a ->", "banana", 9, ("bnn", 3))
+eq("a ->.", "banana", 9, ("bnana", 1))
+eq("a -> \n", "aa", 3, ("", 2))
+# arrows and the first-arrow rule
+eq("a -> b -> c", "a", 1, ("b -> c", 1))
+eq("a->b", "a", 1, ("b", 1))
+eq("a ->b", "a", 1, ("b", 1))
+eq("a-> b", "a", 1, ("b", 1))
+eq("a--> b", "a-", 1, ("b", 1))
+eq("a ->. b -> c", "a", 1, ("b -> c", 1))
+eq("a ->..b", "a", 1, (".b", 1))
+eq("a ->. .b", "a", 1, (".b", 1))
+eq("a -> ..b", "a", 1, ("..b", 1))
+eq("a -> . b", "a", 1, (". b", 1))
+eq("a ->.", "a", 1, ("", 1))
+eq("a ->. ", "a", 1, ("", 1))
+# whitespace and comments
+eq("   a  \t->\t  b   \r\n#c\n  # c2\n", "xa", 1, ("xb", 1))
+eq("a -> b # note", "a", 1, ("b # note", 1))
+eq("a\x0b -> b", "a\x0b", 1, ("b", 1))
+eq("\x0ca -> b\x0c", "\x0ca", 1, ("b\x0c", 1))
+eq("\xa0a\xa0 -> b", "\xa0a\xa0", 1, ("b", 1))
+assert bad("a -> b", "a", True)
+assert bad("", "a", False)
+eq("a#b -> c", "xa#bx", 1, ("xcx", 1))
+eq("#a -> b\nx -> y", "#ax", 1, ("#ay", 1))
+eq("a -> b\r\nb ->. c\r\n", "a", 2, ("c", 2))
+# quoting
+eq('" a " -> "-"', "x a y", 1, ("x-y", 1))
+eq('" a " -> -', "x a y", 1, ("x-y", 1))
+eq('a -> " "', "a", 1, (" ", 1))
+eq('a -> "  p  "', "a", 1, ("  p  ", 1))
+assert bad('a -> " "x', "a", 1)
+eq('"->" -> arrow', "a->b", 1, ("aarrowb", 1))
+eq('"a\\"b" -> q', 'xa"by', 1, ("xqy", 1))
+eq('q -> "a\\"b"', 'q', 1, ('a"b', 1))
+eq('"\\\\" -> "/"', "a\\b", 1, ("a/b", 1))
+eq('"\\n" -> "\\t"', "a\nb", 1, ("a\tb", 1))
+eq('"\\n" ->. nl', "a\nb", 1, ("anlb", 1))
+eq('"#x" -> y', "a#xb", 1, ("ayb", 1))
+eq('"" ->. q', "ab", 1, ("qab", 1))
+eq('a -> ""', "bab", 1, ("bb", 1))
+eq('"a" ->. ""', "bab", 1, ("bb", 1))
+eq('a\\b -> c', "xa\\by", 1, ("xcy", 1))
+eq('a -> b\\', "a", 1, ("b\\", 1))
+eq('a -> b\\n', "a", 1, ("b\\n", 1))
+eq('"a" -> "b" ', "a", 1, ("b", 1))
+eq('"a" ->."b"', "a", 1, ("b", 1))
+eq('"a" ->. "b"', "a", 1, ("b", 1))
+eq('"a"->"b"', "a", 1, ("b", 1))
+eq('"a ->" -> b', "xa ->y", 1, ("xby", 1))
+eq('"a ->" ->. "-> b"', "a ->", 1, ("-> b", 1))
+for pr in ["a", "a - > b", "a > b", "a -", '"a -> b', 'a" -> b', '"a" x -> b', 'x "a" -> b', 'a -> "b" c', 'a -> c "b"',
+           'a -> b"', 'a -> "b', '"a\\" -> b', 'a -> "b\\"', 'a -> "b\\q"', 'a -> "\\x41"', 'a -> "\\0"', 'a -> "b\\', '"" "" -> x',
+           'a -> ""b""', 'a -> "x"y"', 'a -> "x" "y"', '"a"b" -> c', '"a\\"" b -> c', '-', '-> "', '"->', 'a\n b\n', 'a -> b\nzzz',
+           'a -> b\n"x -> y', 'a -> b\n\n#c\nc d']:
+    assert bad(pr, "zzz", 3), pr
+    assert bad(pr, "", 0), pr
+for a in [("a -> b", "a", -1), ("a -> b", "a", "1"), ("a -> b", "a", 1.0), ("a -> b", "a", None), ("a -> b", None, 1),
+          (None, "a", 1), (b"a -> b", "a", 1), (["a -> b"], "a", 1), ("a -> b", b"a", 1)]:
+    assert bad(*a), a
+# limits and sizes
+assert bad("a -> aa", "a", 20)
+eq("a -> aa\n", "", 5, ("", 0))
+assert bad("x -> xx", "x", 9999)
+assert bad("x -> xx", "x", 10000)
+assert bad("x -> xx", "x", 20000)
+eq("x ->. y", "x" * 10000, 1, ("y" + "x" * 9999, 1))
+assert bad("x ->. y", "x" * 10001, 1)
+assert bad("x ->. y", "x" * 10001, 0)
+eq("x ->. y", "z" * 10000, 0, ("z" * 10000, 0))
+assert bad("", "z" * 10001, 0)
+eq("x ->. xx", "x" * 9999, 1, ("x" * 10000, 1))
+assert bad("x ->. xx", "x" * 10000, 1)
+assert bad("a -> b\nbad", "zzz", 0)
+
+# oracle: build rule lists, serialize them with random spelling, simulate with str.replace
+def osim(rules, text, limit):
+    if len(text) > 10000:
+        raise ValueError
+    steps = 0
+    while True:
+        k = next((i for i, (l, _, _) in enumerate(rules) if l in text), None)
+        if k is None:
+            return text, steps
+        if steps >= limit:
+            raise ValueError
+        l, r, t = rules[k]
+        text = text.replace(l, r, 1)
+        steps += 1
+        if len(text) > 10000:
+            raise ValueError
+        if t:
+            return text, steps
+
+def quoted(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t") + '"'
+
+def ser(rules):
+    lines = []
+    for l, r, t in rules:
+        if random.random() < 0.15:
+            lines.append(random.choice(["", "   ", "# " + random.choice(["x -> y", "a ->. b", '"', "->"]), "  #", "\t# a\\"]))
+        sp1 = random.choice(["", " ", "  ", "\t"])
+        sp2 = random.choice(["", " ", "  ", "\t"])
+        lq = l != l.strip(" \t\r") or any(c in l for c in '"\n\t') or "->" in l or l.startswith("#") or random.random() < 0.2
+        rq = (r != r.strip(" \t\r") or any(c in r for c in '"\n\t') or random.random() < 0.2
+              or (not t and sp2 == "" and r.startswith(".")))
+        lt = quoted(l) if lq else l
+        rt = quoted(r) if rq else r
+        line = random.choice(["", " ", "\t"]) + lt + sp1 + "->" + ("." if t else "") + sp2 + rt + random.choice(["", " ", "\t", "  "])
+        lines.append(line)
+    if random.random() < 0.3:
+        lines.append("")
+    return random.choice(["\n", "\n", "\r\n"]).join(lines)
+
+random.seed(4012)
+SPEC = list('"->. \\\n\t#')
+
+def rstr(n, p):
+    return "".join(random.choice("abc") if random.random() > p else random.choice(SPEC) for _ in range(n))
+
+def rrules():
+    n = random.randint(0, 5)
+    rules = []
+    shrink = random.random() < 0.6
+    for _ in range(n):
+        l = rstr(random.choice([0, 1, 1, 2, 2, 3]), random.choice([0, 0, 0.3]))
+        if shrink and l:
+            r = rstr(random.randint(0, len(l)), random.choice([0, 0.3]))
+        else:
+            r = rstr(random.randint(0, 4), random.choice([0, 0.3]))
+        rules.append((l, r, random.random() < 0.25))
+    return rules
+
+nok = nerr = nterm = 0
+for _ in range(260):
+    rules = rrules()
+    prog = ser(rules)
+    text = rstr(random.randint(0, 9), random.choice([0, 0, 0.2]))
+    limit = random.choice([0, 1, 2, 3, 5, 8, 20, 60, 300])
+    try:
+        exp = osim(rules, text, limit)
+        nok += 1
+        nterm += exp[1] > 0
+    except ValueError:
+        exp = ValueError
+        nerr += 1
+    try:
+        got = markov_run(prog, text, limit)
+    except ValueError:
+        got = ValueError
+    assert got == exp, (prog, text, limit, got, exp)
+assert nok > 80 and nerr > 40 and nterm > 50, (nok, nerr, nterm)
+
+# sorting / counting programs through the same path
+for _ in range(40):
+    s = "".join(random.choice("ab") for _ in range(random.randint(0, 25)))
+    prog = random.choice(["ba -> ab", "ba->ab", "\nba\t->\tab\n"])
+    n = sum(1 for i in range(len(s)) for j in range(i + 1, len(s)) if s[i] == "b" and s[j] == "a")
+    eq(prog, s, 400, ("".join(sorted(s)), n))
+    assert bad(prog, s, n - 1) if n else True
+''', r'''
+_WS = " \t\r"
+_ESC = {'"': '"', "\\": "\\", "n": "\n", "t": "\t"}
+
+
+def _split_arrow(line):
+    inq = False
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if inq:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                inq = False
+        elif c == '"':
+            inq = True
+        elif line.startswith("->", i):
+            return line[:i], line[i + 2:]
+        i += 1
+    raise ValueError("no arrow" if not inq else "unterminated quote")
+
+
+def _pattern(s):
+    if '"' not in s:
+        return s
+    if len(s) < 2 or s[0] != '"' or s[-1] != '"':
+        raise ValueError("bad quoting")
+    inner = s[1:-1]
+    out = []
+    i = 0
+    while i < len(inner):
+        c = inner[i]
+        if c == '"':
+            raise ValueError("stray quote")
+        if c == "\\":
+            i += 1
+            if i == len(inner) or inner[i] not in _ESC:
+                raise ValueError("bad escape")
+            c = _ESC[inner[i]]
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _parse(program):
+    rules = []
+    for raw in program.split("\n"):
+        line = raw.strip(_WS)
+        if not line or line[0] == "#":
+            continue
+        left, right = _split_arrow(line)
+        term = right.startswith(".")
+        if term:
+            right = right[1:]
+        rules.append((_pattern(left.strip(_WS)), _pattern(right.strip(_WS)), term))
+    return rules
+
+
+def markov_run(program, text, limit):
+    if not isinstance(program, str) or not isinstance(text, str):
+        raise ValueError("program and text must be str")
+    if type(limit) is not int or limit < 0:
+        raise ValueError("bad limit")
+    rules = _parse(program)
+    if len(text) > 10000:
+        raise ValueError("text too long")
+    steps = 0
+    while True:
+        for lhs, rhs, term in rules:
+            i = text.find(lhs)
+            if i >= 0:
+                break
+        else:
+            return text, steps
+        if steps == limit:
+            raise ValueError("step limit")
+        text = text[:i] + rhs + text[i + len(lhs):]
+        steps += 1
+        if len(text) > 10000:
+            raise ValueError("text too long")
+        if term:
+            return text, steps
+''')
+
+task("v4_13_load_properties", r'''
+Write `load_properties(text)` that parses the text of a Java-style .properties file and returns a dict mapping str to str; a later entry replaces an earlier one with the same key. A `text` that is not a str raises ValueError, and so does any bad escape (below). Whitespace here means exactly space, tab and form feed ("\f"); "\n" and "\r" are never whitespace, and no other character is.
+Lines. Natural lines end at "\n", "\r" or "\r\n" (that pair is one terminator; nothing else splits lines). A natural line that is empty or only whitespace is skipped. So is a comment: a line whose first non-whitespace character is "#" or "!". A comment never continues, whatever it ends with.
+Any other line starts an entry. Remove its leading whitespace. While the current line ends in an odd number of backslashes (a run of backslashes at the very end of the line, nothing after it, odd length), drop the last backslash and append the next natural line with its leading whitespace removed; an appended line is never a comment, and may be empty or only whitespace, in which case it adds nothing and (not ending in a backslash) ends the entry. If the text ends right after such a backslash, the entry ends there. Trailing whitespace is never removed. The result is the logical line.
+Key and value. The key starts at the first character of the logical line and ends at the first unescaped whitespace character, "=" or ":", or at the end of the line. A backslash escapes the character after it (the pair is skipped as a unit), so "\ ", "\=", "\:" and "\\" do not end the key. After the key skip whitespace; if the next character is "=" or ":", skip that one character and then skip whitespace again. The rest of the logical line is the value, possibly empty; its trailing whitespace stays. So "k : = v" has the value "= v", "k==v" has "=v", "k v" has "v", "k" and "k=" have "", "=v" has the key "" and ":" alone has key "" and value "".
+Escapes. Split the logical line first, and only then process escapes in the key and in the value separately, so an escaped separator is part of the key and "\u003d" is a plain "=" that never separates. In order, scanning left to right: "\t", "\n", "\r", "\f" are TAB, LF, CR and FF. "\u" must be followed by exactly 4 characters from 0-9, a-f, A-F, else ValueError; they give one UTF-16 code unit. A high surrogate unit (D800-DBFF) must be followed immediately by another "\uXXXX" holding a low surrogate unit (DC00-DFFF); the two form one code point (U+10000 and up). Any other surrogate unit is a ValueError. Every other "\c" (including "\\", "\ ", "\#" and an upper case "\U") is just c, the backslash dropped. All other characters, non-ASCII included, are kept as they are.
+Examples:
+load_properties("a=1\nb : 2\nc 3\nd\n") == {"a": "1", "b": "2", "c": "3", "d": ""}
+load_properties("k = a\\\n    b\\n\\u0041") == {"k": "ab\nA"}
+load_properties("# c\\\nx\\ y=z") == {"x y": "z"}   (the comment does not continue)
+load_properties("k=\\ud83d\\ude00") == {"k": "\U0001F600"}
+''', r'''
+import random
+
+def bad(t):
+    try:
+        load_properties(t)
+    except ValueError:
+        return True
+    return False
+
+def eq(t, exp):
+    got = load_properties(t)
+    assert got == exp and type(got) is dict and all(type(k) is str and type(v) is str for k, v in got.items()), (t, got, exp)
+
+eq("a=1\nb : 2\nc 3\nd\n", {"a": "1", "b": "2", "c": "3", "d": ""})
+eq("k = a\\\n    b\\n\\u0041", {"k": "ab\nA"})
+eq("# c\\\nx\\ y=z", {"x y": "z"})
+eq("k=\\ud83d\\ude00", {"k": "\U0001F600"})
+eq("", {})
+eq("\n\r\n\r  \t\f\n", {})
+eq("a=1\r\nb=2\rc=3\n", {"a": "1", "b": "2", "c": "3"})
+eq("a=1\n\nb=2\r\n\r\nc=3\r\r", {"a": "1", "b": "2", "c": "3"})
+eq("a=x\x0by\nb=\x1c\x85z\u2028w", {"a": "x\x0by", "b": "\x1c\x85z\u2028w"})
+eq("a=1\x0cb=2", {"a": "1\x0cb=2"})
+eq("k=v \n", {"k": "v "})
+eq("k=v \t\f\n", {"k": "v \t\f"})
+eq("k=\xa0v\xa0", {"k": "\xa0v\xa0"})
+eq("k\xa0=v", {"k\xa0": "v"})
+eq("  \t\fa = b", {"a": "b"})
+eq("\f\fk\fv", {"k": "v"})
+eq("k\v=x", {"k\v": "x"})
+eq("k:v", {"k": "v"})
+eq("k : v", {"k": "v"})
+eq("k = = x", {"k": "= x"})
+eq("k : = v", {"k": "= v"})
+eq("k==v", {"k": "=v"})
+eq("k::v", {"k": ":v"})
+eq("k=:v", {"k": ":v"})
+eq("k:=v", {"k": "=v"})
+eq("k \t=\t v", {"k": "v"})
+eq("k \t v", {"k": "v"})
+eq("k\tv w x ", {"k": "v w x "})
+eq("=v", {"": "v"})
+eq(":", {"": ""})
+eq("  = x", {"": "x"})
+eq("k", {"k": ""})
+eq("k   ", {"k": ""})
+eq("k=", {"k": ""})
+eq("k =  ", {"k": ""})
+eq("a=1\na=2\nb=3\na=4", {"a": "4", "b": "3"})
+# escapes in keys
+eq("a\\ b=c", {"a b": "c"})
+eq("a\\=b=c", {"a=b": "c"})
+eq("a\\:b:c", {"a:b": "c"})
+eq("a\\\\=b", {"a\\": "b"})
+eq("a\\\\\\=b", {"a\\=b": ""})
+eq("a\\\\\\\\=b", {"a\\\\": "b"})
+eq("\\#k=v", {"#k": "v"})
+eq("\\!k=v", {"!k": "v"})
+eq("k#=v", {"k#": "v"})
+eq("k!=v", {"k!": "v"})
+eq("\\ k=v", {" k": "v"})
+eq("\\\tk=v", {"\tk": "v"})
+eq("\\u0041=1", {"A": "1"})
+eq("a\\u003db=c", {"a=b": "c"})
+eq("a\\u0020b c", {"a b": "c"})
+eq("a\\tb\\nc=1", {"a\tb\nc": "1"})
+eq("\\uD83D\\uDE00=v", {"\U0001F600": "v"})
+# continuation
+eq("k=a\\\n  b", {"k": "ab"})
+eq("k=a\\\\\n  b", {"k": "a\\", "b": ""})
+eq("k=a\\\\\\\n  b", {"k": "a\\b"})
+eq("k=a\\\\\\\\\n  b", {"k": "a\\\\", "b": ""})
+eq("k=a\\\n\n", {"k": "a"})
+eq("k=a\\\n   \nj=1", {"k": "a", "j": "1"})
+eq("k=a\\", {"k": "a"})
+eq("k=a\\\n", {"k": "a"})
+eq("k=a\\\r\n b", {"k": "ab"})
+eq("k=a\\\r b", {"k": "ab"})
+eq("k=a\\\r\n\r\nj=1", {"k": "a", "j": "1"})
+eq("k\\\n =v", {"k": "v"})
+eq("k\\\n  v", {"kv": ""})
+eq("k=\\\n#x", {"k": "#x"})
+eq("k=a\\\n!b\\\n  c", {"k": "a!bc"})
+eq(" \\\n k=v", {"k": "v"})
+eq("\\\nk=v", {"k": "v"})
+eq("k=a \\\n b", {"k": "a b"})
+eq("k=a\\ \\\n b", {"k": "a b"})
+eq("k=a\\ \n b", {"k": "a ", "b": ""})
+eq("k=a\\\n\\\n\\\nb", {"k": "ab"})
+eq("k=\\u00\\\ne9", {"k": "\xe9"})
+eq("k=\\u00\\\n  e9x", {"k": "\xe9x"})
+eq("k=\\\\u0041", {"k": "\\u0041"})
+eq("k=\\\\\\u0041", {"k": "\\A"})
+# comments
+eq("# c\\\nk=v", {"k": "v"})
+eq("  ! x\nk=1", {"k": "1"})
+eq("\t#\nk=1\n#", {"k": "1"})
+eq("k=1 # not\nj=2", {"k": "1 # not", "j": "2"})
+eq("#a=1\n!b=2\n c=3", {"c": "3"})
+eq("k=a\\\n# b", {"k": "a# b"})
+# escapes in values
+eq("k=\\t\\n\\r\\f", {"k": "\t\n\r\f"})
+eq("k=\\u0041\\u00e9\\u00E9", {"k": "A\xe9\xe9"})
+eq("k=a\\u003db", {"k": "a=b"})
+eq("k=\\u0000", {"k": "\0"})
+eq("k=\\uFFFF\\uFFFE", {"k": "\uffff\ufffe"})
+eq("k=\\ud83d\\ude00\\uD83D\\uDE00", {"k": "\U0001F600" * 2})
+eq("k=\\uDBFF\\uDFFF", {"k": "\U0010FFFF"})
+eq("k=\\uD800\\uDC00", {"k": "\U00010000"})
+eq("k=\\U0041", {"k": "U0041"})
+eq("k=\\q\\%\\a", {"k": "q%a"})
+eq("k=\\\\", {"k": "\\"})
+eq("k=\\ ", {"k": " "})
+eq("k=\\  ", {"k": "  "})
+eq("k=\\=", {"k": "="})
+eq("k=a=b:c d", {"k": "a=b:c d"})
+eq("k=\U0001F600\u00e9\u4e2d", {"k": "\U0001F600\u00e9\u4e2d"})
+eq("\u00e9\u4e2d=\u00e9", {"\u00e9\u4e2d": "\u00e9"})
+eq("k=\\u00e9\\\n\\u00e9", {"k": "\xe9\xe9"})
+for b in ["k=\\ud83d", "k=\\ude00", "k=\\ud83dx", "k=\\ud83d\\u0041", "k=\\ud83d\\ud83d", "k=\\ude00\\ud83d", "k=\\ud83d\\\\ude00",
+          "k=\\ud83d\\ude0", "k=\\ud83dxxdc00", "k=\\ud83d\\\\udc00", "k=\\ud83d\\xdc00", "k=\\u12", "k=\\u", "k=\\u12G4", "k=\\u+123", "k=\\u 123", "k=\\u12_3", "k=\\u-123", "k=\\u0x41", "k=\\u\uff11\uff10\uff10\uff10",
+          "k=\\u00e", "k=\\ube", "\\u00zz=1", "\\ud800=1", "k=\\uDC00\\uDC00", "k=\\u\u0661\u0662\u0663\u0664", "k=\\u004\n1",
+          "a=1\nk=\\u12\nb=2", "k=\\ud83d\\\n\\ude00x\\u1"]:
+    assert bad(b), b
+eq("k=\\ud83d\\\n\\ude00", {"k": "\U0001F600"})
+eq("k=\\ud83d\\\n  \\ude00", {"k": "\U0001F600"})
+assert bad("k=\\ud83d\n\\ude00")
+assert bad("k=\\u004\n1")
+for t in [None, b"a=b", ["a=b"], 5, {"a": "b"}, bytearray(b"a")]:
+    assert bad(t), t
+
+# oracle: build random entries from known keys/values, write them in a random spelling, expect the dict
+random.seed(4013)
+
+def uesc(cu):
+    h = "%04x" % cu
+    return "\\u" + (h.upper() if random.random() < 0.5 else h)
+
+def tokens(s, is_key, ws_sep=False):
+    toks = []
+    for n, ch in enumerate(s):
+        o = ord(ch)
+        first = n == 0
+        if ch == "\t":
+            t = random.choice(["\\t", "\\u0009"])
+        elif ch == "\n":
+            t = random.choice(["\\n", "\\u000a"])
+        elif ch == "\r":
+            t = random.choice(["\\r", "\\u000d"])
+        elif ch == "\f":
+            t = random.choice(["\\f", "\\u000c"])
+        elif ch == "\\":
+            t = random.choice(["\\\\", "\\\\", "\\u005c"])
+        elif ch == " ":
+            t = random.choice(["\\ ", "\\u0020"]) if (is_key or first or random.random() < 0.3) else " "
+        elif ch in "=:":
+            t = random.choice(["\\" + ch, uesc(o)]) if (is_key or (first and ws_sep) or random.random() < 0.3) else ch
+        elif ch in "#!":
+            t = ch if (not first and random.random() < 0.7) else random.choice(["\\" + ch, uesc(o)])
+        elif o > 0xFFFF:
+            v = o - 0x10000
+            t = ch if random.random() < 0.5 else uesc(0xD800 + (v >> 10)) + uesc(0xDC00 + (v & 0x3FF))
+        elif o > 127:
+            t = ch if random.random() < 0.6 else uesc(o)
+        elif ch in "tnrfu":
+            t = ch if random.random() < 0.9 else uesc(o)
+        else:
+            t = random.choice([ch, ch, ch, "\\" + ch, uesc(o)])
+        toks.append(t)
+    return toks
+
+ALPHA = list("abcXY01 =:#!\\\t\n\f\r.-_/") + ["\xe9", "\u4e2d", "\U0001F600", "\xa0", "\x0b", "\x1c", "\x85", "\u2028", "\U00010000", "\U0010FFFF"]
+KEYPOOL = []
+
+def rtext(lo, hi, special=0.5):
+    n = random.randint(lo, hi)
+    return "".join(random.choice(ALPHA) if random.random() < special else random.choice("abcdefgxyz") for _ in range(n))
+
+WS = " \t\f"
+
+def entry_text(k, v):
+    kinds = random.choice(["ws", "eq", "eq", "colon", "none"])
+    if kinds == "none" and v:
+        kinds = "eq"
+    if not k and kinds in ("ws", "none"):
+        kinds = "eq"
+    kt = tokens(k, True)
+    vt = tokens(v, False, kinds in ("ws", "none"))
+    if kinds == "none":
+        sep = []
+    elif kinds == "ws":
+        sep = [random.choice(WS) for _ in range(random.randint(1, 3))]
+    else:
+        sep = [random.choice(WS) for _ in range(random.choice([0, 0, 1, 2]))] if k else []
+        sep += ["=" if kinds == "eq" else ":"]
+        sep += [random.choice(WS) for _ in range(random.choice([0, 0, 1, 2]))]
+    toks = kt + sep + vt
+    out = [toks[0]] if toks else [""]
+    for i in range(1, len(toks)):
+        t = toks[i]
+        if random.random() < 0.12 and t[0] not in WS:
+            out.append("\\" + random.choice(["\n", "\r\n", "\r"]) + random.choice(["", "", " ", "\t", "  \f"]))
+        out.append(t)
+    line = "".join(out)
+    if random.random() < 0.08:
+        tail = random.choice(["", " ", "\t\f"])
+        line += "\\" + random.choice(["\n", "\r\n"] if not tail else ["\n", "\r\n", "\r"]) + tail
+        return line, True
+    return line, False
+
+def build(nent):
+    exp = {}
+    parts = []
+    for _ in range(nent):
+        if random.random() < 0.3:
+            c = random.choice(["", " ", "\t", "\f "]) + random.choice(["#", "!"]) + rtext(0, 6, 0.2).replace("\n", "x").replace("\r", "y")
+            if random.random() < 0.4:
+                c += "\\"
+            parts.append(c)
+        if random.random() < 0.2:
+            parts.append(random.choice(["", " ", "\t\f"]))
+        if KEYPOOL and random.random() < 0.3:
+            k = random.choice(KEYPOOL)
+        else:
+            k = rtext(0, 5)
+            KEYPOOL.append(k)
+        v = rtext(0, 9)
+        exp[k] = v
+        line, tail_blank = entry_text(k, v)
+        parts.append(line)
+    text = ""
+    for i, ln in enumerate(parts):
+        text += ln
+        if i < len(parts) - 1 or random.random() < 0.5:
+            text += random.choice(["\n", "\r\n", "\r"])
+    return text, exp
+
+n_nonempty = 0
+for _ in range(230):
+    KEYPOOL.clear()
+    text, exp = build(random.randint(0, 7))
+    got = load_properties(text)
+    assert got == exp, (text, got, exp)
+    n_nonempty += bool(exp)
+assert n_nonempty > 150
+
+# every random text with one corrupted escape must fail
+for _ in range(40):
+    KEYPOOL.clear()
+    text, exp = build(random.randint(1, 4))
+    bad_text = text + random.choice(["\nz=\\u12", "\nz=\\ud800", "\nz=\\u12x4", "\n\\udc00=z", "\nz=\\ud83d\\u0041"])
+    assert bad(bad_text), bad_text
+''', r'''
+_WS = " \t\f"
+_HEX = "0123456789abcdefABCDEF"
+
+
+def _lines(text):
+    out = []
+    cur = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\n" or c == "\r":
+            out.append("".join(cur))
+            cur = []
+            if c == "\r" and i + 1 < n and text[i + 1] == "\n":
+                i += 1
+        else:
+            cur.append(c)
+        i += 1
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def _unescape(raw):
+    out = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        c = raw[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            break
+        d = raw[i]
+        i += 1
+        if d == "t":
+            out.append("\t")
+        elif d == "n":
+            out.append("\n")
+        elif d == "r":
+            out.append("\r")
+        elif d == "f":
+            out.append("\f")
+        elif d == "u":
+            cu, i = _unit(raw, i)
+            if 0xD800 <= cu <= 0xDBFF:
+                if raw[i:i + 2] != "\\u":
+                    raise ValueError("lone high surrogate")
+                lo, i = _unit(raw, i + 2)
+                if not 0xDC00 <= lo <= 0xDFFF:
+                    raise ValueError("bad low surrogate")
+                cu = 0x10000 + ((cu - 0xD800) << 10) + (lo - 0xDC00)
+            elif 0xDC00 <= cu <= 0xDFFF:
+                raise ValueError("lone low surrogate")
+            out.append(chr(cu))
+        else:
+            out.append(d)
+    return "".join(out)
+
+
+def _unit(raw, i):
+    h = raw[i:i + 4]
+    if len(h) != 4 or any(ch not in _HEX for ch in h):
+        raise ValueError("bad \\u escape")
+    return int(h, 16), i + 4
+
+
+def load_properties(text):
+    if not isinstance(text, str):
+        raise ValueError("text must be str")
+    lines = _lines(text)
+    result = {}
+    i = 0
+    while i < len(lines):
+        s = lines[i].lstrip(_WS)
+        i += 1
+        if not s or s[0] in "#!":
+            continue
+        while True:
+            run = len(s) - len(s.rstrip("\\"))
+            if run % 2 == 0:
+                break
+            s = s[:-1]
+            if i >= len(lines):
+                break
+            s += lines[i].lstrip(_WS)
+            i += 1
+        n = len(s)
+        j = 0
+        while j < n and s[j] not in _WS and s[j] not in "=:":
+            j += 2 if s[j] == "\\" else 1
+        key = s[:j]
+        j = min(j, n)
+        while j < n and s[j] in _WS:
+            j += 1
+        if j < n and s[j] in "=:":
+            j += 1
+            while j < n and s[j] in _WS:
+                j += 1
+        result[_unescape(key)] = _unescape(s[j:])
+    return result
+''')
+
+task("v4_14_ustar_entries", r'''
+Write `ustar_entries(data)` that lists the entries of a POSIX ustar archive held in `data` (`bytes` or `bytearray`, else ValueError). It returns a list of tuples `(name, kind, size)` in archive order: name a str, kind one of "file", "dir", "symlink", "hardlink", size an int. Every failure raises ValueError. The archive is a sequence of 512-byte blocks.
+Header block layout (byte offsets, end excluded): name 0-100, mode 100-108, uid 108-116, gid 116-124, size 124-136, mtime 136-148, checksum 148-156, typeflag 156-157, linkname 157-257, magic 257-263, version 263-265, uname 265-297, gname 297-329, devmajor 329-337, devminor 337-345, prefix 345-500, unused 500-512. The fields mode, uid, gid, mtime, linkname, uname, gname, devmajor, devminor and the unused bytes are ignored (never checked) but they are part of the checksum.
+Reading starts at offset 0. At each header position look at the next 512 bytes:
+- If fewer than 512 bytes remain (none included), ValueError. So data that ends at a header position without an end marker is an error, and so is empty data.
+- A block of 512 zero bytes is a zero block. The first zero block must be followed immediately by a second full zero block, else ValueError. The archive then ends and everything after those two blocks is ignored. The result is the list so far.
+- Any other block is a header. Its magic must be exactly b"ustar\x00" and its version exactly b"00", else ValueError. The checksum field must hold the sum of all 512 header bytes, taken as unsigned values, with the 8 checksum-field bytes counted as 0x20 each; a different value is a ValueError.
+- Octal fields (size and checksum): drop leading spaces (0x20), then there must be at least one ASCII octal digit 0-7 and the value is those digits read in base 8 (no sign, no prefix, no other digit); after the digits only NUL or space bytes may follow, up to the end of the field. Anything else is a ValueError. A field may be entirely filled by digits.
+- typeflag: b"0" or a NUL byte is a regular file (kind "file"), b"5" a "dir", b"2" a "symlink", b"1" a "hardlink". Any other byte is a ValueError.
+- Text fields (name, prefix): the bytes before the first NUL (or the whole field if it has none), decoded as UTF-8 strictly (invalid is a ValueError). If the name field is empty it is a ValueError, even with a prefix. The entry name is prefix + "/" + name when the prefix is not empty, else name; it is returned exactly as stored (a trailing "/" stays).
+- Data: after the header of a "file", `size` data bytes follow, padded to a multiple of 512 with arbitrary bytes; all of those blocks must be present, else ValueError. The next header is right after them. A "dir", "symlink" or "hardlink" has no data blocks whatever its size field says (the field must still be a valid octal field), and its reported size is 0. A "file" reports the size field.
+Example: a header with name b"a", size field b"00000000003\x00", typeflag b"0", magic b"ustar\x00", version b"00", everything else NUL, has checksum sum 1587 = 0o3063, so its field may read b"003063\x00 ", b"  3063 \x00", b"00003063" and so on. That header, then b"xyz" + 509 NULs, then 1024 NULs gives [("a", "file", 3)].
+''', r'''
+import io, random, tarfile
+
+Z = bytes(512)
+
+def seal(h, spell=None):
+    h = bytearray(h)
+    h[148:156] = b" " * 8
+    s = sum(h)
+    h[148:156] = spell(s) if spell else ("%06o" % s).encode() + b"\0 "
+    assert len(h) == 512
+    return bytes(h)
+
+def hdr(name=b"a", size=b"00000000000\0", flag=b"0", prefix=b"", magic=b"ustar\0", ver=b"00", spell=None, extra=None):
+    assert len(name) <= 100 and len(size) <= 12 and len(prefix) <= 155
+    h = bytearray(512)
+    h[0:len(name)] = name
+    h[124:124 + len(size)] = size
+    h[156:157] = flag
+    h[257:263] = magic
+    h[263:265] = ver
+    h[345:345 + len(prefix)] = prefix
+    for off, val in (extra or {}).items():
+        h[off:off + len(val)] = val
+    return seal(h, spell)
+
+def blocks(d):
+    return d + bytes(-len(d) % 512)
+
+END = Z + Z
+
+def bad(d):
+    try:
+        ustar_entries(d)
+    except ValueError:
+        return True
+    return False
+
+def eq(d, exp):
+    got = ustar_entries(d)
+    assert got == exp and type(got) is list and all(type(x) is tuple and type(x[0]) is str and type(x[1]) is str and type(x[2]) is int for x in got), (got, exp)
+
+# the example in the statement
+h = hdr(b"a", b"00000000003\0")
+assert h[148:156] == b"003063\0 "
+eq(h + blocks(b"xyz") + END, [("a", "file", 3)])
+for sp in [b"003063\0 ", b"  3063 \0", b"00003063", b" 003063 ", b"3063\0\0\0\0", b"3063    ", b"0003063\0", b"    3063"]:
+    eq(hdr(b"a", b"00000000003\0", spell=lambda s: sp) + blocks(b"xyz") + END, [("a", "file", 3)])
+eq(END, [])
+eq(END + b"junk", [])
+eq(END + Z + Z, [])
+eq(END + h + b"x", [])
+assert bad(b"")
+assert bad(Z)
+assert bad(Z + bytes(511))
+assert bad(bytes(100))
+assert bad(Z + h)
+assert bad(Z + hdr(b"b") + END)
+assert bad(Z + b"\1" + bytes(511))
+assert bad(bytes(511) + b"\1" + END)
+assert bad(bytes(300) + b"x" + bytes(211) + END)
+assert bad(bytes(300) + b"\1" + bytes(211) + END)
+assert bad(h + blocks(b"xyz"))
+assert bad(h + blocks(b"xyz") + Z)
+assert bad(h + blocks(b"xyz") + Z + bytes(511))
+assert bad(h + blocks(b"xyz") + Z + b"\0" * 400 + b"\1" + b"\0" * 111)
+assert bad(h + blocks(b"xyz")[:511])
+assert bad(h)
+assert bad(h[:511])
+assert bad(h[:511] + END)
+eq(bytearray(h + blocks(b"xyz") + END), [("a", "file", 3)])
+for t in ["x", None, 5, [h], memoryview(END), (h,)]:
+    assert bad(t), t
+# sizes and padding
+for n in [0, 1, 511, 512, 513, 1024, 1025]:
+    d = hdr(b"f", ("%011o" % n).encode() + b"\0") + blocks(b"q" * n) + END
+    eq(d, [("f", "file", n)])
+    if n:
+        k = (n + 511) // 512 * 512
+        full = hdr(b"f", ("%011o" % n).encode() + b"\0") + b"q" * k
+        assert bad(full[:512 + k - 1])
+        assert bad(full)
+        eq(full + END, [("f", "file", n)])
+assert bad(hdr(b"f", b"00000000001\0") + END[:512])
+eq(hdr(b"f", b"00000000001\0") + Z + END, [("f", "file", 1)])
+eq(hdr(b"f", b"00000000001\0") + b"\1" * 512 + END, [("f", "file", 1)])
+eq(hdr(b"f", b"0000000000\0\0") + END, [("f", "file", 0)])
+assert bad(hdr(b"f", b"77777777777\0") + END)
+assert bad(hdr(b"f", b"777777777777") + END)
+# links and directories carry no data
+eq(hdr(b"d/", b"00000000000\0", b"5") + END, [("d/", "dir", 0)])
+eq(hdr(b"d", b"00000001750\0", b"5") + END, [("d", "dir", 0)])
+eq(hdr(b"l", b"00000001750\0", b"2", extra={157: b"target"}) + hdr(b"h", b"77777777777\0", b"1", extra={157: b"l"}) + END,
+   [("l", "symlink", 0), ("h", "hardlink", 0)])
+assert bad(hdr(b"d", b"garbage", b"5") + END)
+assert bad(hdr(b"d", b"", b"5") + END)
+assert bad(hdr(b"l", b"8", b"2") + END)
+# typeflag
+eq(hdr(b"x", flag=b"\0") + END, [("x", "file", 0)])
+eq(hdr(b"x", b"00000000002\0", flag=b"\0") + blocks(b"ab") + hdr(b"y", flag=b"0") + END, [("x", "file", 2), ("y", "file", 0)])
+for fl in [b"3", b"4", b"6", b"7", b"x", b"g", b"L", b"K", b"A", b"S", b"D", b"M", b"V", b" ", b"\xff", b"/", b"a", b"\1"]:
+    assert bad(hdr(b"x", flag=fl) + END), fl
+# magic and version
+for mg, vr in [(b"ustar ", b" \0"), (b"ustar ", b"00"), (b"ustar\0", b"  "), (b"ustar\0", b"0\0"), (b"ustar\0", b"01"), (b"ustar\0", b"\0\0"),
+               (b"USTAR\0", b"00"), (b"ustar\0", b"10"), (b"\0" * 6, b"00"), (b"ustar\0", b"\0\0"), (b"ustaR\0", b"00"), (b"ustar1", b"00"), (b"\0" * 6, b"\0\0")]:
+    assert bad(hdr(b"x", magic=mg, ver=vr) + END), (mg, vr)
+# checksum
+for sp in [b"003062\0 ", b"003064\0 ", b"        ", b"\0" * 8, b"003063x ", b"00306 3\0", b"003063 3", b"00308\0\0\0", b"-003063 ", b"+003063 ", b"0o3063\0 ",
+           b"3063\0 \0x", b"\x00003063 ", b"003063\t\0", b"0x3063\0\0", b"003063\n\0", b"\xff003063\0"]:
+    assert bad(hdr(b"a", b"00000000003\0", spell=lambda s: sp) + blocks(b"xyz") + END), sp
+# checksum: signed bytes, and a checksum computed over the field as it stands
+raw = bytearray(hdr(b"a" + b"\xc3\xa9", b"00000000000\0"))
+assert bytes(raw[148:156]) != b" " * 8
+eq(bytes(raw) + END, [("a\xe9", "file", 0)])
+signed = bytearray(raw)
+s = sum(x - 256 if x > 127 else x for x in (bytes(signed[:148]) + b" " * 8 + bytes(signed[156:])))
+signed[148:156] = ("%06o" % s).encode() + b"\0 "
+assert bytes(signed) != bytes(raw)
+assert bad(bytes(signed) + END)
+filled = bytearray(hdr(b"a"))
+filled[148:156] = b"0" * 8
+assert bad(bytes(filled) + END) or sum(filled[:148]) + 256 + sum(filled[156:]) == 0
+# size forms
+for sz, v in [(b"00000000012\0", 10), (b"          12", 10), (b"12\0\0\0\0\0\0\0\0\0\0", 10), (b"12          ", 10), (b"  12        ", 10), (b"00000000012 ", 10),
+              (b"0000000001 \0", 1), (b"1\0 \0 \0 \0 \0 ", 1), (b"000000000012", 10), (b"0\0\0\0\0\0\0\0\0\0\0\0", 0), (b"0           ", 0), (b"00000000000\0", 0)]:
+    eq(hdr(b"f", sz) + blocks(b"z" * v) + END, [("f", "file", v)])
+for sz in [b"", b"\0" * 12, b" " * 12, b"00000000008\0", b"0000000001a\0", b"1 2\0\0\0\0\0\0\0\0\0", b"-0000000001\0", b"+0000000001\0", b"0000000001\0x",
+           b"\0" + b"1" * 11, b"1\0" + b"1" * 10, b"0x0000000001", b"0o0000000001", b"\x80" + b"\0" * 11, b"1e1\0\0\0\0\0\0\0\0\0", b"0000000001.\0", b"0000000001\n\0", b"0000000001\t "]:
+    assert bad(hdr(b"f", sz) + blocks(b"z" * 8) + END), sz
+# names
+eq(hdr(b"dir/sub/file.txt") + END, [("dir/sub/file.txt", "file", 0)])
+eq(hdr(b"n", prefix=b"p") + END, [("p/n", "file", 0)])
+eq(hdr(b"n", prefix=b"a/b/c") + END, [("a/b/c/n", "file", 0)])
+eq(hdr(b"n/", prefix=b"a/", flag=b"5") + END, [("a//n/", "dir", 0)])
+eq(hdr(b"n", prefix=b"\0" + b"zz") + END, [("n", "file", 0)])
+eq(hdr(b"n", prefix=b"\xc3\xa9") + END, [("\xe9/n", "file", 0)])
+eq(hdr(b"\xe4\xb8\xad\xe6\x96\x87") + END, [("中文", "file", 0)])
+eq(hdr(b"\xf0\x9f\x98\x80") + END, [("\U0001F600", "file", 0)])
+eq(hdr(b"ab\0cd") + END, [("ab", "file", 0)])
+eq(hdr(b"x" * 100) + END, [("x" * 100, "file", 0)])
+eq(hdr(b"x" * 100, prefix=b"y" * 155) + END, [("y" * 155 + "/" + "x" * 100, "file", 0)])
+eq(hdr(b"n", extra={345: b"\0y"}) + END, [("n", "file", 0)])
+assert bad(hdr(b"") + END)
+assert bad(hdr(b"", prefix=b"p") + END)
+assert bad(hdr(b"\0abc") + END)
+for nm in [b"\xff", b"a\xc3", b"\xc3(", b"\xed\xa0\x80", b"\xc0\x80", b"\xf8\x88\x80\x80\x80", b"\xe2\x82", b"ok\xfe"]:
+    assert bad(hdr(nm) + END), nm
+    assert bad(hdr(b"ok", prefix=nm) + END), nm
+eq(hdr(b"ok", extra={2: b"\0\xff"}) + END, [("ok", "file", 0)])
+eq(hdr(b"ok", extra={345 + 10: b"\xff", 497: b"\xff\xfe"}) + END, [("ok", "file", 0)])
+# ignored fields hold anything
+junk = {100: b"\xff" * 8, 108: b"zz\x01", 116: b"\x80" * 8, 136: b"not octal!!!!", 157: b"\xff" * 100, 265: b"\xfe" * 32, 297: b"\xfd" * 32, 329: b"\xfc" * 16,
+        500: b"\xfb" * 12}
+eq(hdr(b"a", extra=junk) + END, [("a", "file", 0)])
+eq(hdr(b"a", extra=junk) + hdr(b"b", b"00000000001\0", extra=junk) + blocks(b"q") + END + b"\xff" * 1000, [("a", "file", 0), ("b", "file", 1)])
+# flipped header byte (outside the checksum field) always fails
+d = bytearray(hdr(b"a", extra=junk) + END)
+for off in [0, 5, 99, 100, 124, 130, 135, 136, 147, 156, 157, 256, 257, 262, 263, 264, 265, 344, 345, 499, 500, 511]:
+    e = bytearray(d)
+    e[off] ^= 0x01
+    assert bad(bytes(e)), off
+# duplicates and order
+eq(hdr(b"a") + hdr(b"a") + END, [("a", "file", 0), ("a", "file", 0)])
+
+# oracle: archives written by tarfile (USTAR_FORMAT), expected list recorded while writing
+random.seed(4014)
+PARTS = ["a", "bb", "dir", "x y", "\xe9t\xe9", "中", "n" * 30, "q" * 60, "v-1.2_z", "0"]
+
+def rname():
+    k = random.choice([1, 1, 2, 3, 5])
+    return "/".join(random.choice(PARTS) for _ in range(k))
+
+def build():
+    bio = io.BytesIO()
+    exp = []
+    with tarfile.open(fileobj=bio, mode="w", format=tarfile.USTAR_FORMAT, encoding="utf-8") as tf:
+        for _ in range(random.randint(0, 6)):
+            name = rname()
+            if random.random() < 0.15:
+                name = "/".join([random.choice(PARTS[5:8]) for _ in range(random.randint(3, 5))]) + "/" + name
+            k = random.choice(["file", "file", "file", "dir", "symlink", "hardlink"])
+            ti = tarfile.TarInfo(name)
+            ti.mtime = random.randrange(10 ** 9)
+            ti.mode = random.choice([0o644, 0o755, 0o600])
+            ti.uname = random.choice(["", "root", "user"])
+            data = b""
+            if k == "file":
+                data = bytes(random.randrange(256) for _ in range(random.choice([0, 1, 7, 100, 511, 512, 513, 1024, 1300])))
+                ti.size = len(data)
+            elif k == "dir":
+                ti.type = tarfile.DIRTYPE
+            else:
+                ti.type = tarfile.SYMTYPE if k == "symlink" else tarfile.LNKTYPE
+                ti.linkname = random.choice(PARTS)
+            try:
+                tf.addfile(ti, io.BytesIO(data) if k == "file" else None)
+            except ValueError:
+                continue
+            exp.append((name + "/" if k == "dir" else name, k, len(data)))
+    return bio.getvalue(), exp
+
+def spell_size(n):
+    f = random.choice([("%011o" % n).encode() + b"\0", ("%011o" % n).encode() + b" ", (" " * random.randint(0, 5) + "%o" % n).encode(),
+                       ("%012o" % n).encode(), ("%o" % n).encode()])
+    return f.ljust(12, random.choice([b"\0", b" "])) if len(f) < 12 else f
+
+def respell(a, exp):
+    """Re-encode every header with legal alternative spellings and random junk in the ignored fields."""
+    out = bytearray()
+    pos = 0
+    for name, k, sz in exp:
+        h = bytearray(a[pos:pos + 512])
+        n_field = bytes(h[124:136]).strip(b"\0 ")
+        if k == "file" or random.random() < 0.5:
+            h[124:136] = spell_size(int(n_field, 8))
+        if k == "file" and random.random() < 0.3:
+            h[156:157] = b"\0"
+        for off, ln in [(100, 8), (108, 8), (116, 8), (136, 12), (265, 32), (297, 32), (329, 16), (500, 12)]:
+            if random.random() < 0.4:
+                h[off:off + ln] = bytes(random.randrange(256) for _ in range(ln))
+        nm = bytes(h[0:100]).split(b"\0")[0]
+        if len(nm) < 100 and random.random() < 0.3:
+            h[len(nm):100] = b"\0" + bytes(random.randrange(1, 256) for _ in range(99 - len(nm)))
+        pre = bytes(h[345:500]).split(b"\0")[0]
+        if len(pre) < 155 and random.random() < 0.3:
+            h[345 + len(pre):500] = b"\0" + bytes(random.randrange(1, 256) for _ in range(154 - len(pre)))
+        out += seal(h, random.choice([None, lambda s: ("%6o\0 " % s).encode(), lambda s: ("%08o" % s).encode(), lambda s: (" %6o\0" % s).encode(),
+                                      lambda s: ("%07o\0" % s).encode(), lambda s: ("%-6o\0 " % s).encode(), lambda s: ("%-8o" % s).encode()]))
+        pos += 512
+        if k == "file":
+            ln = (sz + 511) // 512 * 512
+            body = bytearray(a[pos:pos + ln])
+            if sz < ln and random.random() < 0.5:
+                body[sz:] = bytes(random.randrange(256) for _ in range(ln - sz))
+            out += body
+            pos += ln
+    return bytes(out), pos
+
+def entries_end(exp):
+    return sum(512 + ((s + 511) // 512 * 512 if k == "file" else 0) for _, k, s in exp)
+
+nonempty = 0
+nbad = 0
+for _ in range(110):
+    a, exp = build()
+    assert a[entries_end(exp):entries_end(exp) + 1024] == END
+    eq(a, [tuple(x) for x in exp])
+    nonempty += bool(exp)
+    if exp:
+        r, end = respell(a, exp)
+        assert end == entries_end(exp)
+        full = r + END + bytes(random.choice([0, 3, 512, 9000]))
+        eq(full, [tuple(x) for x in exp])
+        full = r + END + bytes(random.randrange(256) for _ in range(random.choice([1, 100, 2000])))
+        eq(full, [tuple(x) for x in exp])
+        # cuts before the end marker are errors, cuts after it are fine
+        cut = random.randrange(0, end + 1024)
+        assert bad(full[:cut]), (cut, end)
+        cut2 = random.randrange(end + 1024, len(full) + 1)
+        eq(full[:cut2], [tuple(x) for x in exp])
+        # one flipped byte in a random header
+        offs = []
+        p = 0
+        for _n, k, s in exp:
+            offs.append(p)
+            p += 512 + ((s + 511) // 512 * 512 if k == "file" else 0)
+        hp = random.choice(offs)
+        o = random.choice([x for x in range(512) if not 148 <= x < 156])
+        e = bytearray(r + END)
+        e[hp + o] = (e[hp + o] + random.randrange(1, 256)) % 256
+        assert bad(bytes(e)), (hp, o)
+        nbad += 1
+        # a second end block that is not zero
+        assert bad(r + Z + hdr(b"late")) and bad(r + Z + b"\0" * 511 + b"\1" + END)
+assert nonempty > 70 and nbad > 70
+''', r'''
+_KINDS = {b"0": "file", b"\x00": "file", b"5": "dir", b"2": "symlink", b"1": "hardlink"}
+_ZERO = bytes(512)
+
+
+def _octal(field):
+    f = field.lstrip(b" ")
+    i = 0
+    while i < len(f) and 0x30 <= f[i] <= 0x37:
+        i += 1
+    if i == 0 or f[i:].strip(b"\x00 "):
+        raise ValueError("bad octal field")
+    return int(f[:i], 8)
+
+
+def _text(field):
+    return field.split(b"\x00", 1)[0].decode("utf-8")
+
+
+def ustar_entries(data):
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data must be bytes")
+    data = bytes(data)
+    n = len(data)
+    pos = 0
+    out = []
+    while True:
+        if pos + 512 > n:
+            raise ValueError("truncated archive")
+        blk = data[pos:pos + 512]
+        if blk == _ZERO:
+            if data[pos + 512:pos + 1024] == _ZERO:
+                return out
+            raise ValueError("missing second zero block")
+        if blk[257:263] != b"ustar\x00" or blk[263:265] != b"00":
+            raise ValueError("bad magic")
+        if _octal(blk[148:156]) != sum(blk[:148]) + 256 + sum(blk[156:]):
+            raise ValueError("bad checksum")
+        size = _octal(blk[124:136])
+        kind = _KINDS.get(blk[156:157])
+        if kind is None:
+            raise ValueError("bad typeflag")
+        name = _text(blk[0:100])
+        prefix = _text(blk[345:500])
+        if not name:
+            raise ValueError("empty name")
+        if prefix:
+            name = prefix + "/" + name
+        pos += 512
+        if kind == "file":
+            pos += (size + 511) // 512 * 512
+            if pos > n:
+                raise ValueError("truncated data")
+        else:
+            size = 0
+        out.append((name, kind, size))
+''')
+
+task("v4_15_msgpack_loads", r'''
+Write `msgpack_loads(data)` that decodes exactly one MessagePack value from `data` (`bytes` or `bytearray`, else ValueError) and returns it. Every failure raises ValueError. Multi-byte numbers and lengths are big-endian. The first byte `b` of a value selects its type:
+- 0x00-0x7f: the int b. 0xe0-0xff: the int b - 256.
+- 0x80-0x8f: a map with (b & 0x0f) entries. 0x90-0x9f: an array with (b & 0x0f) elements. 0xa0-0xbf: a str of (b & 0x1f) bytes.
+- 0xc0: None. 0xc2: False. 0xc3: True.
+- 0xc4, 0xc5, 0xc6: bin; a 1, 2 or 4 byte length follows, then that many bytes, returned as `bytes`.
+- 0xca: float32, 0xcb: float64, both returned as a Python float (a float32 is widened exactly).
+- 0xcc, 0xcd, 0xce, 0xcf: unsigned int of 1, 2, 4, 8 bytes. 0xd0, 0xd1, 0xd2, 0xd3: signed (two's complement) int of 1, 2, 4, 8 bytes.
+- 0xd9, 0xda, 0xdb: str; a 1, 2 or 4 byte length follows, then that many bytes.
+- 0xdc, 0xdd: array; a 2 or 4 byte element count follows, then the elements. 0xde, 0xdf: map; a 2 or 4 byte entry count follows, then key, value, key, value and so on.
+- 0xc1 (never used), 0xc7-0xc9 and 0xd4-0xd8 (the ext types) are a ValueError.
+Rules:
+- Non-minimal encodings are valid: the int 5 may be 0xcf followed by eight bytes, a 3-byte str may use 0xdb, and so on. Ints are returned as int, whatever their encoded width; floats NaN and infinity are allowed.
+- Every str payload must be valid UTF-8 (strict: no overlong forms, no surrogates, nothing above U+10FFFF), else ValueError.
+- A map is returned as a dict in wire order. Its keys must be a str or an int (a bool is not accepted); a key that is None, bool, float, bytes, an array or a map is a ValueError. Two equal keys (same type and value) in one map are a ValueError; the int 1 and the str "1" are different keys.
+- `data` must hold exactly one value: empty data, a missing byte anywhere (header, length, payload, element, key or value), or any byte left after the value is a ValueError.
+- A count or length that claims more than the data can still hold must fail without allocating for it: an array count larger than the number of bytes left, or a map entry count whose 2 * count is larger, or a str or bin length larger than the bytes left, is a ValueError (a 10-byte input with a 4-billion-element array header must not allocate anything).
+- At most 16 arrays and maps may be open (nested in each other) at once: 16 nested arrays are fine, 17 are a ValueError, even if the innermost is empty.
+Examples (hex):
+82 a1 61 01 a1 62 c3 -> {"a": 1, "b": True}
+93 01 ce 00000002 a1 78 -> [1, 2, "x"]
+cb 3ff0000000000000 -> 1.0; c0 c0 -> ValueError (a byte is left); 81 c0 01 -> ValueError (None key)
+''', r'''
+import math, random, struct
+
+def bad(d):
+    try:
+        msgpack_loads(d)
+    except ValueError:
+        return True
+    return False
+
+def same(a, b):
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, float):
+        return (a == b and math.copysign(1.0, a) == math.copysign(1.0, b)) or (a != a and b != b)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict):
+        return len(a) == len(b) and all(same(k, l) and same(a[k], b[l]) for k, l in zip(a, b))
+    return a == b
+
+def eq(h, exp):
+    d = bytes.fromhex(h) if isinstance(h, str) else h
+    got = msgpack_loads(d)
+    assert same(got, exp), (h if isinstance(h, str) else d[:40], got, exp)
+    got = msgpack_loads(bytearray(d))
+    assert same(got, exp)
+
+def B(h):
+    return bytes.fromhex(h)
+
+eq("82 a1 61 01 a1 62 c3", {"a": 1, "b": True})
+eq("93 01 ce 00000002 a1 78", [1, 2, "x"])
+eq("cb 3ff0000000000000", 1.0)
+assert bad(B("c0c0"))
+assert bad(B("81c001"))
+eq("c0", None); eq("c2", False); eq("c3", True)
+assert bad(b"")
+assert bad(bytearray())
+for t in ["c0", None, 5, [1], (1,), memoryview(b"\xc0"), 1.5]:
+    assert bad(t), t
+# fixints
+eq("00", 0); eq("7f", 127); eq("e0", -32); eq("ff", -1); eq("f0", -16); eq("01", 1); eq("e1", -31)
+# sized ints
+eq("cc 00", 0); eq("cc ff", 255); eq("cd 0100", 256); eq("cd ffff", 65535); eq("ce 00010000", 65536); eq("ce ffffffff", 2 ** 32 - 1)
+eq("cf 0000000100000000", 2 ** 32); eq("cf ffffffffffffffff", 2 ** 64 - 1); eq("cf 0000000000000005", 5); eq("cf 8000000000000000", 2 ** 63)
+eq("d0 80", -128); eq("d0 7f", 127); eq("d0 ff", -1); eq("d0 00", 0); eq("d1 8000", -32768); eq("d1 7fff", 32767); eq("d1 ffff", -1)
+eq("d2 80000000", -2 ** 31); eq("d2 7fffffff", 2 ** 31 - 1); eq("d2 ffffffff", -1); eq("d3 8000000000000000", -2 ** 63)
+eq("d3 7fffffffffffffff", 2 ** 63 - 1); eq("d3 ffffffffffffffff", -1); eq("d3 0000000000000007", 7); eq("d0 e0", -32)
+for h in ["cc", "cd 01", "ce 000000", "cf 00000000000000", "d0", "d1 80", "d2 800000", "d3 80000000000000", "cc 00 00", "d0 00 00", "cf 0000000000000000 00"]:
+    assert bad(B(h.replace(" ", ""))), h
+# floats
+eq("ca 3fc00000", 1.5); eq("ca bf800000", -1.0); eq("ca 00000001", 1.401298464324817e-45); eq("ca 7f7fffff", 3.4028234663852886e+38)
+eq("ca 7f800000", float("inf")); eq("ca ff800000", float("-inf")); eq("ca 80000000", -0.0); eq("ca 00000000", 0.0)
+eq("cb 3fb999999999999a", 0.1); eq("cb 8000000000000000", -0.0); eq("cb 7ff0000000000000", float("inf")); eq("cb fff0000000000000", float("-inf"))
+eq("cb 0000000000000001", 5e-324); eq("cb 7fefffffffffffff", 1.7976931348623157e308)
+assert math.isnan(msgpack_loads(B("ca7fc00000"))) and math.isnan(msgpack_loads(B("cb7ff8000000000000"))) and math.isnan(msgpack_loads(B("ca ffc00001".replace(" ", ""))))
+for h in ["ca", "ca 3f", "ca 3fc000", "cb", "cb 3ff00000000000", "ca 3fc00000 00", "cb 3ff0000000000000 00"]:
+    assert bad(B(h.replace(" ", ""))), h
+# strings
+eq("a0", ""); eq("a3 616263", "abc"); eq("a2 c3a9", "\xe9"); eq("a4 f09f9880", "\U0001F600"); eq("a3 e4b8ad", "中"); eq("a1 00", "\0")
+eq("d9 00", ""); eq("d9 03 616263", "abc"); eq("da 0003 616263", "abc"); eq("db 00000003 616263", "abc"); eq("da 0000", ""); eq("db 00000000", "")
+eq("a3 efbfbf", "￿"); eq("a4 f48fbfbf", "\U0010ffff"); eq("a3 e0a080", "ࠀ"); eq("a3 ed9fbf", "퟿")
+eq(b"\xbf" + b"x" * 31, "x" * 31); eq(b"\xd9\x20" + b"x" * 32, "x" * 32); eq(b"\xd9\xff" + b"x" * 255, "x" * 255); eq(b"\xda\x01\x00" + b"x" * 256, "x" * 256)
+for h in ["a1", "a3 6162", "a1 ff", "a2 c3", "a1 80", "a2 c328", "a2 c0 80", "a2 c080", "a3 e08080", "a3 eda080", "a3 edbfbf", "a4 f4908080", "a4 f0808080",
+          "a4 f0 9f 98", "a1 c3", "a5 f8888080 80".replace(" ", ""), "a2 e282", "a2 e2 82", "d9", "d9 03 6162", "da 00", "da 0003 6162", "db 000000", "db 00000003 6162",
+          "a1 6161", "d9 01 6161", "a3 c1bf61", "a2 c1bf", "a1 fe", "a2 f5 80", "a3 ffffff", "a4 f090 80".replace(" ", "")]:
+    assert bad(B(h.replace(" ", ""))), h
+# bin
+eq("c4 00", b""); eq("c4 03 000102", b"\0\1\2"); eq("c5 0003 ff00ff", b"\xff\0\xff"); eq("c6 00000002 ffff", b"\xff\xff"); eq("c5 0000", b""); eq("c6 00000000", b"")
+assert type(msgpack_loads(bytearray(B("c403aabbcc")))) is bytes
+for h in ["c4", "c4 03 0102", "c5 00", "c5 0003 01", "c6 000000", "c6 00000004 010203", "c4 00 00", "c4 01"]:
+    assert bad(B(h.replace(" ", ""))), h
+# arrays
+eq("90", []); eq("91 01", [1]); eq("92 c0 c3", [None, True]); eq("dc 0000", []); eq("dc 0002 01 02", [1, 2]); eq("dd 00000001 ff", [-1])
+eq("dd 00000000", []); eq("91 90", [[]]); eq("92 90 91 90", [[], [[]]]); eq(b"\x9f" + b"\x00" * 15, [0] * 15); eq(b"\xdc\x00\x10" + b"\x01" * 16, [1] * 16)
+eq(b"\xdc\x27\x10" + b"\x01" * 10000, [1] * 10000); eq(b"\xdd\x00\x01\x00\x00" + b"\xc3" * 65536, [True] * 65536)
+for h in ["91", "92 01", "dc", "dc 00", "dc 0002 01", "dd 00000001", "dd 000000", "91 01 02", "90 00", "dc 0000 00", "91 92 01", "dd 00000002 01"]:
+    assert bad(B(h.replace(" ", ""))), h
+# maps
+eq("80", {}); eq("81 a1 61 01", {"a": 1}); eq("de 0000", {}); eq("de 0001 a1 61 c0", {"a": None}); eq("df 00000001 01 02", {1: 2}); eq("81 ff a1 61", {-1: "a"})
+eq("82 01 a1 61 a1 31 02", {1: "a", "1": 2}); eq("82 a1 62 01 a1 61 02", {"b": 1, "a": 2})
+assert list(msgpack_loads(B("82a16201a16102"))) == ["b", "a"]
+eq("82 01 02 03 04", {1: 2, 3: 4}); eq("81 cc 05 a1 78", {5: "x"}); eq("82 a0 01 a1 00 02", {"": 1, "\0": 2}); eq("81 a1 61 81 a1 62 90", {"a": {"b": []}})
+eq("82 cf 0000000000000001 01 d0 ff 02", {1: 1, -1: 2}); eq("81 d9 01 61 7f", {"a": 127})
+for h in ["81", "81 a1 61", "82 a1 61 01", "de 0001", "df 00000001 01", "81 c0 01", "81 c2 01", "81 c3 01", "81 ca 3fc00000 01", "81 cb 3ff0000000000000 01",
+          "81 c4 00 01", "81 90 01", "81 80 01", "81 91 01 02", "82 01 01 01 02", "82 a1 61 01 a1 61 02", "82 01 02 cc 01 03", "82 01 02 d3 0000000000000001 03",
+          "82 a1 61 01 d9 01 61 02", "82 a0 01 a0 02", "82 ff 01 d0 ff 02", "81 a1 61 01 02", "82 cf ffffffffffffffff 01 cf ffffffffffffffff 02",
+          "81 a1 ff 01"]:
+    assert bad(B(h.replace(" ", ""))), h
+# reserved bytes
+for b in [0xc1, 0xc7, 0xc8, 0xc9, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8]:
+    assert bad(bytes([b]) + bytes(20)), hex(b)
+    assert bad(bytes([b])), hex(b)
+    assert bad(B("91") + bytes([b]) + bytes(20)), hex(b)
+    assert bad(B("81a161") + bytes([b]) + bytes(20)), hex(b)
+# lying counts and lengths
+assert bad(B("dd ffffffff 01 02 03 04 05".replace(" ", "")))
+assert bad(B("df ffffffff 01 02 03 04 05".replace(" ", "")))
+assert bad(B("dd 7fffffff c0".replace(" ", "")))
+assert bad(B("dd 40000000".replace(" ", "")))
+assert bad(B("db ffffffff 61 62 63".replace(" ", "")))
+assert bad(B("c6 ffffffff 61".replace(" ", "")))
+assert bad(B("dc ffff 01".replace(" ", "")))
+assert bad(B("de ffff 01 02".replace(" ", "")))
+assert bad(B("da ffff 61".replace(" ", "")))
+assert bad(B("c5 ffff 61".replace(" ", "")))
+assert bad(B("91 dd ffffffff".replace(" ", "")))
+assert bad(B("81 a1 61 df ffffffff".replace(" ", "")))
+eq(b"\xdd\x00\x00\x00\x05" + bytes(5), [0] * 5)
+assert bad(b"\xdd\x00\x00\x00\x06" + bytes(5))
+eq(b"\xdf\x00\x00\x00\x02" + B("01020304"), {1: 2, 3: 4})
+assert bad(b"\xdf\x00\x00\x00\x03" + B("01020304"))
+assert bad(b"\xdf\x00\x00\x00\x02" + B("010203"))
+# depth
+def nest(n, inner=b"\x90"):
+    return b"\x91" * (n - 1) + inner
+
+assert msgpack_loads(nest(16)) is not None
+eq(nest(16), [[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]])
+assert bad(nest(17))
+assert bad(nest(18, b"\x01"))
+assert bad(b"\x91" * 100000)
+assert bad(b"\x91" * 100000 + b"\xc0")
+eq(b"\x91" * 15 + b"\x01", [[[[[[[[[[[[[[[1]]]]]]]]]]]]]]])
+eq(b"\x91" * 16 + b"\x01", msgpack_loads(b"\x91" * 15 + b"\x91\x01"))
+assert bad(b"\x91" * 17 + b"\x01")
+eq(b"\x91" * 15 + B("81a16101"), [[[[[[[[[[[[[[[{"a": 1}]]]]]]]]]]]]]]])
+assert bad(b"\x91" * 16 + B("81a16101"))
+eq(B("92") + nest(15) + nest(15), [msgpack_loads(nest(15))] * 2)
+assert bad(B("92") + nest(16) + nest(16))
+assert bad(B("92") + nest(15) + nest(16))
+eq(B("81 a1 61") + nest(15), {"a": msgpack_loads(nest(15))})
+assert bad(B("81 a1 61".replace(" ", "")) + nest(16))
+m = b"\x81\xa1a" * 15 + b"\x80"
+assert msgpack_loads(m) is not None
+assert bad(b"\x81\xa1a" * 16 + b"\x80")
+assert bad(b"\x81\xa1a" * 17 + b"\x01")
+assert msgpack_loads(b"\x81\xa1a" * 16 + b"\x01") is not None
+# a big, mixed document
+
+# oracle: an encoder that picks random valid spellings
+random.seed(4015)
+def lenhdr(n, fix, codes):
+    opts = []
+    if fix is not None and n <= fix[1]:
+        opts.append(bytes([fix[0] | n]))
+    for code, w in codes:
+        if n < 1 << (8 * w):
+            opts.append(bytes([code]) + n.to_bytes(w, "big"))
+    return random.choice(opts)
+
+def enc_int(v):
+    opts = []
+    if 0 <= v <= 127 or -32 <= v <= -1:
+        opts.append(bytes([v & 0xFF]))
+    if v >= 0:
+        for code, w in ((0xcc, 1), (0xcd, 2), (0xce, 4), (0xcf, 8)):
+            if v < 1 << (8 * w):
+                opts.append(bytes([code]) + v.to_bytes(w, "big"))
+    for code, w in ((0xd0, 1), (0xd1, 2), (0xd2, 4), (0xd3, 8)):
+        if -(1 << (8 * w - 1)) <= v < 1 << (8 * w - 1):
+            opts.append(bytes([code]) + v.to_bytes(w, "big", signed=True))
+    return random.choice(opts)
+
+def enc_float(x):
+    f32 = struct.unpack(">f", struct.pack(">f", x))[0] if abs(x) < 3e38 else x
+    if (f32 == x or x != x) and random.random() < 0.6 and abs(x) < 3e38 or x in (float("inf"), float("-inf")) and random.random() < 0.5:
+        return b"\xca" + struct.pack(">f", x)
+    return b"\xcb" + struct.pack(">d", x)
+
+def enc_str(s):
+    r = s.encode("utf-8")
+    return lenhdr(len(r), (0xa0, 31), [(0xd9, 1), (0xda, 2), (0xdb, 4)]) + r
+
+def enc(v):
+    if v is None:
+        return b"\xc0"
+    if v is True:
+        return b"\xc3"
+    if v is False:
+        return b"\xc2"
+    if isinstance(v, int):
+        return enc_int(v)
+    if isinstance(v, float):
+        return enc_float(v)
+    if isinstance(v, str):
+        return enc_str(v)
+    if isinstance(v, bytes):
+        return lenhdr(len(v), None, [(0xc4, 1), (0xc5, 2), (0xc6, 4)]) + v
+    if isinstance(v, list):
+        return lenhdr(len(v), (0x90, 15), [(0xdc, 2), (0xdd, 4)]) + b"".join(enc(x) for x in v)
+    return lenhdr(len(v), (0x80, 15), [(0xde, 2), (0xdf, 4)]) + b"".join(enc(k) + enc(x) for k, x in v.items())
+
+INTS = [0, 1, -1, 31, 32, 127, 128, 255, 256, -32, -33, -128, -129, 32767, 32768, 65535, 65536, -32768, -32769, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1, 2 ** 32,
+        -2 ** 31, -2 ** 31 - 1, 2 ** 63 - 1, 2 ** 63, 2 ** 64 - 1, -2 ** 63]
+FLOATS = [0.0, -0.0, 1.0, 1.5, -2.25, 0.1, 1e300, -1e-300, 3.0e38, 5e-324, 1.401298464324817e-45, float("inf"), float("-inf"), 16777216.0, 1e10, 0.3]
+CH = ["a", "b", "z", " ", "\0", "\xe9", "中", "ࠀ", "￿", "\U0001F600", "\U0010ffff", "퟿", "", "\x7f", "\x80"]
+
+def rstr():
+    n = random.choice([0, 0, 1, 2, 3, 5, 10, 31, 32, 33, 100, 255, 256, 300])
+    return "".join(random.choice(CH) for _ in range(min(n, 60))) if n < 100 else random.choice(CH) * n
+
+def gen(depth):
+    r = random.random()
+    if depth == 0 or r < 0.55:
+        k = random.random()
+        if k < 0.1:
+            return None
+        if k < 0.2:
+            return random.choice([True, False])
+        if k < 0.5:
+            return random.choice(INTS) if random.random() < 0.6 else random.randint(-10 ** 6, 10 ** 6)
+        if k < 0.65:
+            return random.choice(FLOATS) if random.random() < 0.7 else random.uniform(-1e6, 1e6)
+        if k < 0.9:
+            return rstr()
+        return bytes(random.randrange(256) for _ in range(random.choice([0, 1, 5, 255, 256, 300])))
+    if r < 0.8:
+        return [gen(depth - 1) for _ in range(random.choice([0, 1, 2, 3, 5, 15, 16, 17, 40]))]
+    d = {}
+    for _ in range(random.choice([0, 1, 2, 3, 5, 15, 16, 17])):
+        k = rstr() if random.random() < 0.6 else random.choice(INTS)
+        d[k] = gen(depth - 1)
+    return d
+
+def depth_of(v):
+    if isinstance(v, list):
+        return 1 + max([depth_of(x) for x in v], default=0)
+    if isinstance(v, dict):
+        return 1 + max([depth_of(x) for x in v.values()], default=0)
+    return 0
+
+nbig = 0
+for _ in range(200):
+    v = gen(random.choice([1, 2, 3, 4]))
+    e = enc(v)
+    got = msgpack_loads(e)
+    assert same(got, v), (e[:60], got, v)
+    assert same(msgpack_loads(bytearray(e)), v)
+    nbig += len(e) > 200
+    for _ in range(2):
+        k = random.randrange(len(e))
+        assert bad(e[:k]), (e[:k], v)
+    assert bad(e + bytes([random.randrange(256)])) and bad(e + b"\xc0") and bad(e + e)
+    assert bad(bytearray(e)[:-1])
+assert nbig > 20
+
+# wrapped in k arrays: depth boundary against the oracle
+for _ in range(25):
+    v = gen(2)
+    base = depth_of(v)
+    for k in range(0, 18 - base + 2):
+        e = b"".join(lenhdr(1, (0x90, 15), [(0xdc, 2), (0xdd, 4)]) for _ in range(k)) + enc(v)
+        if base + k <= 16:
+            exp = v
+            for _ in range(k):
+                exp = [exp]
+            assert same(msgpack_loads(e), exp), (k, base)
+        else:
+            assert bad(e), (k, base)
+
+# maps with bad keys, spelled by hand
+KEYS_BAD = [b"\xc0", b"\xc2", b"\xc3", b"\xca\x3f\xc0\x00\x00", b"\xcb" + bytes(8), b"\xc4\x01a", b"\x90", b"\x91\x01", b"\x80", b"\x81\x01\x01", b"\xde\x00\x00"]
+KEYS_OK = [b"\xa1a", b"\x01", b"\xff", b"\xcc\x05", b"\xd3" + (-7).to_bytes(8, "big", signed=True), b"\xa0", b"\xd9\x01b"]
+for kb in KEYS_BAD:
+    for pos in range(2):
+        pairs = [(b"\xa1z", b"\x01"), (kb, b"\x02")] if pos else [(kb, b"\x02"), (b"\xa1z", b"\x01")]
+        assert bad(b"\x82" + b"".join(a + b for a, b in pairs)), kb
+        assert bad(lenhdr(2, (0x80, 15), [(0xde, 2), (0xdf, 4)]) + b"".join(a + b for a, b in pairs)), kb
+for kb in KEYS_OK:
+    e = b"\x81" + kb + b"\xc0"
+    assert type(msgpack_loads(e)) is dict
+DUPS = [(b"\xa1a", b"\xd9\x01a"), (b"\x01", b"\xcc\x01"), (b"\x01", b"\xd3" + (1).to_bytes(8, "big")), (b"\xff", b"\xd0\xff"), (b"\xa0", b"\xda\x00\x00"),
+        (b"\xcf" + (5).to_bytes(8, "big"), b"\x05"), (b"\xe0", b"\xd1" + (-32).to_bytes(2, "big", signed=True))]
+for a, b in DUPS:
+    assert bad(b"\x82" + a + b"\x01" + b + b"\x02"), (a, b)
+    assert bad(b"\x83" + a + b"\x01" + b"\xa1q\x00" + b + b"\x02"), (a, b)
+# distinct keys that only look alike
+eq(b"\x84\x01\x01\xa1" + b"1" + b"\x02\xa0\x03\xff\x04", {1: 1, "1": 2, "": 3, -1: 4})
+eq(b"\x82\xa1a\x01\xa2aa\x02", {"a": 1, "aa": 2})
+eq(b"\x82\xa1a\x81\xa1a\x01\xa1b\x81\xa1a\x02", {"a": {"a": 1}, "b": {"a": 2}})
+''', r'''
+import struct
+
+_MAX_OPEN = 16
+
+
+def msgpack_loads(data):
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("data must be bytes")
+    data = bytes(data)
+    n = len(data)
+    pos = [0]
+
+    def take(k):
+        p = pos[0]
+        if k < 0 or p + k > n:
+            raise ValueError("truncated")
+        pos[0] = p + k
+        return data[p:p + k]
+
+    def num(k):
+        return int.from_bytes(take(k), "big")
+
+    def seq(count, per, openn, kind):
+        if openn >= _MAX_OPEN:
+            raise ValueError("nested too deep")
+        if count * per > n - pos[0]:
+            raise ValueError("count exceeds data")
+        if kind == "a":
+            return [val(openn + 1) for _ in range(count)]
+        d = {}
+        for _ in range(count):
+            k = val(openn + 1)
+            if type(k) is bool or not isinstance(k, (str, int)):
+                raise ValueError("bad map key")
+            if k in d:
+                raise ValueError("duplicate key")
+            d[k] = val(openn + 1)
+        return d
+
+    def text(k):
+        raw = take(k)
+        return raw.decode("utf-8")
+
+    def val(openn):
+        b = take(1)[0]
+        if b <= 0x7F:
+            return b
+        if b >= 0xE0:
+            return b - 256
+        if b <= 0x8F:
+            return seq(b & 15, 2, openn, "m")
+        if b <= 0x9F:
+            return seq(b & 15, 1, openn, "a")
+        if b <= 0xBF:
+            return text(b & 31)
+        if b == 0xC0:
+            return None
+        if b == 0xC2:
+            return False
+        if b == 0xC3:
+            return True
+        if b in (0xC4, 0xC5, 0xC6):
+            return take(num(1 << (b - 0xC4)))
+        if b == 0xCA:
+            return struct.unpack(">f", take(4))[0]
+        if b == 0xCB:
+            return struct.unpack(">d", take(8))[0]
+        if 0xCC <= b <= 0xCF:
+            return num(1 << (b - 0xCC))
+        if 0xD0 <= b <= 0xD3:
+            w = 1 << (b - 0xD0)
+            return int.from_bytes(take(w), "big", signed=True)
+        if b in (0xD9, 0xDA, 0xDB):
+            return text(num(1 << (b - 0xD9)))
+        if b in (0xDC, 0xDD):
+            return seq(num(2 if b == 0xDC else 4), 1, openn, "a")
+        if b in (0xDE, 0xDF):
+            return seq(num(2 if b == 0xDE else 4), 2, openn, "m")
+        raise ValueError("unsupported type byte")
+
+    result = val(0)
+    if pos[0] != n:
+        raise ValueError("trailing bytes")
+    return result
+''')
+
+
+task("v4_16_ifc_calendar", r'''
+The International Fixed Calendar (IFC) keeps the Gregorian year number and Gregorian January 1
+as its first day, but splits the year into 13 months of exactly 28 days, numbered 1..13 (days
+1..28). Every month begins on a Sunday, so the weekday of IFC day d (1..28) is (d - 1) % 7 with
+Sunday = 0. Two intercalary days belong to no month and to no week:
+- Leap Day, written (month 6, day 29), exists only in Gregorian leap years (divisible by 4,
+  except multiples of 100 that are not multiples of 400). It comes right after (6, 28).
+- Year Day, written (month 13, day 29), exists in every year and is the last day of the year.
+So the order within a year is: months 1..6, Leap Day (leap years only), months 7..13, Year Day.
+Years are 1..9999 (proleptic Gregorian). Write three functions:
+- `ifc_from_gregorian(y, m, d)`: Gregorian date to the 4-tuple (ifc_year, ifc_month, ifc_day,
+  weekday). weekday is an int 0..6 for ordinary days and None for Leap Day and Year Day.
+- `ifc_to_gregorian(y, m, d)`: IFC date to the Gregorian 3-tuple (year, month, day).
+- `ifc_add_days(date, n)`: `date` is an IFC date, a list or tuple of 3 ints (y, m, d); n is an
+  int with abs(n) <= 10**7, positive or negative. Move n actual days (Leap Day and Year Day are
+  days like any other) and return the IFC 3-tuple (y, m, d) of the result.
+A valid IFC date has 1 <= m <= 13 and 1 <= d <= 28, or is Year Day (13, 29), or is Leap Day
+(6, 29) in a leap year. Every argument must be an int (bool is not an int); the Gregorian
+date must exist; years must be in 1..9999. Anything else, an n out of range, a `date` that is
+not a list or tuple of length 3, or a result whose year is outside 1..9999, is a ValueError.
+Examples: ifc_from_gregorian(2024, 6, 17) is (2024, 6, 29, None) (Leap Day);
+ifc_from_gregorian(2023, 6, 17) is (2023, 6, 28, 6); ifc_from_gregorian(2023, 6, 18) is
+(2023, 7, 1, 0); ifc_to_gregorian(2024, 13, 29) is (2024, 12, 31); ifc_add_days((2023, 13, 29), 1)
+is (2024, 1, 1); ifc_to_gregorian(2023, 6, 29) raises ValueError.
+''', r'''
+import random, datetime, calendar
+
+def bad(f, *a):
+    try:
+        f(*a)
+    except ValueError:
+        return True
+    return False
+
+assert ifc_from_gregorian(2024, 1, 1) == (2024, 1, 1, 0)
+assert ifc_from_gregorian(2024, 6, 17) == (2024, 6, 29, None)
+assert ifc_from_gregorian(2023, 6, 17) == (2023, 6, 28, 6)
+assert ifc_from_gregorian(2024, 6, 16) == (2024, 6, 28, 6)
+assert ifc_from_gregorian(2024, 6, 18) == (2024, 7, 1, 0)
+assert ifc_from_gregorian(2023, 6, 18) == (2023, 7, 1, 0)
+assert ifc_from_gregorian(2023, 12, 31) == (2023, 13, 29, None)
+assert ifc_from_gregorian(2023, 12, 30) == (2023, 13, 28, 6)
+assert ifc_from_gregorian(2024, 12, 31) == (2024, 13, 29, None)
+assert ifc_from_gregorian(2024, 12, 30) == (2024, 13, 28, 6)
+assert ifc_from_gregorian(1900, 3, 1) == (1900, 3, 4, 3)
+assert ifc_from_gregorian(2000, 3, 1) == (2000, 3, 5, 4)
+assert ifc_from_gregorian(2000, 2, 29) == (2000, 3, 4, 3)
+assert ifc_from_gregorian(1, 1, 1) == (1, 1, 1, 0)
+assert ifc_from_gregorian(9999, 12, 31) == (9999, 13, 29, None)
+assert ifc_to_gregorian(2024, 6, 29) == (2024, 6, 17)
+assert ifc_to_gregorian(2024, 13, 29) == (2024, 12, 31)
+assert ifc_to_gregorian(2023, 13, 29) == (2023, 12, 31)
+assert ifc_to_gregorian(2024, 7, 1) == (2024, 6, 18)
+assert ifc_to_gregorian(2023, 7, 1) == (2023, 6, 18)
+assert ifc_to_gregorian(1900, 6, 28) == (1900, 6, 17)
+assert ifc_to_gregorian(2000, 6, 29) == (2000, 6, 17)
+assert ifc_to_gregorian(9999, 13, 29) == (9999, 12, 31)
+assert ifc_add_days((2023, 13, 29), 1) == (2024, 1, 1)
+assert ifc_add_days([2023, 13, 29], 1) == (2024, 1, 1)
+assert ifc_add_days((2024, 6, 28), 1) == (2024, 6, 29)
+assert ifc_add_days((2024, 6, 29), 1) == (2024, 7, 1)
+assert ifc_add_days((2023, 6, 28), 1) == (2023, 7, 1)
+assert ifc_add_days((2024, 1, 1), -1) == (2023, 13, 29)
+assert ifc_add_days((2024, 1, 1), 366) == (2025, 1, 1)
+assert ifc_add_days((2023, 1, 1), 365) == (2024, 1, 1)
+assert ifc_add_days((2024, 6, 29), 0) == (2024, 6, 29)
+assert ifc_add_days((1, 1, 1), 0) == (1, 1, 1)
+assert ifc_add_days((1, 1, 1), 3652058) == (9999, 13, 29)
+assert ifc_add_days((9999, 13, 29), -3652058) == (1, 1, 1)
+for args in [(1, 1, 1, -1), (9999, 13, 29, 1), (9999, 13, 29, 10**7), (1, 1, 1, -10**7), (5000, 1, 1, 10**7), (5000, 1, 1, -10**7),
+             (2000, 1, 1, 10**7 + 1), (2000, 1, 1, -10**7 - 1), (1, 1, 1, 3652059)]:
+    assert bad(ifc_add_days, (args[0], args[1], args[2]), args[3]), args
+for a in [(2023, 6, 29), (1900, 6, 29), (2024, 5, 29), (2024, 7, 29), (2024, 12, 29), (2024, 13, 30), (2024, 14, 1), (2024, 0, 1), (2024, 1, 0),
+          (2024, 1, 29), (2024, 1, 30), (0, 1, 1), (10000, 1, 1), (-5, 1, 1), (2024.0, 1, 1), (2024, 1.0, 1), ("2024", 1, 1), (True, 1, 1), (2024, True, 1),
+          (2024, 1, True), (None, 1, 1), (2024, 6, None)]:
+    assert bad(ifc_to_gregorian, *a), a
+for a in [(2023, 2, 29), (1900, 2, 29), (2024, 2, 30), (2024, 4, 31), (2024, 0, 1), (2024, 13, 1), (2024, 1, 0), (2024, 1, 32), (0, 1, 1), (10000, 1, 1),
+          (2024.0, 1, 1), ("2024", 1, 1), (2024, 1, 1.0), (False, 1, 1), (2024, 1, False), (2024, True, 1), (None, 1, 1)]:
+    assert bad(ifc_from_gregorian, *a), a
+for dt, n in [(None, 1), ((2024, 1), 1), ((2024, 1, 1, 1), 1), ("2024", 1), ({2024, 1, 1}, 1), ((2024, 1, 1), 1.0), ((2024, 1, 1), True), ((2024, 1, 1), "1"),
+              ((2024, 1, 1), None), ((2024, 6, 29.0), 1), ((2023, 6, 29), 1), ((2024, 13, 30), 1), ((2024, 14, 1), 1), ((2024, 1, 29), 1), ((0, 1, 1), 1),
+              ((10000, 13, 29), -1), (((2024, 1, 1),), 1), ((True, 1, 1), 1)]:
+    assert bad(ifc_add_days, dt, n), (dt, n)
+
+# oracle: enumerate the labels of a year in calendar order and pair them with datetime days
+def labels(y):
+    L = [(m, d) for m in range(1, 7) for d in range(1, 29)]
+    if calendar.isleap(y):
+        L.append((6, 29))
+    L += [(m, d) for m in range(7, 14) for d in range(1, 29)]
+    L.append((13, 29))
+    return L
+
+def weekdays(L):
+    out, k = [], 0
+    for (m, d) in L:
+        if d == 29:
+            out.append(None)
+        else:
+            out.append(k % 7)
+            k += 1
+    return out
+
+random.seed(4016)
+years = [1, 4, 100, 400, 1900, 1999, 2000, 2023, 2024, 2100, 9996, 9999] + [random.randint(1, 9999) for _ in range(14)] + [4 * random.randint(1, 2499) for _ in range(4)]
+for y in years:
+    L = labels(y)
+    W = weekdays(L)
+    first = datetime.date(y, 1, 1)
+    assert len(L) == (366 if calendar.isleap(y) else 365)
+    for i, (m, d) in enumerate(L):
+        g = first + datetime.timedelta(i)
+        assert g.year == y
+        assert ifc_from_gregorian(g.year, g.month, g.day) == (y, m, d, W[i]), (g, m, d)
+        assert ifc_to_gregorian(y, m, d) == (g.year, g.month, g.day), (y, m, d)
+
+def ifc_label_of(g):
+    L = labels(g.year)
+    return (g.year,) + L[(g - datetime.date(g.year, 1, 1)).days]
+
+MAXO = datetime.date(9999, 12, 31).toordinal()
+nerr = 0
+for _ in range(900):
+    y = random.choice([random.randint(1, 9999), random.randint(1, 30), random.randint(9970, 9999), random.randint(1990, 2030)])
+    L = labels(y)
+    m, d = random.choice(L)
+    n = random.choice([random.randint(-10**7, 10**7), random.randint(-800, 800), random.randint(-40, 40), random.choice([-3, -2, -1, 0, 1, 2, 365, 366, -365, -366])])
+    g = datetime.date(y, 1, 1) + datetime.timedelta(L.index((m, d)))
+    o = g.toordinal() + n
+    date = random.choice([(y, m, d), [y, m, d]])
+    if 1 <= o <= MAXO:
+        exp = ifc_label_of(datetime.date.fromordinal(o))
+        assert ifc_add_days(date, n) == exp, (date, n, exp)
+    else:
+        nerr += 1
+        assert bad(ifc_add_days, date, n), (date, n)
+assert nerr > 10, nerr
+''', r'''
+_MD = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+def _isint(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _leap(y):
+    return y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
+
+
+def _mlen(y, m):
+    return 29 if m == 2 and _leap(y) else _MD[m - 1]
+
+
+def _before(y):
+    p = y - 1
+    return 365 * p + p // 4 - p // 100 + p // 400
+
+
+def _gdoy(y, m, d):
+    for v in (y, m, d):
+        if not _isint(v):
+            raise ValueError("int")
+    if not (1 <= y <= 9999 and 1 <= m <= 12 and 1 <= d <= _mlen(y, m)):
+        raise ValueError("date")
+    return sum(_mlen(y, k) for k in range(1, m)) + d
+
+
+def _idoy(y, m, d):
+    for v in (y, m, d):
+        if not _isint(v):
+            raise ValueError("int")
+    if not 1 <= y <= 9999:
+        raise ValueError("year")
+    leap = _leap(y)
+    if (m, d) == (13, 29):
+        return 366 if leap else 365
+    if (m, d) == (6, 29):
+        if not leap:
+            raise ValueError("no leap day")
+        return 169
+    if not (1 <= m <= 13 and 1 <= d <= 28):
+        raise ValueError("date")
+    base = 28 * (m - 1) + d
+    if leap and base >= 169:
+        base += 1
+    return base
+
+
+def _ifc(y, doy):
+    leap = _leap(y)
+    if doy == (366 if leap else 365):
+        return (y, 13, 29, None)
+    if leap:
+        if doy == 169:
+            return (y, 6, 29, None)
+        if doy > 169:
+            doy -= 1
+    q, r = divmod(doy - 1, 28)
+    return (y, q + 1, r + 1, r % 7)
+
+
+def ifc_from_gregorian(y, m, d):
+    return _ifc(y, _gdoy(y, m, d))
+
+
+def ifc_to_gregorian(y, m, d):
+    doy = _idoy(y, m, d)
+    for mm in range(1, 13):
+        k = _mlen(y, mm)
+        if doy <= k:
+            return (y, mm, doy)
+        doy -= k
+
+
+def ifc_add_days(date, n):
+    if not isinstance(date, (list, tuple)) or len(date) != 3:
+        raise ValueError("date")
+    if not _isint(n) or abs(n) > 10 ** 7:
+        raise ValueError("n")
+    y, m, d = date
+    o = _before(y) + _idoy(y, m, d) + n
+    if not 1 <= o <= _before(10000):
+        raise ValueError("range")
+    y = (o - 1) * 400 // 146097 + 1
+    while _before(y) >= o:
+        y -= 1
+    while _before(y + 1) < o:
+        y += 1
+    return _ifc(y, o - _before(y))[:3]
+''')
+
+task("v4_17_timer_sched", r'''
+Write `timer_sched(timers, cancels, mutes, until, k)` that works out what a timer service
+delivers. All times are ints; bool is not an int.
+- `timers`: list or tuple of at most 30 tuples (name, start, period, count, prio). name is a
+  non-empty str, unique among the timers. 0 <= start <= 10**12, 0 <= period <= 10**12,
+  1 <= count <= 10**12, -100 <= prio <= 100. Firing i (i = 0 .. count-1) of a timer is
+  scheduled at s = start + i*period (so s can exceed 10**12). A timer with period 0 must
+  have count 1.
+- `cancels`: list or tuple of at most 60 tuples (name, t, mode): name is a timer's name,
+  0 <= t <= 10**12, mode is "before" or "after". Mode "before" blocks every delivery of that
+  timer at a time >= t; mode "after" blocks every delivery at a time > t (a delivery exactly
+  at t still happens). A timer with several cancels is blocked by all of them.
+- `mutes`: list or tuple of at most 60 windows (a, b), 0 <= a < b <= 10**12, half-open [a, b).
+  A firing scheduled at a time s inside a window is not lost but postponed: its delivery time
+  becomes b; if b lies inside another window it is postponed again to that window's end, and
+  so on until the time lies in no window. A firing scheduled outside every window is
+  delivered at s. Windows may overlap or touch.
+- `until`: 0 <= until <= 10**12. A firing whose delivery time is >= until is never delivered.
+  `k`: 0 <= k <= 200.
+Cancels are judged on the delivery time, not on s, and they simply drop the firing.
+Return a dict with two keys. "log": the first k deliveries (all of them if fewer), each a
+tuple (delivery_time, name, i), ordered by delivery time; deliveries at the same time are
+ordered by prio ascending (lower prio first), then by scheduled time s ascending, then by the
+timer's position in `timers`. "counts": a dict {name: number of deliveries of that timer},
+for every timer (0 included) and over the whole run, not just the first k. Counts can reach
+10**12 and `timers` may hold 10**12 firings, so the work must not depend on count or until.
+Anything else (wrong types or ranges, duplicate or empty names, a cancel naming an unknown
+timer, a bad mode, period 0 with count > 1, a window with a >= b, too many items) is a
+ValueError, checked before anything is computed.
+Example: timer_sched([("a", 0, 5, 3, 0), ("b", 5, 0, 1, -1)], [], [], 100, 10) returns
+{"log": [(0, "a", 0), (5, "b", 0), (5, "a", 1), (10, "a", 2)], "counts": {"a": 3, "b": 1}}.
+With timers [("a", 0, 2, 4, 0)] and mutes [(1, 5)] the log is [(0, "a", 0), (5, "a", 1),
+(5, "a", 2), (6, "a", 3)]; adding the cancel ("a", 5, "after") leaves the first three entries.
+''', r'''
+import random
+
+def bad(*a):
+    try:
+        timer_sched(*a)
+    except ValueError:
+        return True
+    return False
+
+r = timer_sched([("a", 0, 5, 3, 0), ("b", 5, 0, 1, -1)], [], [], 100, 10)
+assert r == {"log": [(0, "a", 0), (5, "b", 0), (5, "a", 1), (10, "a", 2)], "counts": {"a": 3, "b": 1}}, r
+assert timer_sched([("a", 0, 2, 4, 0)], [], [(1, 5)], 100, 10)["log"] == [(0, "a", 0), (5, "a", 1), (5, "a", 2), (6, "a", 3)]
+assert timer_sched([("a", 0, 2, 4, 0)], [("a", 5, "after")], [(1, 5)], 100, 10) == {"log": [(0, "a", 0), (5, "a", 1), (5, "a", 2)], "counts": {"a": 3}}
+assert timer_sched([("a", 0, 2, 4, 0)], [("a", 5, "before")], [(1, 5)], 100, 10) == {"log": [(0, "a", 0)], "counts": {"a": 1}}
+assert timer_sched([("a", 0, 2, 4, 0)], [("a", 0, "after")], [], 100, 10) == {"log": [(0, "a", 0)], "counts": {"a": 1}}
+assert timer_sched([("a", 0, 2, 4, 0)], [("a", 0, "before")], [], 100, 10) == {"log": [], "counts": {"a": 0}}
+assert timer_sched([("a", 0, 2, 4, 0)], [("a", 6, "after"), ("a", 2, "before")], [], 100, 10) == {"log": [(0, "a", 0)], "counts": {"a": 1}}
+# chained and touching windows
+assert timer_sched([("a", 3, 0, 1, 0)], [], [(2, 5), (5, 9), (9, 10)], 100, 5)["log"] == [(10, "a", 0)]
+assert timer_sched([("a", 3, 0, 1, 0)], [], [(2, 5), (6, 9)], 100, 5)["log"] == [(5, "a", 0)]
+assert timer_sched([("a", 3, 0, 1, 0)], [], [(6, 9), (2, 5), (4, 7)], 100, 5)["log"] == [(9, "a", 0)]
+# until is exclusive, applies to the delivery time
+assert timer_sched([("a", 3, 0, 1, 0)], [], [], 3, 5) == {"log": [], "counts": {"a": 0}}
+assert timer_sched([("a", 3, 0, 1, 0)], [], [], 4, 5) == {"log": [(3, "a", 0)], "counts": {"a": 1}}
+assert timer_sched([("a", 3, 0, 1, 0)], [], [(0, 4)], 4, 5) == {"log": [], "counts": {"a": 0}}
+assert timer_sched([("a", 3, 0, 1, 0)], [], [(0, 4)], 5, 5) == {"log": [(4, "a", 0)], "counts": {"a": 1}}
+# k limits only the log
+assert timer_sched([("a", 0, 1, 10, 0)], [], [], 100, 3) == {"log": [(0, "a", 0), (1, "a", 1), (2, "a", 2)], "counts": {"a": 10}}
+assert timer_sched([("a", 0, 1, 10, 0)], [], [], 100, 0) == {"log": [], "counts": {"a": 10}}
+assert timer_sched([], [], [], 0, 0) == {"log": [], "counts": {}}
+# same instant: prio, then scheduled time, then position
+r = timer_sched([("x", 2, 0, 1, 5), ("y", 1, 0, 1, 5), ("z", 0, 0, 1, 7), ("w", 3, 0, 1, 5), ("v", 9, 0, 1, -3)], [], [(0, 4), (8, 10)], 50, 10)
+assert r["log"] == [(4, "y", 0), (4, "x", 0), (4, "w", 0), (4, "z", 0), (10, "v", 0)], r
+r = timer_sched([("p", 4, 0, 1, 1), ("q", 4, 0, 1, 1)], [], [], 50, 10)
+assert r["log"] == [(4, "p", 0), (4, "q", 0)]
+# a postponed firing is cancelled by its delivery time
+assert timer_sched([("a", 3, 0, 1, 0)], [("a", 8, "after")], [(2, 9)], 100, 5) == {"log": [], "counts": {"a": 0}}
+assert timer_sched([("a", 3, 0, 1, 0)], [("a", 9, "after")], [(2, 9)], 100, 5) == {"log": [(9, "a", 0)], "counts": {"a": 1}}
+# big numbers
+E12 = 10**12
+r = timer_sched([("a", 0, 1, E12, 0)], [], [(10, 20)], E12, 25)
+assert r["counts"] == {"a": E12}
+assert r["log"] == [(i, "a", i) for i in range(10)] + [(20, "a", i) for i in range(10, 20)] + [(i, "a", i) for i in range(20, 25)], r["log"]
+assert timer_sched([("a", 0, 1, E12, 0)], [], [(10**11, E12 - 5)], E12 - 2, 0)["counts"] == {"a": E12 - 2}
+assert timer_sched([("a", 0, 1, E12, 0)], [], [(10**11, E12)], E12, 0)["counts"] == {"a": 10**11}
+assert timer_sched([("a", 0, 1, E12, 0)], [], [(10**11, E12 - 1)], E12, 0)["counts"] == {"a": E12}
+assert timer_sched([("a", 0, 1, E12, 0)], [("a", 10**11, "after")], [], E12, 0)["counts"] == {"a": 10**11 + 1}
+assert timer_sched([("a", 0, 1, E12, 0)], [("a", 10**11, "before")], [], E12, 0)["counts"] == {"a": 10**11}
+assert timer_sched([("a", 7, 3, E12, 0)], [], [], E12, 0)["counts"] == {"a": (E12 - 8) // 3 + 1}
+assert timer_sched([("a", 7, 3, 5, 0)], [], [], E12, 10)["log"] == [(7 + 3 * i, "a", i) for i in range(5)]
+assert timer_sched([("a", E12, E12, E12, 0), ("b", E12, 0, 1, 0)], [], [], E12, 5) == {"log": [], "counts": {"a": 0, "b": 0}}
+r = timer_sched([("a", 5, E12, E12, 0)], [], [(0, 10), (10**11, 10**11 + 3)], E12, 5)
+assert r == {"log": [(10, "a", 0)], "counts": {"a": 1}}, r
+r = timer_sched([("a", 0, 3, E12, 2), ("b", 0, 3, E12, 1), ("c", 1, 3, E12, 1)], [("b", 12, "after")], [(4, 8), (7, 13)], 20, 40)
+assert r["log"][:5] == [(0, "b", 0), (0, "a", 0), (1, "c", 0), (3, "b", 1), (3, "a", 1)], r["log"][:5]
+
+for args in [
+    ([("a", 0, 0, 2, 0)], [], [], 10, 5), ([("a", 0, 1, 0, 0)], [], [], 10, 5), ([("a", -1, 1, 1, 0)], [], [], 10, 5), ([("a", 0, -1, 1, 0)], [], [], 10, 5),
+    ([("a", 0, 1, 1, 101)], [], [], 10, 5), ([("a", 0, 1, 1, -101)], [], [], 10, 5), ([("a", E12 + 1, 1, 1, 0)], [], [], 10, 5),
+    ([("a", 0, E12 + 1, 1, 0)], [], [], 10, 5), ([("a", 0, 1, E12 + 1, 0)], [], [], 10, 5), ([("", 0, 1, 1, 0)], [], [], 10, 5),
+    ([(1, 0, 1, 1, 0)], [], [], 10, 5), ([("a", 0, 1, 1, 0), ("a", 1, 1, 1, 0)], [], [], 10, 5), ([("a", 0, 1, 1)], [], [], 10, 5),
+    ([("a", 0, 1, 1, 0, 0)], [], [], 10, 5), ([("a", True, 1, 1, 0)], [], [], 10, 5), ([("a", 0, 1.0, 1, 0)], [], [], 10, 5),
+    ([("a", 0, 1, 1, "0")], [], [], 10, 5), (("a", 0, 1, 1, 0), [], [], 10, 5), ({}, [], [], 10, 5),
+    ([("a", 0, 1, 1, 0)], [("b", 1, "before")], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", 1, "during")], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", -1, "before")], [], 10, 5),
+    ([("a", 0, 1, 1, 0)], [("a", E12 + 1, "before")], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", 1)], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", True, "after")], [], 10, 5),
+    ([("a", 0, 1, 1, 0)], [(["a"], 1, "after")], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", 1, ["after"])], [], 10, 5), ([("a", 0, 1, 1, 0)], "x", [], 10, 5),
+    ([("a", 0, 1, 1, 0)], [], [(5, 5)], 10, 5), ([("a", 0, 1, 1, 0)], [], [(6, 5)], 10, 5), ([("a", 0, 1, 1, 0)], [], [(-1, 5)], 10, 5),
+    ([("a", 0, 1, 1, 0)], [], [(0, E12 + 1)], 10, 5), ([("a", 0, 1, 1, 0)], [], [(1, 2, 3)], 10, 5), ([("a", 0, 1, 1, 0)], [], [(1.0, 2)], 10, 5),
+    ([("a", 0, 1, 1, 0)], [], [(1, 2)], -1, 5), ([("a", 0, 1, 1, 0)], [], [(1, 2)], E12 + 1, 5), ([("a", 0, 1, 1, 0)], [], [(1, 2)], 10.0, 5),
+    ([("a", 0, 1, 1, 0)], [], [(1, 2)], True, 5), ([("a", 0, 1, 1, 0)], [], [(1, 2)], 10, -1), ([("a", 0, 1, 1, 0)], [], [(1, 2)], 10, 201),
+    ([("a", 0, 1, 1, 0)], [], [(1, 2)], 10, 1.0), ([("a", 0, 1, 1, 0)], [], [(1, 2)], 10, None),
+    ([("t%d" % i, 0, 1, 1, 0) for i in range(31)], [], [], 10, 5), ([("a", 0, 1, 1, 0)], [("a", 1, "after")] * 61, [], 10, 5),
+    ([("a", 0, 1, 1, 0)], [], [(1, 2)] * 61, 10, 5),
+]:
+    assert bad(*args), args
+assert not bad([("t%d" % i, 0, 1, 1, 0) for i in range(30)], [("t0", 1, "after")] * 60, [(1, 2)] * 60, 10, 200)
+
+# oracle: tick by tick, postponed firings wait in a pending list until a tick outside every window
+def tick_oracle(timers, cancels, mutes, until, k):
+    pend, log = [], []
+    counts = {t[0]: 0 for t in timers}
+    def blocked(nm, tk):
+        for (n, c, mode) in cancels:
+            if n == nm and ((mode == "before" and tk >= c) or (mode == "after" and tk > c)):
+                return True
+        return False
+    for tk in range(until):
+        for ti, (name, start, period, cnt, prio) in enumerate(timers):
+            if tk >= start:
+                if period == 0:
+                    if tk == start:
+                        pend.append((ti, 0, tk))
+                elif (tk - start) % period == 0 and (tk - start) // period < cnt:
+                    pend.append((ti, (tk - start) // period, tk))
+        if any(a <= tk < b for (a, b) in mutes):
+            continue
+        batch = sorted(pend, key=lambda p: (timers[p[0]][4], p[2], p[0]))
+        pend = []
+        for ti, i, s in batch:
+            nm = timers[ti][0]
+            if blocked(nm, tk):
+                continue
+            counts[nm] += 1
+            log.append((tk, nm, i))
+    return {"log": log[:k], "counts": counts}
+
+def gen_small():
+    nt = random.randint(1, 5)
+    names = random.sample(["a", "b", "c", "d", "e", "f"], nt)
+    timers = []
+    for nm in names:
+        period = random.choice([0, 1, 2, 3, 3, 4, 5, 8])
+        cnt = 1 if period == 0 else random.randint(1, 9)
+        timers.append((nm, random.randint(0, 30), period, cnt, random.randint(-2, 2)))
+    cancels = [(random.choice(names), random.randint(0, 45), random.choice(["before", "after"])) for _ in range(random.choice([0, 0, 1, 2, 3]))]
+    mutes = []
+    for _ in range(random.choice([0, 1, 2, 3, 4])):
+        a = random.randint(0, 40)
+        mutes.append((a, a + random.randint(1, 9)))
+    return timers, cancels, mutes, random.randint(0, 70), random.randint(0, 45)
+
+random.seed(4017)
+cases = []
+nonempty = delayed = cancelled = ties = 0
+for _ in range(260):
+    timers, cancels, mutes, until, k = gen_small()
+    exp = tick_oracle(timers, cancels, mutes, until, k)
+    got = timer_sched(random.choice([timers, tuple(timers)]), cancels, mutes, until, k)
+    assert got == exp, (timers, cancels, mutes, until, k, got, exp)
+    full = tick_oracle(timers, cancels, mutes, until, 10**6)
+    nonempty += bool(exp["log"])
+    ties += any(full["log"][j][0] == full["log"][j + 1][0] for j in range(len(full["log"]) - 1))
+    nodel = tick_oracle(timers, cancels, [], until, 10**6)
+    delayed += nodel["counts"] != full["counts"] or [e[0] for e in nodel["log"]] != [e[0] for e in full["log"]]
+    nocan = tick_oracle(timers, [], mutes, until, 10**6)
+    cancelled += nocan["counts"] != full["counts"]
+    cases.append((timers, cancels, mutes, until, k, exp))
+assert nonempty > 150 and ties > 60 and delayed > 80 and cancelled > 40, (nonempty, ties, delayed, cancelled)
+
+# the same cases with every time multiplied by f (order and indices do not change)
+for timers, cancels, mutes, until, k, exp in cases[:90]:
+    f = random.choice([10**6, 7 * 10**8, 10**9, 123456789])
+    T2 = [(n, s * f, p * f, c, pr) for (n, s, p, c, pr) in timers]
+    C2 = [(n, t * f, m) for (n, t, m) in cancels]
+    M2 = [(a * f, b * f) for (a, b) in mutes]
+    got = timer_sched(T2, C2, M2, until * f, k)
+    want = {"log": [(t * f, n, i) for (t, n, i) in exp["log"]], "counts": exp["counts"]}
+    assert got == want, (T2, C2, M2, until * f, k)
+''', r'''
+from bisect import bisect_right
+
+
+def timer_sched(timers, cancels, mutes, until, k):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    def seq(x, n):
+        if not isinstance(x, (list, tuple)) or len(x) > n:
+            raise ValueError("sequence")
+        return x
+
+    if not (isint(until) and 0 <= until <= 10 ** 12 and isint(k) and 0 <= k <= 200):
+        raise ValueError("until/k")
+    T = []
+    pos = {}
+    for idx, t in enumerate(seq(timers, 30)):
+        if not isinstance(t, (list, tuple)) or len(t) != 5:
+            raise ValueError("timer")
+        name, start, period, count, prio = t
+        if not isinstance(name, str) or not name or name in pos:
+            raise ValueError("name")
+        if not all(isint(v) for v in (start, period, count, prio)):
+            raise ValueError("int")
+        if not (0 <= start <= 10 ** 12 and 0 <= period <= 10 ** 12 and 1 <= count <= 10 ** 12 and -100 <= prio <= 100):
+            raise ValueError("range")
+        if period == 0 and count != 1:
+            raise ValueError("period 0")
+        pos[name] = idx
+        T.append((name, start, period, count, prio))
+    thr = [None] * len(T)
+    for c in seq(cancels, 60):
+        if not isinstance(c, (list, tuple)) or len(c) != 3:
+            raise ValueError("cancel")
+        name, t, mode = c
+        if not isinstance(name, str) or name not in pos or not isint(t) or not 0 <= t <= 10 ** 12:
+            raise ValueError("cancel")
+        if not isinstance(mode, str) or mode not in ("before", "after"):
+            raise ValueError("mode")
+        lim = t if mode == "before" else t + 1
+        j = pos[name]
+        thr[j] = lim if thr[j] is None else min(thr[j], lim)
+    ws = []
+    for w in seq(mutes, 60):
+        if not isinstance(w, (list, tuple)) or len(w) != 2:
+            raise ValueError("window")
+        a, b = w
+        if not (isint(a) and isint(b) and 0 <= a < b <= 10 ** 12):
+            raise ValueError("window")
+        ws.append((a, b))
+    ws.sort()
+    merged = []
+    for a, b in ws:
+        if merged and a <= merged[-1][1]:
+            if b > merged[-1][1]:
+                merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    starts = [w[0] for w in merged]
+
+    def delivery(s):
+        j = bisect_right(starts, s) - 1
+        if j >= 0 and s < merged[j][1]:
+            return merged[j][1]
+        return s
+
+    events = []
+    counts = {}
+    for idx, (name, start, period, count, prio) in enumerate(T):
+        lim = until if thr[idx] is None else min(until, thr[idx])
+
+        def f(x):
+            if x <= start:
+                return 0
+            if period == 0:
+                return 1
+            return min(count, (x - start + period - 1) // period)
+
+        n = f(lim)
+        for a, b in merged:
+            if a < lim <= b:
+                n -= f(lim) - f(a)
+        counts[name] = n
+        i = 0
+        while i < count and i < k:
+            s = start + i * period
+            d = delivery(s)
+            if d >= lim:
+                break
+            events.append((d, prio, s, idx, i))
+            i += 1
+    events.sort()
+    return {"log": [(d, T[idx][0], i) for (d, prio, s, idx, i) in events[:k]], "counts": counts}
+''')
+
+task("v4_18_book_rooms", r'''
+Write `book_rooms(rooms, requests)` that books meetings online, one request at a time in the
+given order. All numbers are ints (bool is not an int).
+- `rooms`: list or tuple of 1..20 tuples (name, capacity, gap). name is a unique non-empty
+  str, 1 <= capacity <= 1000, 0 <= gap <= 10**9. After a meeting the room needs `gap` time
+  units of cleaning, so a meeting [s, e) occupies its room over the half-open interval
+  [s, e + gap), using that room's own gap.
+- `requests`: list or tuple of at most 200 tuples (id, start, end, size, pref, flex). id is a
+  unique non-empty str; 0 <= start < end <= 10**9; 1 <= size <= 1000; pref is None or the
+  name of a room (an unknown name is a ValueError); 0 <= flex <= 10**9.
+A room is eligible for a request if its capacity >= size, and it is free at shift d if the
+interval [start + d, end + d + gap) intersects no interval already booked in that room (two
+half-open intervals intersect when each starts before the other ends; touching is fine).
+Handling one request: find the smallest shift d in 0..flex for which at least one eligible
+room is free; if there is none, the request is rejected and changes nothing. Otherwise, among
+the eligible rooms free at that d: take the room named by pref if it is among them (a pref
+that is too small or busy is simply ignored, not an error); otherwise take the room with the
+smallest capacity, ties by smaller gap, remaining ties by earlier position in `rooms`. The
+meeting is booked as [start + d, end + d + gap) in that room.
+Return a dict with two keys. "assign": a list with one entry per request, in request order:
+None if rejected, else the tuple (room_name, start + d). "busy": a dict mapping every room
+name (also unused ones) to the total length of the intervals booked in it, gaps included.
+Times go up to 10**9 and flex up to 10**9, so d cannot be tried one unit at a time; the
+answer must be immediate. Anything invalid (wrong types or ranges, duplicate or empty names
+and ids, an unknown pref, too many items, start >= end) is a ValueError, checked before any
+request is handled.
+Example: rooms [("A", 4, 2), ("B", 10, 0)] and requests [("m1", 0, 10, 3, None, 0),
+("m2", 5, 8, 3, None, 0), ("m3", 5, 8, 3, None, 7), ("m4", 12, 14, 3, "B", 0)] give
+{"assign": [("A", 0), ("B", 5), ("B", 8), ("B", 12)], "busy": {"A": 12, "B": 8}}: m1 takes the
+smaller room A (occupied [0, 12)); m2 finds A busy and takes B; m3 would fit A only at d = 7
+but fits B already at d = 3, so d = 3 and B; m4 finds A and B free and takes its pref B.
+''', r'''
+import random
+
+def bad(*a):
+    try:
+        book_rooms(*a)
+    except ValueError:
+        return True
+    return False
+
+R0 = [("A", 4, 2), ("B", 10, 0)]
+r = book_rooms(R0, [("m1", 0, 10, 3, None, 0), ("m2", 5, 8, 3, None, 0), ("m3", 5, 8, 3, None, 7), ("m4", 12, 14, 3, "B", 0)])
+assert r == {"assign": [("A", 0), ("B", 5), ("B", 8), ("B", 12)], "busy": {"A": 12, "B": 8}}, r
+assert book_rooms(R0, []) == {"assign": [], "busy": {"A": 0, "B": 0}}
+assert book_rooms([("only", 5, 0)], [("x", 0, 5, 6, None, 0)]) == {"assign": [None], "busy": {"only": 0}}
+# gap is applied to the room being booked, after the meeting; touching is fine
+r = book_rooms([("A", 4, 3)], [("a", 0, 5, 1, None, 0), ("b", 8, 9, 1, None, 0), ("c", 7, 9, 1, None, 0), ("d", 9, 10, 1, None, 0)])
+assert r == {"assign": [("A", 0), ("A", 8), None, None], "busy": {"A": 8 + 4}}, r
+r = book_rooms([("A", 4, 3)], [("a", 5, 6, 1, None, 0), ("b", 0, 5, 1, None, 0), ("c", 0, 3, 1, None, 0), ("d", 0, 2, 1, None, 0)])
+assert r == {"assign": [("A", 5), None, None, ("A", 0)], "busy": {"A": 4 + 5}}, r
+# the new meeting's own gap blocks it before an existing booking
+r = book_rooms([("A", 4, 3)], [("a", 10, 12, 1, None, 0), ("b", 0, 8, 1, None, 0), ("c", 0, 7, 1, None, 0)])
+assert r == {"assign": [("A", 10), None, ("A", 0)], "busy": {"A": 5 + 10}}, r
+# tie-breaks: capacity, then gap, then position
+rooms = [("p", 5, 2), ("q", 5, 1), ("r", 5, 1), ("s", 3, 9), ("t", 8, 0)]
+r = book_rooms(rooms, [("1", 0, 1, 4, None, 0), ("2", 0, 1, 4, None, 0), ("3", 0, 1, 4, None, 0), ("4", 0, 1, 4, None, 0), ("5", 0, 1, 4, None, 0), ("6", 0, 1, 4, None, 0)])
+assert [x[0] if x else None for x in r["assign"]] == ["q", "r", "p", "t", None, None], r
+r = book_rooms(rooms, [("1", 0, 1, 2, None, 0), ("2", 0, 1, 2, None, 0)])
+assert [x[0] for x in r["assign"]] == ["s", "q"]
+# pref: used when free and eligible, ignored otherwise
+r = book_rooms(rooms, [("1", 0, 1, 2, "t", 0), ("2", 0, 1, 2, "t", 0), ("3", 0, 1, 7, "s", 0), ("4", 0, 1, 7, "p", 0)])
+assert [x[0] if x else None for x in r["assign"]] == ["t", "s", None, None], r
+# smallest shift wins over a pref that is free only later
+r = book_rooms([("A", 5, 0), ("B", 5, 0)], [("1", 0, 4, 1, None, 0), ("2", 0, 4, 1, None, 0), ("3", 2, 4, 1, "A", 9)])
+assert r["assign"] == [("A", 0), ("B", 0), ("A", 4)], r
+r = book_rooms([("A", 5, 0), ("B", 5, 0)], [("1", 0, 4, 1, None, 0), ("2", 0, 5, 1, None, 0), ("3", 2, 4, 1, "B", 9)])
+assert r["assign"] == [("A", 0), ("B", 0), ("A", 4)], r
+# flex limits
+r = book_rooms([("A", 5, 1)], [("1", 0, 4, 1, None, 0), ("2", 0, 2, 1, None, 4), ("3", 0, 2, 1, None, 4)])
+assert r["assign"] == [("A", 0), None, None], r
+r = book_rooms([("A", 5, 1)], [("1", 0, 4, 1, None, 0), ("2", 0, 2, 1, None, 5), ("3", 0, 2, 1, None, 8)])
+assert r["assign"] == [("A", 0), ("A", 5), ("A", 8)], r
+assert r["busy"] == {"A": 5 + 3 + 3}, r
+# shifting skips over several bookings and fits gaps between them
+r = book_rooms([("A", 5, 0)], [("1", 0, 3, 1, None, 0), ("2", 5, 8, 1, None, 0), ("3", 10, 13, 1, None, 0), ("4", 0, 2, 1, None, 100), ("5", 0, 3, 1, None, 100), ("6", 0, 3, 1, None, 100)])
+assert r["assign"] == [("A", 0), ("A", 5), ("A", 10), ("A", 3), ("A", 13), ("A", 16)], r
+# big numbers
+G = 10**9
+r = book_rooms([("A", 5, G), ("B", 6, 0)], [("1", 0, G, 5, None, 0), ("2", 0, G, 5, None, 0), ("3", 0, G, 5, None, G), ("4", 0, 1, 5, "A", G)])
+assert r["assign"] == [("A", 0), ("B", 0), ("B", G), None], r
+r = book_rooms([("A", 5, G), ("B", 6, 0)], [("1", 0, G - 5, 5, None, 0), ("2", 0, G, 5, None, 0), ("3", 0, G, 5, None, G), ("4", G - 1, G, 5, "B", G)])
+assert r["assign"] == [("A", 0), ("B", 0), ("B", G), ("A", 2 * G - 5)], r
+assert r["busy"] == {"A": 3 * G - 4, "B": 2 * G}, r
+# validation
+rq = [("m", 0, 1, 1, None, 0)]
+for args in [
+    ([], rq), (None, rq), ("AB", rq), ([("A", 1, 0)] * 2, rq), ([("", 1, 0)], rq), ([(1, 1, 0)], rq), ([("A", 0, 0)], rq), ([("A", 1001, 0)], rq),
+    ([("A", 1, -1)], rq), ([("A", 1, G + 1)], rq), ([("A", 1.0, 0)], rq), ([("A", True, 0)], rq), ([("A", 1, False)], rq), ([("A", 1)], rq),
+    ([("A", 1, 0, 0)], rq), ([("r%d" % i, 1, 0) for i in range(21)], rq), ([("A", 1, 0)], None), ([("A", 1, 0)], "m"),
+    ([("A", 1, 0)], [("m", 1, 1, 1, None, 0)]), ([("A", 1, 0)], [("m", 2, 1, 1, None, 0)]), ([("A", 1, 0)], [("m", -1, 1, 1, None, 0)]),
+    ([("A", 1, 0)], [("m", 0, G + 1, 1, None, 0)]), ([("A", 1, 0)], [("m", 0, 1, 0, None, 0)]), ([("A", 1, 0)], [("m", 0, 1, 1001, None, 0)]),
+    ([("A", 1, 0)], [("m", 0, 1, 1, "Z", 0)]), ([("A", 1, 0)], [("m", 0, 1, 1, 5, 0)]), ([("A", 1, 0)], [("m", 0, 1, 1, ["A"], 0)]),
+    ([("A", 1, 0)], [("m", 0, 1, 1, None, -1)]), ([("A", 1, 0)], [("m", 0, 1, 1, None, G + 1)]), ([("A", 1, 0)], [("m", 0, 1, 1, None, True)]),
+    ([("A", 1, 0)], [("m", 0.0, 1, 1, None, 0)]), ([("A", 1, 0)], [("m", 0, 1, True, None, 0)]), ([("A", 1, 0)], [("", 0, 1, 1, None, 0)]),
+    ([("A", 1, 0)], [(7, 0, 1, 1, None, 0)]), ([("A", 1, 0)], [("m", 0, 1, 1, None, 0)] * 2), ([("A", 1, 0)], [("m", 0, 1, 1, None)]),
+    ([("A", 1, 0)], [("m%d" % i, 0, 1, 1, None, 0) for i in range(201)]),
+    ([("A", 1, 0)], [("m", 0, 1, 1, None, 0), ("n", 0, 1, 1, "Z", 0)]),
+]:
+    assert bad(*args), args
+assert not bad([("r%d" % i, 1, 0) for i in range(20)], [("m%d" % i, 0, 1, 1, None, 0) for i in range(200)])
+assert not bad(tuple(R0), (("m", 0, 1, 1, "A", 0),))
+
+# oracle: occupancy sets on a unit grid, shifts tried one by one
+def grid_oracle(rooms, reqs):
+    occ = {n: set() for (n, c, g) in rooms}
+    out = []
+    for (rid, s, e, size, pref, flex) in reqs:
+        placed = None
+        for d in range(flex + 1):
+            free = []
+            for ri, (n, c, g) in enumerate(rooms):
+                if c >= size and not any(t in occ[n] for t in range(s + d, e + d + g)):
+                    free.append((0 if n == pref else 1, c, g, ri))
+            if free:
+                _, c, g, ri = min(free)
+                n = rooms[ri][0]
+                for t in range(s + d, e + d + g):
+                    occ[n].add(t)
+                placed = (n, s + d)
+                break
+        out.append(placed)
+    return {"assign": out, "busy": {n: len(occ[n]) for n in occ}}
+
+def gen_case():
+    nr = random.randint(1, 4)
+    rooms = [("r%d" % i, random.choice([2, 4, 4, 6, 10]), random.choice([0, 0, 1, 2, 3])) for i in range(nr)]
+    reqs = []
+    for i in range(random.randint(1, 14)):
+        s = random.randint(0, 40)
+        reqs.append(("q%d" % i, s, s + random.randint(1, 6), random.randint(1, 10), random.choice([None, None] + [r[0] for r in rooms]), random.choice([0, 0, 2, 5, 10, 20])))
+    return rooms, reqs
+
+random.seed(4018)
+cases = []
+placed = shifted = rejected = prefhit = 0
+for _ in range(300):
+    rooms, reqs = gen_case()
+    exp = grid_oracle(rooms, reqs)
+    got = book_rooms(random.choice([rooms, tuple(rooms)]), reqs)
+    assert got == exp, (rooms, reqs, got, exp)
+    for (rid, s, e, size, pref, flex), a in zip(reqs, exp["assign"]):
+        placed += a is not None
+        rejected += a is None
+        shifted += a is not None and a[1] != s
+        prefhit += a is not None and a[0] == pref
+    cases.append((rooms, reqs, exp))
+assert placed > 1000 and rejected > 500 and shifted > 80 and prefhit > 200, (placed, rejected, shifted, prefhit)
+
+# the same cases with all times multiplied by f
+for rooms, reqs, exp in cases[:100]:
+    f = random.choice([10**6, 10**7, 12345678])
+    R2 = [(n, c, g * f) for (n, c, g) in rooms]
+    Q2 = [(i, s * f, e * f, z, p, fl * f) for (i, s, e, z, p, fl) in reqs]
+    want = {"assign": [None if a is None else (a[0], a[1] * f) for a in exp["assign"]], "busy": {n: v * f for n, v in exp["busy"].items()}}
+    assert book_rooms(R2, Q2) == want, (R2, Q2)
+''', r'''
+def book_rooms(rooms, requests):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    if not isinstance(rooms, (list, tuple)) or not 1 <= len(rooms) <= 20:
+        raise ValueError("rooms")
+    if not isinstance(requests, (list, tuple)) or len(requests) > 200:
+        raise ValueError("requests")
+    names, cap, gap = [], [], []
+    for r in rooms:
+        if not isinstance(r, (list, tuple)) or len(r) != 3:
+            raise ValueError("room")
+        n, c, g = r
+        if not isinstance(n, str) or not n or n in names:
+            raise ValueError("room name")
+        if not (isint(c) and 1 <= c <= 1000 and isint(g) and 0 <= g <= 10 ** 9):
+            raise ValueError("room numbers")
+        names.append(n)
+        cap.append(c)
+        gap.append(g)
+    reqs = []
+    ids = set()
+    for q in requests:
+        if not isinstance(q, (list, tuple)) or len(q) != 6:
+            raise ValueError("request")
+        rid, s, e, size, pref, flex = q
+        if not isinstance(rid, str) or not rid or rid in ids:
+            raise ValueError("id")
+        ids.add(rid)
+        if not all(isint(v) for v in (s, e, size, flex)):
+            raise ValueError("int")
+        if not (0 <= s < e <= 10 ** 9 and 1 <= size <= 1000 and 0 <= flex <= 10 ** 9):
+            raise ValueError("range")
+        if pref is not None and (not isinstance(pref, str) or pref not in names):
+            raise ValueError("pref")
+        reqs.append((s, e, size, None if pref is None else names.index(pref), flex))
+    booked = [[] for _ in names]
+    busy = [0] * len(names)
+    out = []
+    for s, e, size, pref, flex in reqs:
+        elig = [i for i in range(len(names)) if cap[i] >= size]
+        shifts = {0}
+        for i in elig:
+            for a, b in booked[i]:
+                if 0 < b - s <= flex:
+                    shifts.add(b - s)
+        done = None
+        for d in sorted(shifts):
+            free = [i for i in elig if all(s + d >= b or e + d + gap[i] <= a for a, b in booked[i])]
+            if free:
+                if pref in free:
+                    i = pref
+                else:
+                    i = min(free, key=lambda j: (cap[j], gap[j], j))
+                booked[i].append((s + d, e + d + gap[i]))
+                busy[i] += e - s + gap[i]
+                done = (names[i], s + d)
+                break
+        out.append(done)
+    return {"assign": out, "busy": dict(zip(names, busy))}
+''')
+task("v4_19_leap_clock", r'''
+Write `leap_label(n, leaps)` and `leap_count(label, leaps)` for a UTC clock that counts real
+seconds and has leap seconds. Dates are proleptic Gregorian.
+- `leaps`: list or tuple of at most 200 entries (year, month, delta), each a list or tuple of
+  3 ints (bool is not an int) with 1970 <= year <= 9998, 1 <= month <= 12, delta 1 or -1, in strictly increasing
+  (year, month) order. The leap second happens at the very end of the last day of that
+  month. With delta = 1 that day has 86401 seconds and its last second is labelled 23:59:60.
+  With delta = -1 that day has 86399 seconds: the labels run through 23:59:58 and the next
+  second is 00:00:00 of the next day (23:59:59 does not exist on that day). All other days
+  have 86400 seconds, labelled 00:00:00 .. 23:59:59.
+- n counts real seconds elapsed since the label 1970-01-01 00:00:00, which is n = 0.
+  Leap seconds are counted; the first day of the clock is a normal day unless a leap falls
+  in January 1970.
+- `leap_label(n, leaps)` returns the label of second n as the str "YYYY-MM-DD hh:mm:ss"
+  (zero padded, 4-digit year, 24-hour clock). n must be an int >= 0 (not a bool); a label
+  with a year above 9999 is a ValueError.
+- `leap_count(label, leaps)` is the inverse and returns the int n. label must be a str of
+  exactly that format: ASCII digits only, one space, nothing before or after. The date must
+  exist and have a year in 1970..9999; hh 0..23, mm 0..59, ss 0..59, or ss = 60 which is
+  allowed only for 23:59:60 on a day that ends with a +1 leap second. A label that does not
+  exist on its day (23:59:60 on any other day, 23:59:59 on a -1 day) is a ValueError.
+`leaps` is validated first in both functions; anything invalid is a ValueError. Years up to
+9999 must work for any valid input in well under a second.
+Examples with leaps = [(1972, 6, 1), (1972, 12, 1)]: leap_label(78796799, leaps) is
+"1972-06-30 23:59:59", leap_label(78796800, leaps) is "1972-06-30 23:59:60", and
+leap_label(78796801, leaps) is "1972-07-01 00:00:00". With leaps = [(1970, 1, -1)],
+leap_count("1970-02-01 00:00:00", leaps) is 2678399 and leap_label(2678398, leaps) is
+"1970-01-31 23:59:58".
+''', r'''
+import random, datetime, calendar
+from bisect import bisect_right
+
+def bad(f, *a):
+    try:
+        f(*a)
+    except ValueError:
+        return True
+    return False
+
+L72 = [(1972, 6, 1), (1972, 12, 1)]
+assert leap_label(0, []) == "1970-01-01 00:00:00"
+assert leap_label(86399, []) == "1970-01-01 23:59:59"
+assert leap_label(86400, ()) == "1970-01-02 00:00:00"
+assert leap_label(78796799, L72) == "1972-06-30 23:59:59"
+assert leap_label(78796800, L72) == "1972-06-30 23:59:60"
+assert leap_label(78796801, L72) == "1972-07-01 00:00:00"
+assert leap_label(78796800, [(1972, 6, 1)]) == "1972-06-30 23:59:60"
+assert leap_count("1972-06-30 23:59:60", L72) == 78796800
+assert leap_count("1972-07-01 00:00:00", L72) == 78796801
+assert leap_count("1972-06-30 23:59:59", L72) == 78796799
+LN = [(1970, 1, -1)]
+assert leap_count("1970-02-01 00:00:00", LN) == 2678399
+assert leap_label(2678398, LN) == "1970-01-31 23:59:58"
+assert leap_label(2678399, LN) == "1970-02-01 00:00:00"
+assert leap_count("1970-01-31 23:59:58", LN) == 2678398
+assert leap_count("1970-01-31 23:59:59", [(1970, 2, -1)]) == 2678399
+assert bad(leap_count, "1970-01-31 23:59:59", LN)
+assert bad(leap_count, "1970-01-31 23:59:60", LN)
+assert bad(leap_count, "1970-01-30 23:59:60", L72)
+assert bad(leap_count, "1972-06-30 23:59:60", [(1972, 7, 1)])
+assert bad(leap_count, "1972-06-30 23:59:60", [])
+assert bad(leap_count, "1972-06-30 23:58:60", L72)
+assert bad(leap_count, "1972-06-30 22:59:60", L72)
+assert bad(leap_count, "1972-12-30 23:59:60", L72)
+assert leap_count("1972-12-31 23:59:60", L72) == leap_count("1973-01-01 00:00:00", L72) - 1
+assert leap_count("1973-01-01 00:00:00", L72) == 1096 * 86400 + 2
+# consecutive months, mixed signs
+LC = [(1999, 1, 1), (1999, 2, -1), (1999, 3, 1)]
+assert leap_count("1999-01-31 23:59:60", LC) - leap_count("1999-01-31 23:59:59", LC) == 1
+assert leap_count("1999-02-01 00:00:00", LC) - leap_count("1999-01-31 23:59:60", LC) == 1
+assert leap_count("1999-03-01 00:00:00", LC) - leap_count("1999-02-28 23:59:58", LC) == 1
+assert leap_count("1999-03-31 23:59:60", LC) - leap_count("1999-03-01 00:00:00", LC) == 31 * 86400
+assert leap_count("1999-04-01 00:00:00", LC) - leap_count("1999-01-01 00:00:00", LC) == 90 * 86400 + 1
+# the end of the clock
+tot = sum(e[2] for e in LC)
+last = (datetime.datetime(9999, 12, 31, 23, 59, 59) - datetime.datetime(1970, 1, 1)).days * 86400 + 86399 + tot
+assert leap_label(last, LC) == "9999-12-31 23:59:59"
+assert bad(leap_label, last + 1, LC)
+assert leap_count("9999-12-31 23:59:59", LC) == last
+assert leap_count("1970-01-01 00:00:00", LC) == 0
+assert bad(leap_label, 10**30, [])
+for a in [-1, 1.0, True, "5", None, [5]]:
+    assert bad(leap_label, a, []), a
+for lb in ["1969-12-31 23:59:59", "10000-01-01 00:00:00", "1970-1-01 00:00:00", "1970-01-01 0:00:00", "1970-01-01T00:00:00", "1970-01-01  00:00:00", " 1970-01-01 00:00:00",
+           "1970-01-01 00:00:00 ", "1970-01-01 00:00:00\n", "1970-01-01 00:00:61", "1970-01-01 24:00:00", "1970-01-01 00:60:00", "1970-13-01 00:00:00", "1970-00-01 00:00:00",
+           "1970-01-00 00:00:00", "1970-02-29 00:00:00", "1971-02-29 00:00:00", "1900-02-28 00:00:00", "1970-04-31 00:00:00", "１970-01-01 00:00:00",
+           "1970-01-01 ٠٠:00:00", "1970/01/01 00:00:00", "1970-01-01", "", "9999-12-31 23:59:60", "1970-01-01 00:00:60", "-970-01-01 00:00:00", "+970-01-01 00:00:00"]:
+    assert bad(leap_count, lb, []), lb
+for lb in [None, 5, b"1970-01-01 00:00:00", ["1970-01-01 00:00:00"]]:
+    assert bad(leap_count, lb, []), lb
+assert leap_count("2000-02-29 12:00:00", []) == (datetime.date(2000, 2, 29) - datetime.date(1970, 1, 1)).days * 86400 + 43200
+assert bad(leap_count, "2100-02-29 12:00:00", [])
+BAD_LEAPS = [[(1972, 12, 1), (1972, 6, 1)], [(1972, 6, 1), (1972, 6, 1)], [(1972, 6, 1), (1972, 6, -1)], [(1972, 13, 1)], [(1972, 0, 1)], [(1969, 12, 1)], [(9999, 1, 1)],
+             [(1972, 6, 0)], [(1972, 6, 2)], [(1972, 6, True)], [(1972.0, 6, 1)], [(1972, 6, 1.0)], [(1972, 6)], [(1972, 6, 1, 1)], [(True, 6, 1)], [(1972, False, 1)], ["x"], [None],
+             None, 5, "ab", {(1972, 6, 1)}, [(1972, 6, 1)] * 2, [(1970 + i // 12, i % 12 + 1, 1) for i in range(201)]]
+for lp in BAD_LEAPS:
+    assert bad(leap_label, 5, lp), lp
+    assert bad(leap_count, "1970-01-01 00:00:00", lp), lp
+assert not bad(leap_label, 5, [(1970 + i // 12, i % 12 + 1, 1) for i in range(200)])
+assert not bad(leap_label, 5, [(9998, 12, -1)])
+assert not bad(leap_label, 5, [[1972, 6, 1], (1972, 12, -1)])
+
+# oracle: walk the days one by one with datetime and lay the seconds end to end
+def build(leaps):
+    extra = {}
+    for (y, m, dl) in leaps:
+        extra[datetime.date(y, m, calendar.monthrange(y, m)[1])] = dl
+    days, starts, lens, idx = [], [], [], {}
+    t = 0
+    day = datetime.date(1970, 1, 1)
+    one = datetime.timedelta(1)
+    while day.year < 2034:
+        ln = 86400 + extra.get(day, 0)
+        idx[day] = len(days)
+        days.append(day)
+        starts.append(t)
+        lens.append(ln)
+        t += ln
+        day += one
+    return days, starts, lens, idx, t
+
+def o_label(tab, n):
+    days, starts, lens, idx, total = tab
+    i = bisect_right(starts, n) - 1
+    sod = n - starts[i]
+    assert 0 <= sod < lens[i]
+    if sod == 86400:
+        return "%s 23:59:60" % days[i].isoformat()
+    return "%s %02d:%02d:%02d" % (days[i].isoformat(), sod // 3600, sod % 3600 // 60, sod % 60)
+
+def o_count(tab, y, m, d, hh, mi, ss):
+    days, starts, lens, idx, total = tab
+    try:
+        dt = datetime.date(y, m, d)
+    except ValueError:
+        return None
+    if dt not in idx or not (0 <= hh < 24 and 0 <= mi < 60 and 0 <= ss <= 60):
+        return None
+    if ss == 60 and not (hh == 23 and mi == 59):
+        return None
+    sod = hh * 3600 + mi * 60 + ss
+    i = idx[dt]
+    return starts[i] + sod if sod < lens[i] else None
+
+def gen_leaps(kind):
+    if kind == 0:
+        return []
+    if kind == 1:
+        base = random.randint(1972, 1990)
+        return [(base, m, random.choice([1, 1, -1])) for m in sorted(random.sample(range(1, 13), random.randint(2, 6)))]
+    ym = sorted(random.sample([(y, m) for y in range(1970, 2032) for m in range(1, 13)], random.randint(8, 30)))
+    return [(y, m, random.choice([1, 1, 1, -1])) for (y, m) in ym]
+
+random.seed(4019)
+nlab60 = nneg = 0
+for kind in [0, 1, 2, 2, 2, 1]:
+    leaps = gen_leaps(kind)
+    tab = build(leaps)
+    days, starts, lens, idx, total = tab
+    ns = [random.randint(0, total - 1) for _ in range(120)]
+    for i, ln in enumerate(lens):
+        if ln != 86400:
+            for dn in range(-3, 3):
+                ns.append(starts[i] + ln + dn)
+    for n in ns:
+        n = min(max(n, 0), total - 1)
+        exp = o_label(tab, n)
+        got = leap_label(n, leaps)
+        assert got == exp, (leaps, n, got, exp)
+        y, mo, d = int(exp[:4]), int(exp[5:7]), int(exp[8:10])
+        hh, mi, ss = int(exp[11:13]), int(exp[14:16]), int(exp[17:19])
+        assert o_count(tab, y, mo, d, hh, mi, ss) == n
+        assert leap_count(exp, tuple(leaps)) == n, (leaps, exp, n)
+        nlab60 += ss == 60
+    # random labels, valid and invalid
+    for _ in range(150):
+        dt = random.choice(days)
+        if random.random() < 0.5 and any(ln != 86400 for ln in lens):
+            dt = random.choice([days[i] for i, ln in enumerate(lens) if ln != 86400])
+        hh, mi, ss = random.choice([(23, 59, 59), (23, 59, 60), (23, 59, 58), (random.randint(0, 23), random.randint(0, 59), random.randint(0, 59)),
+                                    (random.randint(0, 23), random.randint(0, 59), 60), (0, 0, 0)])
+        lab = "%s %02d:%02d:%02d" % (dt.isoformat(), hh, mi, ss)
+        exp = o_count(tab, dt.year, dt.month, dt.day, hh, mi, ss)
+        if exp is None:
+            assert bad(leap_count, lab, leaps), (leaps, lab)
+        else:
+            assert leap_count(lab, leaps) == exp, (leaps, lab)
+            nneg += 1
+    # beyond the table: one straight line, checked with datetime arithmetic
+    tot = sum(e[2] for e in leaps)
+    t0 = datetime.datetime(1970, 1, 1)
+    for _ in range(60):
+        n = random.choice([random.randint(total, 3 * 10**9), random.randint(total, 2 * 10**11), random.randint(2 * 10**11, 3 * 10**11)])
+        try:
+            exp = (t0 + datetime.timedelta(seconds=n - tot)).strftime("%Y-%m-%d %H:%M:%S")
+        except OverflowError:
+            exp = None
+        if exp is None:
+            assert bad(leap_label, n, leaps), n
+        else:
+            assert leap_label(n, leaps) == exp, (n, exp)
+            assert leap_count(exp, leaps) == n
+assert nlab60 > 6 and nneg > 400, (nlab60, nneg)
+''', r'''
+import re
+from bisect import bisect_left, bisect_right
+
+
+def _isint(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _days(y, m, d):
+    if m <= 2:
+        y -= 1
+    era = y // 400
+    yoe = y - era * 400
+    doy = (153 * (m + (-3 if m > 2 else 9)) + 2) // 5 + d - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def _civil(z):
+    z += 719468
+    era = z // 146097
+    doe = z - era * 146097
+    yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    mp = (5 * doy + 2) // 153
+    d = doy - (153 * mp + 2) // 5 + 1
+    m = mp + 3 if mp < 10 else mp - 9
+    return (y + 1 if m <= 2 else y), m, d
+
+
+def _mlen(y, m):
+    if m == 2:
+        return 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28
+    return 30 if m in (4, 6, 9, 11) else 31
+
+
+def _prep(leaps):
+    if not isinstance(leaps, (list, tuple)) or len(leaps) > 200:
+        raise ValueError("leaps")
+    days, deltas, cums, prev, c = [], [], [], None, 0
+    for e in leaps:
+        if not isinstance(e, (list, tuple)) or len(e) != 3:
+            raise ValueError("leap")
+        y, m, dl = e
+        if not (_isint(y) and _isint(m) and _isint(dl)):
+            raise ValueError("leap int")
+        if not (1970 <= y <= 9998 and 1 <= m <= 12 and dl in (1, -1)):
+            raise ValueError("leap range")
+        if prev is not None and (y, m) <= prev:
+            raise ValueError("leap order")
+        prev = (y, m)
+        days.append(_days(y, m, _mlen(y, m)))
+        deltas.append(dl)
+        c += dl
+        cums.append(c)
+    bounds = [(d + 1) * 86400 + c for d, c in zip(days, cums)]
+    return days, deltas, cums, bounds
+
+
+def leap_label(n, leaps):
+    days, deltas, cums, bounds = _prep(leaps)
+    if not _isint(n) or n < 0:
+        raise ValueError("n")
+    j = bisect_right(bounds, n)
+    off = cums[j - 1] if j else 0
+    if j < len(bounds) and deltas[j] == 1 and n == bounds[j] - 1:
+        y, m, d = _civil(days[j])
+        return "%04d-%02d-%02d 23:59:60" % (y, m, d)
+    day, sod = divmod(n - off, 86400)
+    y, m, d = _civil(day)
+    if y > 9999:
+        raise ValueError("year")
+    return "%04d-%02d-%02d %02d:%02d:%02d" % (y, m, d, sod // 3600, sod % 3600 // 60, sod % 60)
+
+
+def leap_count(label, leaps):
+    days, deltas, cums, bounds = _prep(leaps)
+    mt = re.fullmatch(r"([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})", label) if isinstance(label, str) else None
+    if mt is None:
+        raise ValueError("format")
+    y, m, d, hh, mi, ss = (int(x) for x in mt.groups())
+    if not (1970 <= y <= 9999 and 1 <= m <= 12 and 1 <= d <= _mlen(y, m) and hh < 24 and mi < 60 and ss <= 60):
+        raise ValueError("value")
+    day = _days(y, m, d)
+    j = bisect_left(days, day)
+    off = cums[j - 1] if j else 0
+    here = j < len(days) and days[j] == day
+    if ss == 60 and not (hh == 23 and mi == 59 and here and deltas[j] == 1):
+        raise ValueError("no such second")
+    if (hh, mi, ss) == (23, 59, 59) and here and deltas[j] == -1:
+        raise ValueError("no such second")
+    return day * 86400 + off + hh * 3600 + mi * 60 + ss
+''')
+
+task("v4_20_list_schedule", r'''
+Write `list_schedule(jobs, workers)` that simulates a list scheduler and returns the
+schedule.
+- `jobs`: list or tuple of 0..200 tuples (name, duration, deps). name is a unique non-empty
+  str; duration is an int, 0 <= duration <= 10**12 (bool is not an int); deps is a list or
+  tuple of names of other jobs, with no name repeated. A job can start only when every job
+  in its deps has finished. An unknown dep, a repeated dep, a job that depends on itself, a
+  dependency cycle, or wrong types anywhere are a ValueError (the whole input is checked
+  before anything is simulated).
+- `workers`: int, 1 <= workers <= 64, numbered 0 .. workers-1. A worker runs one job at a
+  time, without interruption.
+- Priority of a job: the largest total duration over all chains job -> j2 -> j3 ... that
+  follow "is listed in the deps of" edges forward, counting every job on the chain including
+  the job itself (so a job without dependents has priority equal to its own duration).
+  Higher priority goes first; equal priorities go by name ascending (Python str order).
+Simulation: time starts at 0 and jumps from one decision instant to the next. At an instant
+t, first every running job whose finish time is t finishes, freeing its worker, so jobs
+starting at t see it as finished. Then, repeatedly, while some worker is idle and some job is
+ready (not started, all deps finished): the ready job with the highest priority starts at t
+on the lowest-numbered idle worker. A job of duration 0 finishes at the same instant it
+starts: its worker is idle again at once and its dependents may become ready and start at t
+inside the same repetition. When nothing more can start at t, time jumps to the earliest
+finish time of a running job.
+Return {"start": {name: start time}, "worker": {name: worker number}, "makespan": the largest
+finish time over all jobs, 0 when there are no jobs}. Durations go up to 10**12, so time
+must not be simulated unit by unit.
+Examples: jobs [("a", 3, []), ("b", 2, ["a"]), ("c", 4, ["a"]), ("d", 1, ["b", "c"])] with 2
+workers give {"start": {"a": 0, "b": 3, "c": 3, "d": 7}, "worker": {"a": 0, "b": 1, "c": 0,
+"d": 0}, "makespan": 8}. Jobs [("z", 0, []), ("y", 2, ["z"]), ("x", 1, [])] with 1 worker give
+start {"z": 0, "y": 0, "x": 2}, worker 0 for all three, makespan 3.
+''', r'''
+import random
+
+def bad(*a):
+    try:
+        list_schedule(*a)
+    except ValueError:
+        return True
+    return False
+
+J1 = [("a", 3, []), ("b", 2, ["a"]), ("c", 4, ["a"]), ("d", 1, ["b", "c"])]
+assert list_schedule(J1, 2) == {"start": {"a": 0, "b": 3, "c": 3, "d": 7}, "worker": {"a": 0, "b": 1, "c": 0, "d": 0}, "makespan": 8}
+assert list_schedule(tuple(J1), 1) == {"start": {"a": 0, "c": 3, "b": 7, "d": 9}, "worker": {"a": 0, "b": 0, "c": 0, "d": 0}, "makespan": 10}
+J2 = [("z", 0, []), ("y", 2, ["z"]), ("x", 1, [])]
+assert list_schedule(J2, 1) == {"start": {"z": 0, "y": 0, "x": 2}, "worker": {"z": 0, "y": 0, "x": 0}, "makespan": 3}
+assert list_schedule([], 3) == {"start": {}, "worker": {}, "makespan": 0}
+assert list_schedule([("only", 0, [])], 2) == {"start": {"only": 0}, "worker": {"only": 0}, "makespan": 0}
+# ties by name in str order (upper case first, "a10" before "a2")
+r = list_schedule([("b", 2, []), ("B", 2, []), ("a10", 2, []), ("a2", 2, [])], 1)
+assert r["start"] == {"B": 0, "a10": 2, "a2": 4, "b": 6}, r
+# higher priority beats the name, and a long chain beats a long single job
+r = list_schedule([("a", 5, []), ("b", 2, []), ("c", 4, ["b"])], 1)
+assert r["start"] == {"b": 0, "a": 2, "c": 7}, r
+r = list_schedule([("a", 6, []), ("b", 2, []), ("c", 4, ["b"])], 1)
+assert r["start"] == {"a": 0, "b": 6, "c": 8}, r
+# lowest idle worker, workers freed at the same instant
+r = list_schedule([("p", 5, []), ("q", 4, []), ("s", 3, []), ("t", 3, ["q"]), ("u", 1, ["p", "s"])], 3)
+assert r["start"] == {"p": 0, "q": 0, "s": 0, "t": 4, "u": 5} and r["worker"] == {"q": 0, "p": 1, "s": 2, "t": 0, "u": 1}, r
+# a job finishing at t counts as finished for a job starting at t
+r = list_schedule([("a", 5, []), ("b", 5, []), ("c", 1, ["a", "b"])], 2)
+assert r["start"]["c"] == 5 and r["worker"]["c"] == 0 and r["makespan"] == 6, r
+# zero-duration chains resolve inside one instant and keep priority order
+r = list_schedule([("z1", 0, []), ("z2", 0, ["z1"]), ("w", 3, ["z2"]), ("v", 1, []), ("u", 2, [])], 1)
+assert r["start"] == {"z1": 0, "z2": 0, "w": 0, "u": 3, "v": 5}, r
+r = list_schedule([("m", 4, []), ("z", 0, []), ("n", 3, ["z"])], 2)
+assert r["start"] == {"m": 0, "z": 0, "n": 0} and r["worker"] == {"m": 0, "z": 1, "n": 1}, r
+# zero jobs are dependency edges too
+r = list_schedule([("a", 2, []), ("z", 0, ["a"]), ("b", 1, ["z"])], 2)
+assert r["start"] == {"a": 0, "z": 2, "b": 2} and r["worker"] == {"a": 0, "z": 0, "b": 0}, r
+# dependencies may be listed after their dependents
+r = list_schedule([("c", 1, ["b"]), ("b", 1, ["a"]), ("a", 1, [])], 4)
+assert r["start"] == {"a": 0, "b": 1, "c": 2} and r["makespan"] == 3, r
+# big numbers
+E = 10**12
+r = list_schedule([("a", E, []), ("b", E, []), ("c", E, ["a", "b"]), ("d", E, ["c"])], 2)
+assert r == {"start": {"a": 0, "b": 0, "c": E, "d": 2 * E}, "worker": {"a": 0, "b": 1, "c": 0, "d": 0}, "makespan": 3 * E}, r
+chain = [("j%03d" % i, E, ["j%03d" % (i - 1)] if i else []) for i in range(200)]
+r = list_schedule(chain, 64)
+assert r["makespan"] == 200 * E and r["start"]["j199"] == 199 * E and set(r["worker"].values()) == {0}
+r = list_schedule([("x%d" % i, E - i, []) for i in range(130)], 64)
+assert r["makespan"] == 3 * E - 255 and r["start"]["x64"] == E - 63 and r["start"]["x128"] == 2 * E - 127, r
+assert r["worker"]["x128"] == 0 and r["worker"]["x129"] == 1 and r["worker"]["x64"] == 63 and r["worker"]["x127"] == 0, r
+# validation
+for args in [
+    ([("a", 1, ["a"])], 1), ([("a", 1, ["b"]), ("b", 1, ["a"])], 1), ([("a", 1, ["b"]), ("b", 1, ["c"]), ("c", 1, ["a"])], 2),
+    ([("a", 1, ["z"])], 1), ([("a", 1, []), ("b", 1, ["a", "a"])], 1), ([("a", 1, []), ("a", 1, [])], 1), ([("", 1, [])], 1), ([(1, 1, [])], 1),
+    ([("a", -1, [])], 1), ([("a", E + 1, [])], 1), ([("a", 1.0, [])], 1), ([("a", True, [])], 1), ([("a", "1", [])], 1), ([("a", 1, None)], 1),
+    ([("a", 1, "b"), ("b", 1, [])], 1), ([("a", 1, [1])], 1), ([("a", 1, [None])], 1), ([("a", 1)], 1), ([("a", 1, [], 0)], 1), ("ab", 1), (None, 1), (5, 1),
+    ({"a": 1}, 1), ([["a"]], 1), ([None], 1), ([("a", 1, [])], 0), ([("a", 1, [])], 65), ([("a", 1, [])], -1), ([("a", 1, [])], 1.0), ([("a", 1, [])], True),
+    ([("a", 1, [])], "1"), ([("a", 1, [])], None), ([("a", 1, [])] + [("b%d" % i, 1, []) for i in range(200)], 1), ([("a", 1, [{"x": 1}])], 1),
+]:
+    assert bad(*args), args
+assert not bad([("b%d" % i, 1, []) for i in range(200)], 64)
+assert not bad([("a", 1, ()), ("b", 0, ("a",))], 1) and not bad((("a", 1, []),), 64)
+
+# oracle: tick by tick; priority from explicit enumeration of every chain
+def tick_oracle(jobs, workers):
+    dur = {n: d for n, d, _ in jobs}
+    deps = {n: list(ds) for n, _, ds in jobs}
+    succ = {n: [m for m, _, ds in jobs if n in ds] for n in dur}
+    def longest(n):
+        best = 0
+        def walk(v, acc):
+            nonlocal best
+            acc += dur[v]
+            best = max(best, acc)
+            for w in succ[v]:
+                walk(w, acc)
+        walk(n, 0)
+        return best
+    bl = {n: longest(n) for n in dur}
+    finished, start, wk, running = set(), {}, {}, {}
+    t = 0
+    limit = sum(dur.values()) + 5
+    while len(finished) < len(dur):
+        for w, (n, e) in list(running.items()):
+            if e == t:
+                finished.add(n)
+                del running[w]
+        while True:
+            idle = [w for w in range(workers) if w not in running]
+            ready = [n for n in dur if n not in start and all(d in finished for d in deps[n])]
+            if not idle or not ready:
+                break
+            n = min(ready, key=lambda x: (-bl[x], x))
+            start[n] = t
+            wk[n] = idle[0]
+            if dur[n] == 0:
+                finished.add(n)
+            else:
+                running[idle[0]] = (n, t + dur[n])
+        t += 1
+        assert t <= limit
+    return {"start": start, "worker": wk, "makespan": max([start[n] + dur[n] for n in dur], default=0)}
+
+POOL = ["a", "b", "c", "a10", "a2", "B", "j1", "j2", "j10", "zz", "Z", "m"]
+
+def gen_dag(maxn, durs):
+    n = random.randint(1, maxn)
+    names = random.sample(POOL, n)
+    p = random.choice([0.15, 0.3, 0.5])
+    jobs = []
+    for i, nm in enumerate(names):
+        deps = [names[j] for j in range(i) if random.random() < p]
+        random.shuffle(deps)
+        jobs.append((nm, random.choice(durs), deps))
+    random.shuffle(jobs)
+    return jobs
+
+random.seed(4020)
+cases = []
+zeros = ties = multi = 0
+for _ in range(260):
+    jobs = gen_dag(9, [0, 1, 1, 2, 2, 3, 4, 5, 6])
+    w = random.randint(1, 4)
+    exp = tick_oracle(jobs, w)
+    got = list_schedule(random.choice([jobs, tuple(jobs)]), w)
+    assert got == exp, (jobs, w, got, exp)
+    zeros += any(j[1] == 0 for j in jobs)
+    multi += len(set(exp["worker"].values())) > 1
+    ties += len({exp["start"][j[0]] for j in jobs}) < len(jobs)
+    cases.append((jobs, w, exp))
+assert zeros > 90 and multi > 100 and ties > 120, (zeros, multi, ties)
+
+# scaled durations give the scaled schedule
+for jobs, w, exp in cases[:100]:
+    f = random.choice([10**6, 10**9, 999999937])
+    J2 = [(n, d * f, ds) for (n, d, ds) in jobs]
+    got = list_schedule(J2, w)
+    want = {"start": {n: s * f for n, s in exp["start"].items()}, "worker": exp["worker"], "makespan": exp["makespan"] * f}
+    assert got == want, (J2, w)
+
+# large random DAGs: structural checks and scale invariance
+for _ in range(4):
+    n = random.randint(120, 200)
+    names = ["t%03d" % i for i in random.sample(range(1000), n)]
+    jobs = []
+    for i, nm in enumerate(names):
+        deps = random.sample(names[:i], min(i, random.randint(0, 3)))
+        jobs.append((nm, random.randint(0, 40), deps))
+    w = random.choice([1, 3, 8, 64])
+    r1 = list_schedule(jobs, w)
+    fin = {nm: r1["start"][nm] + d for (nm, d, _) in jobs}
+    assert r1["makespan"] == max(fin.values())
+    for (nm, d, ds) in jobs:
+        assert all(fin[x] <= r1["start"][nm] for x in ds)
+        assert 0 <= r1["worker"][nm] < w
+    for k in range(w):
+        iv = sorted((r1["start"][nm], fin[nm]) for (nm, d, _) in jobs if r1["worker"][nm] == k and d > 0)
+        assert all(iv[i][1] <= iv[i + 1][0] for i in range(len(iv) - 1))
+    f = 10**9 + 7
+    r2 = list_schedule([(nm, d * f, ds) for (nm, d, ds) in jobs], w)
+    assert r2["start"] == {nm: s * f for nm, s in r1["start"].items()} and r2["worker"] == r1["worker"] and r2["makespan"] == r1["makespan"] * f
+''', r'''
+import heapq
+
+
+def list_schedule(jobs, workers):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    if not isinstance(jobs, (list, tuple)) or len(jobs) > 200:
+        raise ValueError("jobs")
+    if not isint(workers) or not 1 <= workers <= 64:
+        raise ValueError("workers")
+    names, dur, raw = [], [], []
+    index = {}
+    for j in jobs:
+        if not isinstance(j, (list, tuple)) or len(j) != 3:
+            raise ValueError("job")
+        name, d, deps = j
+        if not isinstance(name, str) or not name or name in index:
+            raise ValueError("name")
+        if not isint(d) or not 0 <= d <= 10 ** 12:
+            raise ValueError("duration")
+        if not isinstance(deps, (list, tuple)):
+            raise ValueError("deps")
+        index[name] = len(names)
+        names.append(name)
+        dur.append(d)
+        raw.append(deps)
+    n = len(names)
+    succ = [[] for _ in range(n)]
+    indeg = [0] * n
+    for u, deps in enumerate(raw):
+        seen = set()
+        for dep in deps:
+            if not isinstance(dep, str) or dep not in index or dep in seen or index[dep] == u:
+                raise ValueError("dep")
+            seen.add(dep)
+            succ[index[dep]].append(u)
+            indeg[u] += 1
+    order = [u for u in range(n) if indeg[u] == 0]
+    left = indeg[:]
+    for u in order:
+        for v in succ[u]:
+            left[v] -= 1
+            if left[v] == 0:
+                order.append(v)
+    if len(order) < n:
+        raise ValueError("cycle")
+    prio = [0] * n
+    for u in reversed(order):
+        prio[u] = dur[u] + max((prio[v] for v in succ[u]), default=0)
+    waiting = indeg[:]
+    ready = [(-prio[u], names[u], u) for u in range(n) if waiting[u] == 0]
+    heapq.heapify(ready)
+    idle = list(range(workers))
+    running = []
+    start, worker = {}, {}
+    done = 0
+    makespan = 0
+    t = 0
+
+    def finish(u, w):
+        for v in succ[u]:
+            waiting[v] -= 1
+            if waiting[v] == 0:
+                heapq.heappush(ready, (-prio[v], names[v], v))
+        heapq.heappush(idle, w)
+
+    while done < n:
+        while ready and idle:
+            _, _, u = heapq.heappop(ready)
+            w = heapq.heappop(idle)
+            start[names[u]] = t
+            worker[names[u]] = w
+            makespan = max(makespan, t + dur[u])
+            if dur[u] == 0:
+                done += 1
+                finish(u, w)
+            else:
+                heapq.heappush(running, (t + dur[u], w, u))
+        if done == n:
+            break
+        t = running[0][0]
+        while running and running[0][0] == t:
+            _, w, u = heapq.heappop(running)
+            done += 1
+            finish(u, w)
+    return {"start": start, "worker": worker, "makespan": makespan}
+''')
+
+
+task("v4_21_kth_coprime", r'''
+Write `kth_coprime(n, k)` that returns the k-th smallest positive integer x with gcd(x, n) == 1
+(k = 1 is the smallest such x). Both arguments must be ints (bool is not an int) with
+1 <= n <= 10**12 and 1 <= k <= 10**18, otherwise raise ValueError. The result is an int.
+n can be 10**12 and k can be 10**18, so counting or testing numbers one by one is impossible.
+The pattern of integers coprime to n repeats with period n, and every block of n consecutive
+integers holds exactly phi(n) of them, so the answer is about k * n / phi(n), which can be far
+above n and far above 10**18 (it is an exact Python int, never a float).
+Details that matter:
+- gcd(x, 1) == 1 for every x, so kth_coprime(1, k) == k.
+- For n >= 2 the multiples of n are never in the sequence, but n + 1, 2n + 1, ... are, and
+  so is 1. For n == 2 the sequence is the odd numbers 1, 3, 5, ...
+- The k-th number may sit in a later period than the first one, and k may be a multiple of
+  phi(n) (the last coprime number of a period is then the answer, not the first of the next).
+- n has at most 11 distinct prime factors; trial division up to 10**6 is enough to factor it.
+Examples: the integers coprime to 12 are 1, 5, 7, 11, 13, 17, 19, 23, 25, 29, 31, 35, 37, ...
+so kth_coprime(12, 1) == 1, kth_coprime(12, 4) == 11 (the last of the first period),
+kth_coprime(12, 5) == 13, kth_coprime(12, 9) == 25; kth_coprime(1, 7) == 7;
+kth_coprime(2, 10**18) == 2 * 10**18 - 1.
+''', r'''
+import random
+from math import gcd
+
+def brute(n, k):
+    x = 0
+    while k:
+        x += 1
+        if gcd(x, n) == 1:
+            k -= 1
+    return x
+
+def same(n, k, exp):
+    got = kth_coprime(n, k)
+    assert type(got) is int and got == exp, (n, k, got, exp)
+
+def rej(*a):
+    try:
+        kth_coprime(*a)
+    except ValueError:
+        return True
+    return False
+
+def count_le(x, primes):
+    def rec(i, d, s):
+        if i == len(primes):
+            return s * (x // d)
+        return rec(i + 1, d, s) + rec(i + 1, d * primes[i], -s)
+    return rec(0, 1, 1)
+
+def check_big(n, primes, k):
+    prod = 1
+    for q in primes:
+        prod *= q
+    got = kth_coprime(n, k)
+    assert type(got) is int and got >= 1 and gcd(got, n) == 1, (n, k, got)
+    # got is coprime and exactly k coprime numbers lie in [1, got]: it is the k-th one
+    assert count_le(got, primes) == k, (n, k, got)
+
+for n, k, e in [(12, 1, 1), (12, 4, 11), (12, 5, 13), (12, 9, 25), (1, 7, 7), (1, 1, 1), (2, 1, 1), (2, 2, 3),
+                (2, 10**18, 2 * 10**18 - 1), (1, 10**18, 10**18), (6, 2, 5), (6, 3, 7), (30, 8, 29), (30, 9, 31),
+                (10, 4, 9), (10, 5, 11), (7, 6, 6), (7, 7, 8), (4, 3, 5)]:
+    same(n, k, e)
+    if k <= 10**4:
+        same(n, k, brute(n, k))
+
+for n in (3, 4, 9, 10, 30, 210, 97, 100):
+    phi = sum(1 for x in range(1, n + 1) if gcd(x, n) == 1)
+    for k in (phi - 1, phi, phi + 1, 2 * phi, 2 * phi + 1, 5 * phi, 5 * phi + 1):
+        if k >= 1:
+            same(n, k, brute(n, k))
+
+BIG = [(10**12, [2, 5]), (999999999989, [999999999989]), (200560490130, [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]),
+       (2**39, [2]), (3**25, [3]), (999999999999, [3, 7, 11, 13, 37, 101, 9901]),
+       (999983 * 999979, [999983, 999979]), (2 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23, [2, 3, 5, 7, 11, 13, 17, 19, 23])]
+for n, pr in BIG:
+    prod = 1
+    for q in pr:
+        prod *= q
+    phi = count_le(n, pr)
+    ks = (1, phi, phi + 1, 10**18, 123456789012345678) if max(pr) > 10**5 else (1, 2, phi - 1, phi, phi + 1, 2 * phi, 10**18, 10**18 - 1, 123456789012345678)
+    for k in ks:
+        if 1 <= k <= 10**18:
+            check_big(n, pr, k)
+
+# mid-size n where the period fits: count by direct scan
+for n in (360, 1155, 4096, 30030):
+    phi = sum(1 for x in range(1, n + 1) if gcd(x, n) == 1)
+    cop = [x for x in range(1, n + 1) if gcd(x, n) == 1]
+    for k in (1, 7, phi // 2, phi, phi + 1, 3 * phi + 5, 10**6 + 3):
+        q, r = divmod(k - 1, phi)
+        same(n, k, q * n + cop[r])
+
+random.seed(4021)
+for _ in range(300):
+    n = random.choice([random.randint(1, 40), random.randint(1, 400), random.choice([6, 12, 30, 60, 210, 36, 48, 64, 81, 97])])
+    k = random.choice([random.randint(1, 60), random.randint(1, 800)])
+    same(n, k, brute(n, k))
+
+POOL = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 101, 9901, 99991]
+cases = 0
+while cases < 70:
+    n, pr = 1, []
+    for q in random.sample(POOL, random.randint(1, 8)):
+        e = random.choice([1, 1, 1, 2, 3])
+        if n * q ** e <= 10**12:
+            n *= q ** e
+            pr.append(q)
+    if n == 1:
+        continue
+    k = random.choice([random.randint(1, 10**18), int(10 ** random.uniform(0, 18)) or 1, random.randint(1, 10**6)])
+    check_big(n, pr, min(k, 10**18))
+    cases += 1
+
+for bad in (0, -5, 10**12 + 1, 10**13, 1.0, "6", None, True, [6], 12.5):
+    assert rej(bad, 5), bad
+for bad in (0, -1, 10**18 + 1, 2.0, "3", None, False, True, [3], 10**30):
+    assert rej(12, bad), bad
+assert rej(0, 0) and rej(True, True) and rej(10**12 + 1, 10**18 + 1)
+same(10**12, 10**18, kth_coprime(10**12, 10**18))
+''', r'''
+def kth_coprime(n, k):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not isint(n) or not isint(k) or not 1 <= n <= 10 ** 12 or not 1 <= k <= 10 ** 18:
+        raise ValueError("range")
+    primes = []
+    m = n
+    p = 2
+    while p * p <= m:
+        if m % p == 0:
+            primes.append(p)
+            while m % p == 0:
+                m //= p
+        p += 1 if p == 2 else 2
+    if m > 1:
+        primes.append(m)
+    terms = [(1, 1)]
+    for q in primes:
+        terms += [(d * q, -s) for d, s in terms]
+
+    def cnt(x):
+        return sum(s * (x // d) for d, s in terms)
+
+    phi = cnt(n)
+    q, r = divmod(k - 1, phi)
+    lo, hi = 1, n
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if cnt(mid) >= r + 1:
+            hi = mid
+        else:
+            lo = mid + 1
+    return q * n + lo
+''')
+
+task("v4_22_bounded_compositions", r'''
+Write `bounded_compositions(n, k, lo, hi, p)` that returns, modulo the prime p, the number of
+ordered k-tuples (x1, ..., xk) of integers with lo <= xi <= hi for every i and
+x1 + x2 + ... + xk == n. Tuples that differ only in the order of their entries are different
+tuples (these are compositions, not partitions).
+All five arguments must be ints (bool is not an int), with 1 <= k <= 200,
+0 <= lo <= hi <= 10**12, 0 <= n <= 10**15, and p a prime with 2 <= p <= 10**9 + 7. Anything
+else is a ValueError, and so is a composite p (including every p that is not prime but passes
+the range test). The result is an int in range(p): it is 0 when no tuple exists (for example
+when n < k * lo or n > k * hi), and when the true count is a multiple of p.
+The counts are astronomically large and n may exceed p by many orders of magnitude (for
+example p = 2 or p = 7 with n near 10**15). The answer must be the true count reduced modulo
+p, so binomial coefficients of huge top arguments have to be taken modulo a prime that may
+be far smaller than the top argument; tables of factorials, or dividing by factorials that
+contain the factor p, give wrong answers there. A float, or an arithmetic result that is
+only right when n < p, is wrong.
+Examples: bounded_compositions(5, 2, 0, 5, 7) == 6 (the tuples (0, 5), (1, 4), ..., (5, 0)).
+The tuples with 3 entries in 1..3 that sum to 6 are the 6 permutations of (1, 2, 3) and
+(2, 2, 2), 7 in all, so bounded_compositions(6, 3, 1, 3, 5) == 2.
+bounded_compositions(3, 1, 5, 6, 7) == 0.
+bounded_compositions(10**12, 3, 0, 10**12, 2) == 1 (the exact count is (10**12 + 2) *
+(10**12 + 1) // 2, which is odd).
+''', r'''
+import random
+from math import comb
+
+def same(args, exp):
+    got = bounded_compositions(*args)
+    assert type(got) is int and got == exp, (args, got, exp)
+
+def rej(*a):
+    try:
+        bounded_compositions(*a)
+    except ValueError:
+        return True
+    return False
+
+def dp_count(n, k, lo, hi):
+    # sliding window over the sum, exact integers
+    cur = [1] + [0] * n
+    for _ in range(k):
+        pre = [0]
+        for v in cur:
+            pre.append(pre[-1] + v)
+        nxt = [0] * (n + 1)
+        for s in range(n + 1):
+            a, b = s - hi, s - lo
+            if b < 0:
+                continue
+            nxt[s] = pre[b + 1] - pre[max(a, 0)]
+        cur = nxt
+    return cur[n]
+
+def exact_ie(n, k, lo, hi):
+    m = n - k * lo
+    w = hi - lo + 1
+    if m < 0:
+        return 0
+    tot = 0
+    j = 0
+    while j <= k and m - j * w >= 0:
+        tot += (-1) ** j * comb(k, j) * comb(m - j * w + k - 1, k - 1)
+        j += 1
+    return tot
+
+same((5, 2, 0, 5, 7), 6)
+same((6, 3, 1, 3, 5), 2)
+same((6, 3, 1, 3, 10**9 + 7), 7)
+same((3, 1, 5, 6, 7), 0)
+same((10**12, 3, 0, 10**12, 2), 1)
+same((0, 1, 0, 0, 2), 1)
+same((0, 3, 0, 0, 3), 1)
+same((0, 5, 0, 7, 3), 1)
+same((5, 1, 5, 9, 2), 1)
+same((9, 1, 5, 9, 2), 1)
+same((10, 1, 5, 9, 11), 0)
+same((4, 1, 5, 9, 11), 0)
+same((15, 3, 5, 5, 13), 1)
+same((16, 3, 5, 5, 13), 0)
+same((10, 4, 0, 10, 10**9 + 7), comb(13, 3) % (10**9 + 7))
+same((10, 4, 0, 10**12, 13), comb(13, 3) % 13)
+same((12, 4, 0, 3, 5), dp_count(12, 4, 0, 3) % 5)
+same((2 * 10**14, 200, 10**12, 10**12, 7), 1)
+same((2 * 10**14 + 1, 200, 10**12, 10**12, 7), 0)
+same((2 * 10**14 - 1, 200, 0, 10**12, 998244353), exact_ie(2 * 10**14 - 1, 200, 0, 10**12) % 998244353)
+for p in (2, 3, 5, 7, 13, 199, 211, 1009, 10**9 + 7):
+    for args in [(10**15, 3, 0, 10**12, p), (10**12, 3, 0, 10**12, p), (123456789012, 5, 7, 10**12, p),
+                 (10**14, 120, 10**11, 10**12, p), (10**15, 200, 0, 10**12, p), (777777777777777, 150, 10, 10**12, p)]:
+        same(args, exact_ie(*args[:4]) % p)
+
+# the symmetry n -> k*(lo+hi) - n
+for p in (2, 11, 10**9 + 7):
+    for k, lo, hi in [(7, 2, 9), (50, 10**5, 10**6), (200, 3, 10**12 // 7)]:
+        n = k * lo + (k * (hi - lo)) // 3
+        assert bounded_compositions(n, k, lo, hi, p) == bounded_compositions(k * (lo + hi) - n, k, lo, hi, p)
+
+random.seed(4022)
+PR = [2, 3, 5, 7, 11, 13, 97, 101, 997, 10007, 65537, 998244353, 10**9 + 7]
+for _ in range(220):
+    k = random.randint(1, 8)
+    lo = random.randint(0, 5)
+    hi = lo + random.randint(0, 12)
+    n = random.randint(0, k * hi + 3)
+    p = random.choice(PR)
+    same((n, k, lo, hi, p), dp_count(n, k, lo, hi) % p)
+
+for _ in range(40):
+    k = random.randint(1, 200)
+    lo = random.choice([0, random.randint(0, 10**12), random.randint(0, 50)])
+    hi = lo + random.choice([0, 1, random.randint(0, 10**12 - lo), random.randint(0, 5000)])
+    hi = min(hi, 10**12)
+    n = random.randint(k * lo, k * hi)
+    p = random.choice(PR)
+    same((n, k, lo, hi, p), exact_ie(n, k, lo, hi) % p)
+
+for bad in [(5, 0, 0, 5, 7), (5, 201, 0, 5, 7), (5, 2, -1, 5, 7), (5, 2, 3, 2, 7), (5, 2, 0, 10**12 + 1, 7), (-1, 2, 0, 5, 7),
+            (10**15 + 1, 2, 0, 5, 7), (5, 2, 0, 5, 1), (5, 2, 0, 5, 0), (5, 2, 0, 5, 4), (5, 2, 0, 5, 9), (5, 2, 0, 5, 561),
+            (5, 2, 0, 5, 10**9 + 9), (5, 2, 0, 5, 10**9 + 8), (5, 2, 0, 5, -7), (5, 2, 0, 5, 91), (5, 2, 0, 5, 10**9 + 7 + 2),
+            (5.0, 2, 0, 5, 7), (5, 2.0, 0, 5, 7), (5, 2, 0.0, 5, 7), (5, 2, 0, 5.0, 7), (5, 2, 0, 5, 7.0), (True, 2, 0, 5, 7),
+            (5, True, 0, 5, 7), (5, 2, False, 5, 7), (5, 2, 0, True, 7), ("5", 2, 0, 5, 7), (None, 2, 0, 5, 7), (5, 2, 0, 5, None),
+            (5, 2, 0, 5, True), (5, 2, 0, 5, "7"), (5, 2, 0, 5, 1000000007 * 3), (5, 2, 0, 5, 25), (5, 2, 0, 5, 3 * 5)]:
+    assert rej(*bad), bad
+same((7, 2, 0, 5, 10**9 + 7), 0 + dp_count(7, 2, 0, 5))
+same((0, 200, 0, 10**12, 10**9 + 7), 1)
+''', r'''
+from math import comb
+
+
+def bounded_compositions(n, k, lo, hi, p):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not all(isint(v) for v in (n, k, lo, hi, p)):
+        raise ValueError("type")
+    if not (1 <= k <= 200 and 0 <= lo <= hi <= 10 ** 12 and 0 <= n <= 10 ** 15 and 2 <= p <= 10 ** 9 + 7):
+        raise ValueError("range")
+    d = 2
+    while d * d <= p:
+        if p % d == 0:
+            raise ValueError("p is not prime")
+        d += 1
+    r = k - 1
+
+    def binom(top):
+        res = 1
+        a, b = top, r
+        while b:
+            x, y = a % p, b % p
+            if y > x:
+                return 0
+            res = res * (comb(x, y) % p) % p
+            a //= p
+            b //= p
+        return res
+
+    m = n - k * lo
+    w = hi - lo + 1
+    if m < 0:
+        return 0
+    total = 0
+    for j in range(k + 1):
+        t = m - j * w
+        if t < 0:
+            break
+        term = comb(k, j) % p * binom(t + k - 1) % p
+        total += -term if j & 1 else term
+    return total % p
+''')
+
+task("v4_23_two_square_reps", r'''
+Write `two_square_reps(n)` that returns a tuple (r, pairs) describing all ways to write n as a
+sum of two squares of integers. `n` must be an int (bool is not an int) with 0 <= n <= 10**12,
+otherwise raise ValueError.
+- r is the number of ORDERED pairs (x, y) of integers of any sign with x*x + y*y == n. Order
+  and signs count: for n = 25 the pairs are (+-5, 0), (0, +-5), (+-3, +-4), (+-4, +-3), so
+  r == 12. For n = 0 the only pair is (0, 0), so r == 1. r is 0 when n is not a sum of two
+  squares.
+- pairs is the list of the distinct representations in canonical form (a, b) with
+  a >= b >= 0 and a*a + b*b == n, sorted by a ascending (a differs between two distinct
+  representations of the same n, so there are no ties). Each pair is a tuple of two ints.
+  For n = 0 it is [(0, 0)]; for n not a sum of two squares it is [].
+Examples: two_square_reps(25) == (12, [(4, 3), (5, 0)]); two_square_reps(2) == (4, [(1, 1)]);
+two_square_reps(0) == (1, [(0, 0)]); two_square_reps(3) == (0, []);
+two_square_reps(50) == (12, [(5, 5), (7, 1)]) since 50 = 25 + 25 = 49 + 1 (the pair (5, 5)
+counts 4 ordered pairs, the pair (7, 1) counts 8); two_square_reps(65) == (16, [(7, 4), (8, 1)]).
+n can be near 10**12 (a prime p = 1 mod 4 near 10**12, or a product of many small primes
+that are 1 mod 4, which has hundreds of representations), so scanning a up to sqrt(n) is far
+too slow for the large cases: first factor n (trial division up to 10**6 is enough), and
+build the representations from the factorization. Return a tuple, not a list.
+''', r'''
+import random
+from math import isqrt
+
+def same(n, exp):
+    got = two_square_reps(n)
+    assert isinstance(got, tuple) and len(got) == 2 and got == exp, (n, got, exp)
+    assert type(got[0]) is int and isinstance(got[1], list) and all(type(q) is tuple and len(q) == 2 for q in got[1]), (n, got)
+
+def rej(a):
+    try:
+        two_square_reps(a)
+    except ValueError:
+        return True
+    return False
+
+def brute(n):
+    s = isqrt(n)
+    pairs = []
+    r = 0
+    for x in range(-s, s + 1):
+        rem = n - x * x
+        y = isqrt(rem)
+        if y * y == rem:
+            r += 1 if y == 0 else 2
+    for b in range(0, s + 1):
+        rem = n - b * b
+        a = isqrt(rem)
+        if a * a == rem and a >= b:
+            pairs.append((a, b))
+    pairs.sort()
+    return (r, pairs)
+
+def verify(n, fac):
+    # n = prod fac[p]**e with the given primes; divisor-count formula r = 4 * (d1 - d3)
+    divs = [1]
+    for q, e in fac:
+        divs = [d * q ** i for d in divs for i in range(e + 1)]
+    assert len(divs) == len(set(divs))
+    d1 = sum(1 for d in divs if d % 4 == 1)
+    d3 = sum(1 for d in divs if d % 4 == 3)
+    exp_r = 4 * (d1 - d3)
+    r, pairs = two_square_reps(n)
+    assert type(r) is int and r == exp_r, (n, r, exp_r)
+    seen = 0
+    last = -1
+    for a, b in pairs:
+        assert type(a) is int and type(b) is int and a >= b >= 0 and a * a + b * b == n, (n, a, b)
+        assert a > last, (n, pairs)
+        last = a
+        seen += 1 if a == b == 0 else (4 if (b == 0 or a == b) else 8)
+    assert seen == r, (n, seen, r)
+
+for n, e in [(0, (1, [(0, 0)])), (1, (4, [(1, 0)])), (2, (4, [(1, 1)])), (3, (0, [])), (4, (4, [(2, 0)])), (5, (8, [(2, 1)])),
+             (9, (4, [(3, 0)])), (21, (0, [])), (25, (12, [(4, 3), (5, 0)])), (45, (8, [(6, 3)])), (50, (12, [(5, 5), (7, 1)])),
+             (65, (16, [(7, 4), (8, 1)])), (49, (4, [(7, 0)])), (6, (0, [])), (7, (0, [])), (8, (4, [(2, 2)])), (18, (4, [(3, 3)])),
+             (325, (24, [(15, 10), (17, 6), (18, 1)])), (1105, (32, [(24, 23), (31, 12), (32, 9), (33, 4)])), (10, (8, [(3, 1)])), (13, (8, [(3, 2)]))]:
+    same(n, e)
+
+for n in range(0, 1500):
+    same(n, brute(n))
+
+random.seed(4023)
+for _ in range(200):
+    n = random.randint(1500, 10**6)
+    same(n, brute(n))
+for _ in range(60):
+    n = random.randint(1, 10**6) * random.choice([1, 2, 4, 5, 13, 25, 65, 85])
+    same(n, brute(n))
+
+P1 = [5, 13, 17, 29, 37, 41, 53, 61, 73, 89, 97, 101, 109, 113, 137, 1009, 10009, 999953, 999961]
+P3 = [3, 7, 11, 19, 23, 31, 43, 47, 999983]
+for _ in range(120):
+    fac = {}
+    n = 1
+    for q in random.sample(P1, random.randint(0, 6)) + random.sample(P3, random.randint(0, 2)) + [2]:
+        e = random.choice([1, 1, 2, 3, 4])
+        if q == 2:
+            e = random.choice([0, 0, 1, 2, 5])
+        if q in P3:
+            e = random.choice([2, 2, 4, 1])
+        if n * q ** e <= 10**12 and e > 0:
+            n *= q ** e
+            fac[q] = e
+    if n > 1:
+        verify(n, sorted(fac.items()))
+
+for n, fac in [(10**12, [(2, 12), (5, 12)]), (999999999989, [(999999999989, 1)]), (999983 ** 2, [(999983, 2)]),
+               (999953 * 999961, [(999953, 1), (999961, 1)]), (5 * 13 * 17 * 29 * 37 * 41 * 53 * 61, [(5, 1), (13, 1), (17, 1), (29, 1), (37, 1), (41, 1), (53, 1), (61, 1)]),
+               (5 ** 16, [(5, 16)]), (2 * 5 ** 2 * 13 ** 2 * 17 * 29 * 37 * 41 * 53, [(2, 1), (5, 2), (13, 2), (17, 1), (29, 1), (37, 1), (41, 1), (53, 1)]),
+               (999999999961, [(999999999961, 1)]), (999999999959, [(999999999959, 1)]), (9 * 49 * 999983, [(3, 2), (7, 2), (999983, 1)]),
+               (13 ** 8 * 5 ** 3, [(13, 8), (5, 3)]), (2 ** 39, [(2, 39)]), (3 ** 22 * 5, [(3, 22), (5, 1)])]:
+    verify(n, fac)
+same(3 * 999983, (0, []))
+same(999983 ** 2, (4, [(999983, 0)]))
+same(2 ** 39, (4, [(2 ** 19, 2 ** 19)]))
+
+for bad in (-1, -10**12, 10**12 + 1, 10**13, 1.0, 4.0, "4", None, True, False, [4], (4,), 2.5):
+    assert rej(bad), bad
+''', r'''
+from math import isqrt
+
+
+def two_square_reps(n):
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= 10 ** 12:
+        raise ValueError("n")
+    if n == 0:
+        return (1, [(0, 0)])
+    fac = {}
+    m = n
+    p = 2
+    while p * p <= m:
+        while m % p == 0:
+            fac[p] = fac.get(p, 0) + 1
+            m //= p
+        p += 1 if p == 2 else 2
+    if m > 1:
+        fac[m] = fac.get(m, 0) + 1
+
+    def gmul(u, v):
+        return (u[0] * v[0] - u[1] * v[1], u[0] * v[1] + u[1] * v[0])
+
+    cur = [(1, 0)]
+    count = 4
+    for p, e in sorted(fac.items()):
+        if p == 2:
+            z = (1, 0)
+            for _ in range(e):
+                z = gmul(z, (1, 1))
+            cur = [gmul(c, z) for c in cur]
+        elif p % 4 == 3:
+            if e % 2:
+                return (0, [])
+            f = p ** (e // 2)
+            cur = [(c[0] * f, c[1] * f) for c in cur]
+        else:
+            count *= e + 1
+            c = 2
+            while pow(c, (p - 1) // 2, p) != p - 1:
+                c += 1
+            t = pow(c, (p - 1) // 4, p)
+            a, b = p, t
+            while b * b > p:
+                a, b = b, a % b
+            pi, pb = (b, isqrt(p - b * b)), (b, -isqrt(p - b * b))
+            ws = []
+            for j in range(e + 1):
+                w = (1, 0)
+                for _ in range(j):
+                    w = gmul(w, pi)
+                for _ in range(e - j):
+                    w = gmul(w, pb)
+                ws.append(w)
+            cur = [gmul(c, w) for c in cur for w in ws]
+    pairs = set()
+    for x, y in cur:
+        a, b = abs(x), abs(y)
+        pairs.add((max(a, b), min(a, b)))
+    return (count, sorted(pairs))
+''')
+
+task("v4_24_fib_edges", r'''
+Write `fib_edges(n, k)` that describes the decimal expansion of the Fibonacci number F(n)
+(F(0) = 0, F(1) = 1, F(2) = 1, F(3) = 2, ...) without ever building it. `n` and `k` must be ints
+(bool is not an int) with 0 <= n <= 10**18 and 1 <= k <= 18, otherwise raise ValueError.
+It returns a tuple (d, lead, trail):
+- d is the number of decimal digits of F(n) as an int (F(0) = 0 has 1 digit).
+- lead is a str with the first min(k, d) digits of F(n).
+- trail is a str with the last min(k, d) digits of F(n). If d >= k these are exactly k
+  characters and keep their leading zeros, i.e. F(n) mod 10**k padded with zeros on the left
+  to width k (F(75) = 2111485077978050, so the last 3 digits are '050'). If d < k, trail is
+  the whole number as a str, and lead is the same str.
+Because n goes up to 10**18, F(n) has about 2 * 10**17 digits, far beyond any big integer.
+d and the leading digits come from n * log10(phi) - log10(sqrt(5)) where phi = (1 + sqrt(5)) / 2
+(the term psi**n with psi = (1 - sqrt(5)) / 2 is far below any digit that matters once n is
+more than a few thousand, but for small n the number must be exact), computed with enough
+significant digits that no digit of the first k (k <= 18) is wrong; lead is the leading digits
+truncated, never rounded. The trailing digits come from arithmetic modulo 10**k.
+Every returned lead and trail is a str, d is an int.
+Examples: fib_edges(0, 1) == (1, '0', '0'); fib_edges(10, 3) == (2, '55', '55') (F(10) = 55,
+two digits only); fib_edges(15, 2) == (3, '61', '10') (F(15) = 610); fib_edges(15, 1) ==
+(3, '6', '0'); fib_edges(100, 5) == (21, '35422', '15075') (F(100) = 354224848179261915075).
+''', r'''
+import random
+import decimal
+
+def same(n, k, exp):
+    got = fib_edges(n, k)
+    assert isinstance(got, tuple) and got == exp, (n, k, got, exp)
+    assert type(got[0]) is int and type(got[1]) is str and type(got[2]) is str, got
+
+def rej(*a):
+    try:
+        fib_edges(*a)
+    except ValueError:
+        return True
+    return False
+
+FS = []
+a, b = 0, 1
+for _ in range(6200):
+    FS.append(str(a))
+    a, b = b, a + b
+
+def exact(n, k):
+    s = FS[n]
+    return (len(s), s[:k], s[-k:])
+
+def mmul(A, B, md):
+    return [[(A[0][0] * B[0][0] + A[0][1] * B[1][0]) % md, (A[0][0] * B[0][1] + A[0][1] * B[1][1]) % md],
+            [(A[1][0] * B[0][0] + A[1][1] * B[1][0]) % md, (A[1][0] * B[0][1] + A[1][1] * B[1][1]) % md]]
+
+def trail_oracle(n, k):
+    md = 10 ** k
+    R = [[1, 0], [0, 1]]
+    M = [[1, 1], [1, 0]]
+    e = n
+    while e:
+        if e & 1:
+            R = mmul(R, M, md)
+        M = mmul(M, M, md)
+        e >>= 1
+    return str(R[0][1] % md).zfill(k)
+
+def scaled(n, k):
+    # fast doubling on mantissas with a shared decimal exponent: F(m) ~ a*10**E, F(m+1) ~ b*10**E
+    a, b, E = 0, 1, 0
+    for bit in bin(n)[2:]:
+        c = a * (2 * b - a)
+        d = a * a + b * b
+        E *= 2
+        a, b = (d, c + d) if bit == "1" else (c, d)
+        L = len(str(max(a, b)))
+        if L > 100:
+            sh = L - 100
+            a //= 10 ** sh
+            b //= 10 ** sh
+            E += sh
+    s = str(a)
+    return (len(s) + E, s[:k])
+
+def big_check(n, k):
+    d, lead, trail = fib_edges(n, k)
+    d2, lead2 = scaled(n, k)
+    assert type(d) is int and d == d2 and lead == lead2, (n, k, (d, lead), (d2, lead2))
+    assert trail == trail_oracle(n, k), (n, k, trail)
+    assert len(lead) == k and len(trail) == k
+
+same(0, 1, (1, "0", "0"))
+same(0, 18, (1, "0", "0"))
+same(1, 5, (1, "1", "1"))
+same(2, 3, (1, "1", "1"))
+same(10, 3, (2, "55", "55"))
+same(15, 2, (3, "61", "10"))
+same(15, 1, (3, "6", "0"))
+same(20, 5, (4, "6765", "6765"))
+same(20, 4, (4, "6765", "6765"))
+same(20, 3, (4, "676", "765"))
+same(75, 3, (16, "211", "050"))
+same(75, 16, (16, "2111485077978050", "2111485077978050"))
+same(75, 18, (16, "2111485077978050", "2111485077978050"))
+same(100, 5, (21, "35422", "15075"))
+same(100, 18, (21, "354224848179261915", "224848179261915075"))
+for n in (3000, 3001, 2999, 2998, 3002, 4096, 6000, 6199):
+    for k in (1, 2, 9, 17, 18):
+        same(n, k, exact(n, k))
+for n in range(0, 140):
+    for k in (1, 3, 18):
+        same(n, k, exact(n, k))
+
+random.seed(4024)
+for _ in range(220):
+    n = random.choice([random.randint(0, 6199), random.randint(2500, 3500), random.randint(0, 400)])
+    k = random.randint(1, 18)
+    same(n, k, exact(n, k))
+for _ in range(60):
+    n = random.choice([random.randint(3000, 10**5), random.randint(10**5, 10**9), random.randint(10**9, 10**18), int(10 ** random.uniform(3.5, 18))])
+    n = min(n, 10**18)
+    k = random.choice([random.randint(1, 18), 18, 1, 9])
+    big_check(n, k)
+for n in (10**18, 10**18 - 1, 10**17, 10**9, 3003, 2 * 10**15 + 7, 12345678901234567):
+    for k in (1, 7, 18):
+        big_check(n, k)
+# the longer lead extends the shorter one, trails likewise
+for n in (10**18, 10**18 - 7, 5 * 10**12 + 1):
+    d18, l18, t18 = fib_edges(n, 18)
+    for k in (1, 5, 12):
+        d, l, t = fib_edges(n, k)
+        assert d == d18 and l18.startswith(l) and t18.endswith(t), (n, k)
+
+for bad in [(-1, 3), (10**18 + 1, 3), (5, 0), (5, 19), (5, -1), (5.0, 3), (5, 3.0), ("5", 3), (5, "3"), (None, 3), (5, None),
+            (True, 3), (5, True), (False, 3), (10**20, 5), (5, 10**9), (-10**18, 5)]:
+    assert rej(*bad), bad
+''', r'''
+from decimal import Decimal, localcontext
+
+
+def fib_edges(n, k):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not isint(n) or not isint(k) or not 0 <= n <= 10 ** 18 or not 1 <= k <= 18:
+        raise ValueError("range")
+    if n <= 3000:
+        a, b = 0, 1
+        for _ in range(n):
+            a, b = b, a + b
+        s = str(a)
+        return (len(s), s[:k], s[-k:])
+    md = 10 ** k
+    a, b = 0, 1
+    for bit in bin(n)[2:]:
+        c = a * ((2 * b - a) % md) % md
+        d = (a * a + b * b) % md
+        a, b = (d, (c + d) % md) if bit == "1" else (c, d)
+    trail = str(a).zfill(k)
+    with localcontext() as ctx:
+        ctx.prec = 120
+        root5 = Decimal(5).sqrt()
+        phi = (1 + root5) / 2
+        x = n * phi.log10() - root5.log10()
+        ip = int(x)
+        frac = x - ip
+        lead = str(int(Decimal(10) ** (frac + k - 1)))
+    return (ip + 1, lead, trail)
+''')
+
+task("v4_25_capped_part_count", r'''
+Write `capped_part_count(n, parts, m)` that counts, modulo m, the ways to write n as a sum of
+parts of given sizes where each size may be used a limited number of times. `parts` is a
+list or tuple of 1 to 6 pairs (size, cap); a pair may be a list or a tuple. size is an int
+with 1 <= size <= 12 and all sizes are distinct. cap is None (this size can be used any
+number of times) or an int with 0 <= cap <= 9 (it can be used at most cap times; cap 0 means
+the size cannot be used at all, it is still a valid pair and its size still has to be
+distinct from the others). A way is a tuple of counts (c1, ..., cr), one per pair, with
+0 <= ci <= cap_i (no upper bound if cap_i is None) and c1*size1 + ... + cr*sizer == n. The
+order of the parts inside a sum does not matter (it is the counts that are counted).
+n is an int with 0 <= n <= 10**18, m is an int with 1 <= m <= 10**18. bool is not an int, and
+a None cap is the only non-int cap. Anything that breaks these rules (wrong type or range,
+parts not a list or tuple, empty or longer than 6, a pair that is not a 2-sequence, a repeated
+size) is a ValueError. The result is an int in range(m); for m == 1 it is always 0.
+The exact count is far too large to compute for large n directly and enumerating partitions
+or filling a table of size n is impossible when n reaches 10**18. For n = 0 the answer is 1
+(the empty sum), also when m > 1 and every cap is 0. If every cap is finite, the count is 0
+as soon as n exceeds sum(size * cap).
+Examples: capped_part_count(6, [(1, None), (2, None), (3, None)], 100) == 7;
+capped_part_count(10, [(1, None), (5, 1)], 1000) == 2 (ten 1s, or one 5 and five 1s);
+capped_part_count(10**18, [(1, None), (2, None)], 10**9 + 7) == 500000029 (the exact count is
+10**18 // 2 + 1); capped_part_count(7, [(7, 0)], 5) == 0;
+capped_part_count(34, [(2, 3), (7, 4)], 10) == 1 (6 + 28).
+''', r'''
+import random
+from fractions import Fraction
+from math import gcd
+
+def same(args, exp):
+    got = capped_part_count(*args)
+    assert type(got) is int and got == exp, (args, got, exp)
+
+def rej(*a):
+    try:
+        capped_part_count(*a)
+    except ValueError:
+        return True
+    return False
+
+def dp(n, items):
+    f = [1] + [0] * n
+    for s, c in items:
+        g = [0] * (n + 1)
+        for t in range(n + 1):
+            v = f[t]
+            if v:
+                j = 0
+                while t + j * s <= n and (c is None or j <= c):
+                    g[t + j * s] += v
+                    j += 1
+        f = g
+    return f[n]
+
+def big(n, items):
+    # exact value for huge n: quasi-polynomial interpolation in n over its residue class
+    unl = [s for s, c in items if c is None]
+    D = sum(s * c for s, c in items if c is not None)
+    if not unl:
+        return 0 if n > D else dp(n, items)
+    L = 1
+    for s in unl:
+        L = L * s // gcd(L, s)
+    u = len(unl)
+    n0 = D + ((n - D) % L)
+    ys = [dp(n0 + t * L, items) for t in range(u)]
+    x = Fraction(n - n0, L)
+    tot = Fraction(0)
+    for i in range(u):
+        term = Fraction(ys[i])
+        for j in range(u):
+            if j != i:
+                term *= (x - j) / (i - j)
+        tot += term
+    assert tot.denominator == 1
+    return int(tot)
+
+U = None
+same((6, [(1, U), (2, U), (3, U)], 100), 7)
+same((10, [(1, U), (5, 1)], 1000), 2)
+same((10**18, [(1, U), (2, U)], 10**9 + 7), 500000029)
+same((7, [(7, 0)], 5), 0)
+same((34, [(2, 3), (7, 4)], 10), 1)
+same((33, [(2, 3), (7, 4)], 10), 0)
+same((35, [(2, 3), (7, 4)], 10**18), 0)
+same((10**18, [(2, 3), (7, 4)], 10**18), 0)
+same((0, [(7, 0)], 5), 1)
+same((0, [(7, 0), (3, 0)], 1), 0)
+same((0, [(5, U)], 2), 1)
+same((1, [(5, 0)], 7), 0)
+same((1, [(5, 0), (4, 0), (3, 0)], 7), 0)
+same((10**18 + 0, [(5, U)], 10**18), 1 if 10**18 % 5 == 0 else 0)
+same((10**18 - 1, [(5, U)], 10**18), 0)
+same((10**18, [(1, U), (2, U), (3, U)], 10**18), (((10**18 + 3) ** 2 + 6) // 12) % 10**18)
+same((10**18, [(1, U), (2, U), (3, U)], 10**9 + 7), 250000227)
+same((10**18, [(1, U), (2, U)], 1), 0)
+same((10**18, [(3, 2), (5, U)], 1000), sum(1 for a in range(3) if 10**18 - 3 * a >= 0 and (10**18 - 3 * a) % 5 == 0) % 1000)
+same((10**18 - 1, ((4, U), (6, U)), 1000), 0)
+same((10**18, ((4, U), [6, U]), 1000), big(10**18, [(4, U), (6, U)]) % 1000)
+same((100, [(1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3)], 10**9), dp(100, [(1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3)]) % 10**9)
+same((12, ((12, 1), (1, U)), 10**18), 2)
+same((11, [[12, 1], [1, U]], 10**18), 1)
+
+random.seed(4025)
+MS = [1, 2, 3, 7, 10, 1000, 10**9 + 7, 998244353, 10**18, 10**18 - 1, 999999999999999989]
+for _ in range(120):
+    r = random.randint(1, 6)
+    sizes = random.sample(range(1, 13), r)
+    items = [(s, random.choice([None, None, 0, 1, 2, 5, 9])) for s in sizes]
+    parts = [tuple(q) if random.random() < 0.5 else list(q) for q in items]
+    n = random.choice([random.randint(0, 40), random.randint(0, 250)])
+    m = random.choice(MS)
+    same((n, parts, m), dp(n, items) % m)
+
+for _ in range(8):
+    r = random.randint(2, 6)
+    sizes = random.sample(range(1, 13), r)
+    items = [(s, random.choice([None, 3, 7, 9])) for s in sizes]
+    n = random.randint(300, 1500)
+    m = random.choice(MS)
+    same((n, items, m), dp(n, items) % m)
+
+SM = [1, 2, 3, 4, 5, 6, 10, 12]
+for _ in range(14):
+    u = random.randint(1, 4)
+    unl = random.sample(SM, u)
+    rest = [s for s in range(1, 13) if s not in unl]
+    cp = random.sample(rest, random.randint(0, min(3, 6 - u)))
+    items = [(s, None) for s in unl] + [(s, random.choice([0, 1, 2, 4])) for s in cp]
+    random.shuffle(items)
+    n = random.choice([random.randint(10**6, 10**18), 10**18, random.randint(10**12, 10**15)])
+    m = random.choice(MS)
+    same((n, items, m), big(n, items) % m)
+
+for bad in [(-1, [(1, None)], 5), (10**18 + 1, [(1, None)], 5), (5, [(1, None)], 0), (5, [(1, None)], -3), (5, [(1, None)], 10**18 + 1),
+            (5, [], 5), (5, [(1, None)] * 2, 5), (5, [(s, None) for s in range(1, 8)], 5), (5, [(0, None)], 5), (5, [(13, None)], 5),
+            (5, [(1, -1)], 5), (5, [(1, 10)], 5), (5, [(1, 1.0)], 5), (5, [(1, True)], 5), (5, [(True, None)], 5), (5, [(1.0, None)], 5),
+            (5, [(1, None, 3)], 5), (5, [(1,)], 5), (5, [1], 5), (5, "ab", 5), (5, None, 5), (5, {(1, None)}, 5), (5, [(1, None), (2, 1), (1, 3)], 5),
+            (5.0, [(1, None)], 5), (True, [(1, None)], 5), (5, [(1, None)], 5.0), (5, [(1, None)], True), ("5", [(1, None)], 5), (5, [(1, None)], None),
+            (5, [(2, 0), (2, None)], 5), (None, [(1, None)], 5), (5, 7, 5), (5, [("1", None)], 5), (5, [(1, "2")], 5)]:
+    assert rej(*bad), bad
+same((5, ((1, None),), 7), 1)
+same((9, [(3, None)], 4), 1)
+same((10, [(3, None)], 4), 0)
+''', r'''
+def capped_part_count(n, parts, m):
+    def isint(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not isint(n) or not isint(m) or not 0 <= n <= 10 ** 18 or not 1 <= m <= 10 ** 18:
+        raise ValueError("n or m")
+    if not isinstance(parts, (list, tuple)) or not 1 <= len(parts) <= 6:
+        raise ValueError("parts")
+    seen = set()
+    items = []
+    for it in parts:
+        if not isinstance(it, (list, tuple)) or len(it) != 2:
+            raise ValueError("pair")
+        s, c = it
+        if not isint(s) or not 1 <= s <= 12 or s in seen:
+            raise ValueError("size")
+        if c is not None and (not isint(c) or not 0 <= c <= 9):
+            raise ValueError("cap")
+        seen.add(s)
+        items.append((s, c))
+
+    def times_one_minus(poly, e):
+        res = poly + [0] * e
+        for i, v in enumerate(poly):
+            res[i + e] -= v
+        return res
+
+    num = [1]
+    den = [1]
+    for s, c in items:
+        if c == 0:
+            continue
+        den = times_one_minus(den, s)
+        if c is not None:
+            num = times_one_minus(num, s * (c + 1))
+    num = [v % m for v in num]
+    den = [v % m for v in den]
+
+    def mul(a, b, par):
+        top = len(a) + len(b) - 2 - par
+        out = [0] * (top // 2 + 1 if top >= 0 else 0)
+        for i, x in enumerate(a):
+            if x:
+                for j, y in enumerate(b):
+                    if (i + j) % 2 == par:
+                        out[(i + j) // 2] += x * y
+        return [v % m for v in out]
+
+    while n:
+        neg = [(-v if i & 1 else v) % m for i, v in enumerate(den)]
+        num = mul(num, neg, n & 1)
+        den = mul(den, neg, 0)
+        n >>= 1
+    return (num[0] if num else 0) % m
+''')
+
+
+task("v4_26_rect_union", r'''
+Write `union_stats(rects)` that returns a tuple (area, perimeter, components) of three ints for
+a set of axis-aligned rectangles.
+`rects` is a list or tuple of 0..100 rectangles. Each rectangle is a list or tuple of four ints
+(x1, y1, x2, y2) (bool is not an int), every |value| <= 10**9, with x1 <= x2 and y1 <= y2.
+Anything else is a ValueError, and this is checked for every rectangle before any rectangle is
+ignored. Rectangles are closed regions.
+A rectangle with x1 == x2 or y1 == y2 has no area: it is ignored completely. It adds nothing
+to the union and it connects nothing. Let U be the union of the remaining rectangles.
+area: the area of U (overlaps are counted once).
+perimeter: the total length of the boundary of U. A piece of boundary is a segment with U on
+exactly one side of it, so the boundaries of holes count, and an edge shared by two
+rectangles that lie on opposite sides of it contributes nothing. Rectangles that merely touch
+at a corner point contribute their own sides.
+components: two (non-ignored) rectangles are linked when their intersection is non-empty and
+is not a single point, that is, they overlap or share a boundary segment of positive length.
+components is the number of groups of rectangles under the transitive closure of "linked". A
+rectangle touching another only at one corner point is not linked to it. Identical rectangles
+are linked. With no non-ignored rectangle the result is (0, 0, 0).
+Coordinates are huge, so do not iterate over unit cells; compress the coordinates or sweep.
+Example: [(0, 0, 2, 2), (2, 0, 4, 2), (5, 5, 6, 6), (6, 6, 7, 7)] gives (10, 20, 3): the first
+two form a 4 x 2 block (area 8, perimeter 12), the two unit squares touch only at (6, 6)
+(area 2, perimeter 8, two components).
+''', r'''
+import random
+
+def eq(r, exp):
+    got = union_stats(r)
+    assert isinstance(got, tuple) and got == exp and all(type(x) is int for x in got), (r, got, exp)
+
+def bad(r):
+    try:
+        union_stats(r)
+    except ValueError:
+        return True
+    return False
+
+eq([], (0, 0, 0))
+eq([(0, 0, 2, 2), (2, 0, 4, 2), (5, 5, 6, 6), (6, 6, 7, 7)], (10, 20, 3))
+eq([(0, 0, 1, 1)], (1, 4, 1))
+eq([[0, 0, 1, 1], [0, 0, 1, 1]], (1, 4, 1))
+eq(((0, 0, 3, 3), (1, 1, 2, 2)), (9, 12, 1))
+eq([(0, 0, 3, 1), (0, 2, 3, 3), (0, 1, 1, 2), (2, 1, 3, 2)], (8, 16, 1))
+eq([(0, 0, 1, 1), (1, 1, 2, 2)], (2, 8, 2))
+eq([(0, 0, 1, 1), (1, 1, 2, 2), (1, 0, 2, 1)], (3, 8, 1))
+eq([(0, 0, 2, 2), (2, 1, 4, 3)], (8, 14, 1))
+# zero-area rectangles are ignored, even when they bridge two others
+eq([(0, 0, 1, 1), (1, 0, 1, 1), (2, 0, 3, 1)], (2, 8, 2))
+eq([(0, 0, 1, 1), (0, 5, 9, 5), (3, 3, 3, 3)], (1, 4, 1))
+eq([(0, 0, 0, 0)], (0, 0, 0))
+eq([(0, 0, 5, 0), (2, 2, 2, 7)], (0, 0, 0))
+# an L shape and a T shape
+eq([(0, 0, 4, 1), (0, 1, 1, 4)], (7, 16, 1))
+eq([(0, 0, 3, 1), (1, 1, 2, 3)], (5, 12, 1))
+# huge coordinates
+B = 10 ** 9
+eq([(-B, -B, B, B)], (4 * B * B, 8 * B, 1))
+eq([(-B, -B, 0, 0), (0, 0, B, B)], (2 * B * B, 8 * B, 2))
+eq([(-B, -B, 0, B), (0, -B, B, B), (-B, -B, B, -B + 1)], (4 * B * B, 8 * B, 1))
+K = 10 ** 7
+eq([(i * K, i * K, (i + 1) * K, (i + 1) * K) for i in range(100)], (100 * K * K, 400 * K, 100))
+eq([(i * K, 0, (i + 1) * K, K) for i in range(100)], (100 * K * K, 202 * K, 1))
+eq([(i * K, 0, (i + 1) * K, K) for i in range(99, -1, -1)], (100 * K * K, 202 * K, 1))
+# errors
+for r in [None, 5, "abc", {(0, 0, 1, 1)}, [(0, 0, 1)], [(0, 0, 1, 1, 1)], [(0, 0, 1, 1), None], [(1, 0, 0, 1)], [(0, 1, 1, 0)], [(0, 0, 1.0, 1)],
+          [(0, 0, True, 1)], [(0, 0, 1, "1")], [(0, 0, B + 1, 1)], [(-B - 1, 0, 1, 1)], [(0, 0, 1, 1)] * 101, [(0, 0, 1, 1), (3, 3, 2, 3)],
+          [(0, 0, 1, 1), 7], [(0, 0, 1, 1), [0, 0, 1, None]], [(5, 5, 5, 4)], [(0, 0, 1, 1), (0, 0, 1, 1.5)], [((0, 0), (1, 1))], [(False, 0, 1, 1)]]:
+    assert bad(r), r
+eq([(0, 0, 1, 1)] * 100, (1, 4, 1))
+
+# oracle: unit cells, 4-connectivity
+def oracle(rects):
+    cells = set()
+    for x1, y1, x2, y2 in rects:
+        if x1 == x2 or y1 == y2:
+            continue
+        for x in range(x1, x2):
+            for y in range(y1, y2):
+                cells.add((x, y))
+    h = v = 0
+    for x, y in cells:
+        if (x, y + 1) not in cells:
+            h += 1
+        if (x, y - 1) not in cells:
+            h += 1
+        if (x + 1, y) not in cells:
+            v += 1
+        if (x - 1, y) not in cells:
+            v += 1
+    seen = set()
+    comps = 0
+    for c in cells:
+        if c in seen:
+            continue
+        comps += 1
+        seen.add(c)
+        st = [c]
+        while st:
+            x, y = st.pop()
+            for nb in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if nb in cells and nb not in seen:
+                    seen.add(nb)
+                    st.append(nb)
+    return len(cells), h, v, comps
+
+random.seed(4026)
+R = 5
+
+def rr():
+    x1 = random.randint(-R, R)
+    y1 = random.randint(-R, R)
+    w = random.choice([0, 1, 1, 2, 2, 3, 4])
+    h = random.choice([0, 1, 1, 2, 2, 3, 4])
+    if random.random() < 0.1:
+        w = 0
+    return (x1, y1, min(R + 3, x1 + w), min(R + 3, y1 + h))
+
+for it in range(250):
+    n = random.choice([0, 1, 2, 3, 4, 5, 6, 8, 10, 14])
+    rs = [rr() for _ in range(n)]
+    if random.random() < 0.3 and rs:
+        # share corners and edges on purpose
+        x1, y1, x2, y2 = rs[0]
+        rs.append((x2, y2, x2 + random.randint(0, 2), y2 + random.randint(0, 2)))
+        rs.append((x2, y1, x2 + random.randint(0, 2), y2))
+    if random.random() < 0.3:
+        rs = [list(r) for r in rs]
+    a, h, v, c = oracle(rs)
+    eq(rs, (a, h + v, c))
+    kx, ky = random.choice([(1, 1), (3, 1), (10 ** 8, 7), (7, 10 ** 8), (10 ** 8, 10 ** 8)])
+    ox = random.choice([0, -5 * 10 ** 7, 3]) if kx > 1000 else 0
+    big = [(x1 * kx + ox, y1 * ky, x2 * kx + ox, y2 * ky) for x1, y1, x2, y2 in rs]
+    if all(abs(t) <= B for r in big for t in r):
+        eq(big, (a * kx * ky, h * kx + v * ky, c))
+# larger random case: 100 rectangles on a 40 x 40 lattice, scaled
+rs = []
+for _ in range(100):
+    x1 = random.randint(-20, 20)
+    y1 = random.randint(-20, 20)
+    rs.append((x1, y1, x1 + random.randint(0, 6), y1 + random.randint(0, 6)))
+a, h, v, c = oracle(rs)
+eq(rs, (a, h + v, c))
+eq([(x1 * K, y1 * K, x2 * K, y2 * K) for x1, y1, x2, y2 in rs], (a * K * K, (h + v) * K, c))
+''', r'''
+def union_stats(rects):
+    def ok(v):
+        return isinstance(v, int) and not isinstance(v, bool) and abs(v) <= 10 ** 9
+    if not isinstance(rects, (list, tuple)) or len(rects) > 100:
+        raise ValueError("rects")
+    rs = []
+    for r in rects:
+        if not isinstance(r, (list, tuple)) or len(r) != 4 or not all(ok(v) for v in r):
+            raise ValueError("rect")
+        x1, y1, x2, y2 = r
+        if x1 > x2 or y1 > y2:
+            raise ValueError("order")
+        if x1 < x2 and y1 < y2:
+            rs.append((x1, y1, x2, y2))
+    m = len(rs)
+    if m == 0:
+        return (0, 0, 0)
+    xs = sorted({v for r in rs for v in (r[0], r[2])})
+    ys = sorted({v for r in rs for v in (r[1], r[3])})
+    xi = {v: i for i, v in enumerate(xs)}
+    yi = {v: i for i, v in enumerate(ys)}
+    W, H = len(xs) - 1, len(ys) - 1
+    cnt = [[0] * (H + 1) for _ in range(W + 1)]
+    for x1, y1, x2, y2 in rs:
+        a, b, c, d = xi[x1], yi[y1], xi[x2], yi[y2]
+        cnt[a][b] += 1
+        cnt[c][b] -= 1
+        cnt[a][d] -= 1
+        cnt[c][d] += 1
+    for i in range(W + 1):
+        for j in range(H + 1):
+            if i:
+                cnt[i][j] += cnt[i - 1][j]
+            if j:
+                cnt[i][j] += cnt[i][j - 1]
+            if i and j:
+                cnt[i][j] -= cnt[i - 1][j - 1]
+    area = per = 0
+    for i in range(W):
+        row = cnt[i]
+        dx = xs[i + 1] - xs[i]
+        for j in range(H):
+            if row[j] <= 0:
+                continue
+            dy = ys[j + 1] - ys[j]
+            area += dx * dy
+            if i == 0 or cnt[i - 1][j] <= 0:
+                per += dy
+            if i == W - 1 or cnt[i + 1][j] <= 0:
+                per += dy
+            if j == 0 or row[j - 1] <= 0:
+                per += dx
+            if j == H - 1 or row[j + 1] <= 0:
+                per += dx
+    parent = list(range(m))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for i in range(m):
+        a = rs[i]
+        for j in range(i + 1, m):
+            b = rs[j]
+            lx, hx = max(a[0], b[0]), min(a[2], b[2])
+            ly, hy = max(a[1], b[1]), min(a[3], b[3])
+            if lx <= hx and ly <= hy and (lx < hx or ly < hy):
+                parent[find(i)] = find(j)
+    return (area, per, len({find(i) for i in range(m)}))
+''')
+
+
+task("v4_27_mst_census", r'''
+Write `mst_census(n, edges)` for a weighted undirected multigraph. It returns a tuple
+(weight, count, chosen).
+`n` is an int (bool is not an int) with 1 <= n <= 60; the nodes are 0..n-1. `edges` is a list
+or tuple of 0..600 edges, each a list or tuple of three ints (u, v, w) (bool is not an int)
+with 0 <= u, v < n and |w| <= 10**9. Anything else is a ValueError. Parallel edges and
+self-loops (u == v) are allowed. An edge is identified by its position in `edges`, counted from
+0, so two parallel edges are two different edges even when their weights are equal. If the graph
+is not connected (checked after the validation above) it is a ValueError.
+weight: the total weight of a minimum spanning tree.
+count: the exact number of different minimum spanning trees, where a tree is a set of n - 1
+edge positions. A self-loop is never in a spanning tree. The count can be astronomically large
+(use exact integers; do not take it modulo anything).
+chosen: the tuple of the n - 1 edge positions of one particular minimum spanning tree, in
+ascending order: among all minimum spanning trees, the one whose ascending position list is
+lexicographically smallest (compare the lists element by element, first difference decides).
+Only edge positions matter for this choice, not node numbers.
+For n == 1 the result is (0, 1, ()), whatever the (self-loop) edges are.
+Example 1: n = 3, edges [(0, 1, 1), (1, 2, 1), (0, 2, 1)] gives (2, 3, (0, 1)).
+Example 2: n = 4, edges [(0, 1, 5), (0, 1, 5), (1, 2, 2), (2, 3, 2), (1, 3, 2)] gives
+(9, 6, (0, 2, 3)): one of the two parallel 0-1 edges (2 ways) times one of the 3 spanning
+trees of the triangle 1-2-3 (3 ways).
+Example 3: n = 3, edges [(0, 1, 3), (0, 2, 1), (1, 2, 1), (0, 1, 1)] gives (2, 3, (1, 2)),
+because weight 3 is too heavy to be used.
+''', r'''
+import random
+from itertools import combinations
+from math import comb
+
+def bad(n, e):
+    try:
+        mst_census(n, e)
+    except ValueError:
+        return True
+    return False
+
+def eq(n, e, exp):
+    got = mst_census(n, e)
+    assert isinstance(got, tuple) and len(got) == 3 and got == exp, (n, e, got, exp)
+    assert type(got[0]) is int and type(got[1]) is int and isinstance(got[2], tuple) and all(type(i) is int for i in got[2])
+
+eq(3, [(0, 1, 1), (1, 2, 1), (0, 2, 1)], (2, 3, (0, 1)))
+eq(4, [(0, 1, 5), (0, 1, 5), (1, 2, 2), (2, 3, 2), (1, 3, 2)], (9, 6, (0, 2, 3)))
+eq(3, [(0, 1, 3), (0, 2, 1), (1, 2, 1), (0, 1, 1)], (2, 3, (1, 2)))
+eq(1, [], (0, 1, ()))
+eq(1, [(0, 0, 5), (0, 0, -7)], (0, 1, ()))
+eq(2, [(0, 1, 4)], (4, 1, (0,)))
+eq(2, [(0, 0, -9), (1, 1, 2), (1, 0, 4), [0, 1, 4]], (4, 2, (2,)))
+eq(2, [(1, 0, -3), (0, 1, -3), (0, 1, 3)], (-3, 2, (0,)))
+# lexicographic choice by positions
+eq(3, [(0, 1, 1), (1, 2, 7), (0, 2, 7), (1, 2, 1)], (2, 1, (0, 3)))
+eq(3, [(1, 2, 2), (0, 1, 1), (0, 2, 1), (0, 1, 1)], (2, 2, (1, 2)))
+# path, weights mixed with negatives
+eq(4, [(0, 1, -1), (1, 2, -1), (2, 3, -1), (0, 3, 0), (0, 2, 5)], (-3, 1, (0, 1, 2)))
+# complete graph, equal weights: n ** (n - 2) trees, the star at node 0 is the first one
+for k in (2, 3, 5, 12, 30):
+    E = [(i, j, 7) for i in range(k) for j in range(i + 1, k)]
+    eq(k, E, (7 * (k - 1), k ** (k - 2), tuple(range(k - 1))))
+# complete bipartite, equal weights: a**(b-1) * b**(a-1)
+for a, b in ((2, 3), (4, 4), (5, 9)):
+    E = [(i, a + j, -2) for i in range(a) for j in range(b)]
+    eq(a + b, E, (-2 * (a + b - 1), a ** (b - 1) * b ** (a - 1), tuple(range(b)) + tuple(j * b for j in range(1, a))))
+# cycle of 40 with equal weights: 40 trees; one heavy edge forces count 1
+C = [(i, (i + 1) % 40, 3) for i in range(40)]
+eq(40, C, (117, 40, tuple(range(39))))
+C[5] = (5, 6, 4)
+eq(40, C, (117, 1, tuple(range(5)) + tuple(range(6, 40))))
+C[5] = (5, 6, 2)
+eq(40, C, (116, 39, tuple(range(39))))
+# every tree edge doubled: 2 ** (n - 1) trees, the first copies win
+E = []
+for i in range(1, 41):
+    E += [(i - 1, i, 1), (i - 1, i, 1)]
+eq(41, E, (40, 2 ** 40, tuple(range(0, 80, 2))))
+# two triangles joined by one bridge, a square with a diagonal of the same weight
+eq(6, [(0, 1, 1), (1, 2, 1), (0, 2, 1), (3, 4, 1), (4, 5, 1), (3, 5, 1), (2, 3, 9)], (13, 9, (0, 1, 3, 4, 6)))
+eq(4, [(0, 1, 1), (1, 2, 1), (2, 3, 1), (3, 0, 1), (0, 2, 1)], (3, 8, (0, 1, 2)))
+# a large weight class built from several lighter components
+E = [(i, i + 1, 1) for i in range(0, 20, 2)]
+E += [(i, j, 2) for i in range(0, 20, 2) for j in range(1, 20, 2) if abs(i - j) > 1]
+w, cn, ch = mst_census(20, E)
+assert w == 10 + 2 * 9 and ch[:10] == tuple(range(10)) and len(ch) == 19 and isinstance(cn, int)
+# disconnected and invalid
+assert bad(2, []) and bad(3, [(0, 1, 1)]) and bad(4, [(0, 1, 1), (2, 3, 1)]) and bad(2, [(0, 0, 1), (1, 1, 1)])
+assert bad(60, [(i, i + 1, 1) for i in range(58)])
+for n, e in [(0, []), (61, []), (-1, []), (True, []), (1.0, []), ("2", [(0, 1, 1)]), (None, []), (2, None), (2, "ab"), (2, [(0, 1)]), (2, [(0, 1, 1, 1)]),
+             (2, [(0, 2, 1)]), (2, [(-1, 1, 1)]), (2, [(0, 1, 10 ** 9 + 1)]), (2, [(0, 1, -10 ** 9 - 1)]), (2, [(0, 1, 1.0)]), (2, [(0, True, 1)]),
+             (2, [(0, 1, True)]), (2, [(0, 1, 1), None]), (2, [(0, 1, 1), 5]), (2, [(0, 1, "1")]), (1, [(0, 1, 1)]), (1, [(0, 0, 1.5)]),
+             (2, [{0, 1, 2}]), (3, [(0, 1, 1)] * 601), (2, {(0, 1, 1)})]:
+    assert bad(n, e), (n, e)
+eq(2, [(0, 1, 10 ** 9)] * 600, (10 ** 9, 600, (0,)))
+eq(2, [(0, 1, -10 ** 9), (1, 0, -10 ** 9)], (-10 ** 9, 2, (0,)))
+
+# oracle: enumerate all (n-1)-subsets of edge positions in lexicographic order
+def oracle(n, E):
+    if n == 1:
+        return (0, 1, ())
+    best = None
+    cnt = 0
+    arg = None
+    for sub in combinations(range(len(E)), n - 1):
+        par = list(range(n))
+
+        def f(x):
+            while par[x] != x:
+                x = par[x]
+            return x
+        tot = 0
+        good = True
+        for i in sub:
+            u, v, w = E[i]
+            a, b = f(u), f(v)
+            if a == b:
+                good = False
+                break
+            par[a] = b
+            tot += w
+        if not good:
+            continue
+        if best is None or tot < best:
+            best, cnt, arg = tot, 1, sub
+        elif tot == best:
+            cnt += 1
+    if best is None:
+        return None
+    return (best, cnt, arg)
+
+random.seed(4027)
+conn = disc = 0
+for it in range(220):
+    n = random.randint(1, 6)
+    m = random.randint(0, 11)
+    wr = random.choice([(1, 1), (1, 2), (1, 3), (-1, 2), (0, 4), (5, 5)])
+    E = [(random.randrange(n), random.randrange(n), random.randint(*wr)) for _ in range(m)]
+    if random.random() < 0.5 and n > 1:
+        # make a connected skeleton so that most cases have trees
+        perm = list(range(n))
+        random.shuffle(perm)
+        sk = [(perm[i], perm[random.randrange(i)], random.randint(*wr)) for i in range(1, n)]
+        E = (sk + E)[:11]
+        random.shuffle(E)
+    if random.random() < 0.3:
+        E = [[u, v, w] for u, v, w in E]
+    exp = oracle(n, E)
+    if exp is None:
+        assert bad(n, E), (n, E)
+        disc += 1
+    else:
+        eq(n, E, exp)
+        conn += 1
+assert conn > 100 and disc > 10, (conn, disc)
+''', r'''
+def _tree_count(k, pairs):
+    # number of spanning trees of the multigraph on nodes 0..k-1 (Kirchhoff, Bareiss elimination)
+    if k <= 1:
+        return 1
+    size = k - 1
+    M = [[0] * size for _ in range(size)]
+    for a, b in pairs:
+        if a < size:
+            M[a][a] += 1
+        if b < size:
+            M[b][b] += 1
+        if a < size and b < size:
+            M[a][b] -= 1
+            M[b][a] -= 1
+    sign = 1
+    prev = 1
+    for i in range(size - 1):
+        if M[i][i] == 0:
+            for r in range(i + 1, size):
+                if M[r][i] != 0:
+                    M[i], M[r] = M[r], M[i]
+                    sign = -sign
+                    break
+            else:
+                return 0
+        for r in range(i + 1, size):
+            for c in range(i + 1, size):
+                M[r][c] = (M[r][c] * M[i][i] - M[r][i] * M[i][c]) // prev
+        prev = M[i][i]
+    return sign * M[size - 1][size - 1]
+
+
+def mst_census(n, edges):
+    def isi(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not isi(n) or not 1 <= n <= 60:
+        raise ValueError("n")
+    if not isinstance(edges, (list, tuple)) or len(edges) > 600:
+        raise ValueError("edges")
+    E = []
+    for e in edges:
+        if not isinstance(e, (list, tuple)) or len(e) != 3 or not all(isi(v) for v in e):
+            raise ValueError("edge")
+        u, v, w = e
+        if not (0 <= u < n and 0 <= v < n and abs(w) <= 10 ** 9):
+            raise ValueError("edge range")
+        E.append((u, v, w))
+    order = sorted(range(len(E)), key=lambda i: (E[i][2], i))
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    weight = 0
+    count = 1
+    labels = {}
+    pos = 0
+    while pos < len(order):
+        w = E[order[pos]][2]
+        end = pos
+        while end < len(order) and E[order[end]][2] == w:
+            end += 1
+        lab = [find(x) for x in range(n)]
+        labels[w] = lab
+        pairs = [(lab[E[i][0]], lab[E[i][1]]) for i in order[pos:end]]
+        pairs = [(a, b) for a, b in pairs if a != b]
+        # connected parts of this weight class on the contracted graph
+        sub = {}
+
+        def sf(x):
+            while sub.setdefault(x, x) != x:
+                sub[x] = sub[sub[x]]
+                x = sub[x]
+            return x
+        for a, b in pairs:
+            sub[sf(a)] = sf(b)
+        parts = {}
+        for a, b in pairs:
+            parts.setdefault(sf(a), []).append((a, b))
+        for plist in parts.values():
+            nodes = sorted({x for p in plist for x in p})
+            idx = {x: i for i, x in enumerate(nodes)}
+            count *= _tree_count(len(nodes), [(idx[a], idx[b]) for a, b in plist])
+            weight += w * (len(nodes) - 1)
+        for a, b in pairs:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+        pos = end
+    if len({find(x) for x in range(n)}) != 1:
+        raise ValueError("disconnected")
+    chosen = []
+    dsus = {}
+    for i, (u, v, w) in enumerate(E):
+        lab = labels[w]
+        a, b = lab[u], lab[v]
+        if a == b:
+            continue
+        d = dsus.setdefault(w, {})
+
+        def f2(x, d=d):
+            while d.setdefault(x, x) != x:
+                d[x] = d[d[x]]
+                x = d[x]
+            return x
+        ra, rb = f2(a), f2(b)
+        if ra != rb:
+            d[ra] = rb
+            chosen.append(i)
+    return (weight, count, tuple(chosen))
+''')
+
+
+task("v4_28_pal_range", r'''
+Write `best_palindromes(s, queries)` that answers range queries about palindromic substrings.
+`s` is a str with 1..400 characters (any characters; compare them by code point, as Python
+compares strings). `queries` is a list or tuple of 0..300 queries, each a list or tuple of two
+ints (l, r) (bool is not an int) with 0 <= l <= r < len(s). Anything else is a ValueError, and
+one bad query makes the whole call a ValueError. An empty `queries` gives [].
+For a query (l, r) consider every palindromic substring that lies completely inside
+s[l..r] (both ends included, positions counted in s, not in the slice). A palindrome reads the
+same reversed; a single character is a palindrome. Choose one as follows:
+1. the longest;
+2. among the longest, the one that is smallest as a string (lexicographic comparison; both
+   have the same length);
+3. if the same string occurs at several positions, the one with the smallest start position.
+The answer for the query is the tuple (palindrome, start) with the palindrome as a str and
+start its 0-based start index in s. The result is the list of answers in query order.
+Example: s = "cbcaba", queries [(0, 5), (0, 2), (4, 4), (1, 4)] gives
+[("aba", 3), ("cbc", 0), ("b", 4), ("a", 3)].
+In the first query "cbc" (start 0) and "aba" (start 3) both have length 3, "aba" is smaller.
+In the last query, s[1..4] = "bcab" has no palindrome longer than 1 character, and "a" is the
+smallest of its single characters.
+The same string may be a palindrome in several places, e.g. s = "abxab": the query (0, 4) gives
+("a", 0), since "a" at 0, "b" at 1, "x" at 2, "a" at 3, "b" at 4 are all of length 1, and
+"a" is smallest with the smallest start.
+''', r'''
+import random
+
+def eq(s, q, exp):
+    got = best_palindromes(s, q)
+    assert isinstance(got, list) and got == exp, (s, q, got, exp)
+    assert all(isinstance(a, tuple) and len(a) == 2 and type(a[0]) is str and type(a[1]) is int for a in got)
+
+def bad(s, q):
+    try:
+        best_palindromes(s, q)
+    except ValueError:
+        return True
+    return False
+
+eq("cbcaba", [(0, 5), (0, 2), (4, 4), (1, 4)], [("aba", 3), ("cbc", 0), ("b", 4), ("a", 3)])
+eq("abxab", [(0, 4)], [("a", 0)])
+eq("abxab", [], [])
+eq("abxab", (), [])
+eq("a", [(0, 0)], [("a", 0)])
+eq("a", [[0, 0], [0, 0]], [("a", 0), ("a", 0)])
+eq("abacaba", [(0, 6), (1, 5), (0, 2), (2, 4), (3, 6)], [("abacaba", 0), ("bacab", 1), ("aba", 0), ("aca", 2), ("aba", 4)])
+eq("abba", [(0, 3), (0, 2), (1, 3), (1, 2)], [("abba", 0), ("bb", 1), ("bb", 1), ("bb", 1)])
+eq("zzabbaxx", [(0, 7), (0, 1), (6, 7), (2, 7), (1, 6)], [("abba", 2), ("zz", 0), ("xx", 6), ("abba", 2), ("abba", 2)])
+eq("bbaa", [(0, 3), (1, 3), (0, 2)], [("aa", 2), ("aa", 2), ("bb", 0)])
+eq("baab", [(0, 3), (0, 1), (1, 2)], [("baab", 0), ("a", 1), ("aa", 1)])
+eq("éaé", [(0, 2), (1, 2)], [("éaé", 0), ("a", 1)])
+eq("baééab", [(0, 5), (2, 3)], [("baééab", 0), ("éé", 2)])
+eq("Ab", [(0, 1)], [("A", 0)])
+eq("bA", [(0, 1)], [("A", 1)])
+eq("a b", [(0, 2)], [(" ", 1)])
+eq("aaaa", [(0, 3), (1, 3), (2, 2)], [("aaaa", 0), ("aaa", 1), ("a", 2)])
+eq("abcabc", [(0, 5), (2, 4)], [("a", 0), ("a", 3)])
+# invalid
+for s, q in [("", []), (None, []), (5, []), ("ab", None), ("ab", [(0, 2)]), ("ab", [(1, 0)]), ("ab", [(-1, 1)]), ("ab", [(0,)]), ("ab", [(0, 1, 1)]),
+             ("ab", [(0, 1.0)]), ("ab", [(True, 1)]), ("ab", [(0, True)]), ("ab", [("0", 1)]), ("ab", [None]), ("ab", [5]), ("ab", [(0, 1), (2, 2)]),
+             ("ab", "ab"), ("ab", {(0, 1)}), (b"ab", [(0, 1)]), (["a", "b"], [(0, 1)]), ("a" * 401, [(0, 0)]), ("ab", [(0, 0)] * 301), ("ab", [[0, 1], [1]]),
+             ("ab", [(0, None)]), ("ab", [(0, 0), (-1, -1)]), ("ab", [(False, 1)])]:
+    assert bad(s, q), (s, q)
+eq("a" * 400, [(0, 0)] * 300, [("a", 0)] * 300)
+
+# reference by brute force: all substrings inside the range
+def oracle(s, qs):
+    out = []
+    for l, r in qs:
+        best = None
+        for i in range(l, r + 1):
+            for j in range(i + 1, r + 2):
+                t = s[i:j]
+                if t == t[::-1]:
+                    key = (-len(t), t, i)
+                    if best is None or key < best:
+                        best = key
+        out.append((best[1], best[2]))
+    return out
+
+random.seed(4028)
+alphabets = ["ab", "ab", "abc", "abc", "ba", "xyzw", "aéb", "aA"]
+for it in range(150):
+    al = random.choice(alphabets)
+    n = random.randint(1, 30)
+    if random.random() < 0.3:
+        # glue palindromes together so that ties are common
+        s = ""
+        while len(s) < n:
+            h = "".join(random.choice(al) for _ in range(random.randint(1, 4)))
+            s += h + random.choice(["", h[::-1], h[::-1][1:]])
+        s = s[:n]
+    else:
+        s = "".join(random.choice(al) for _ in range(n))
+    qs = []
+    for _ in range(random.randint(0, 25)):
+        l = random.randrange(len(s))
+        r = random.randrange(l, len(s))
+        qs.append((l, r) if random.random() < 0.7 else [l, r])
+    eq(s, qs, oracle(s, qs))
+# all queries of a longer string
+s = "".join(random.choice("ab") for _ in range(23))
+qs = [(l, r) for l in range(23) for r in range(l, 23)]
+eq(s, qs, oracle(s, qs))
+# long strings: closed forms
+n = 400
+eq("a" * n, [(l, r) for l, r in ((0, 399), (5, 100), (399, 399), (17, 18))], [("a" * (r - l + 1), l) for l, r in ((0, 399), (5, 100), (399, 399), (17, 18))])
+alt = "ab" * 200
+qs = [(0, 399), (1, 399), (3, 3), (0, 1), (10, 20), (11, 20), (250, 399), (251, 399)]
+exp = []
+for l, r in qs:
+    m = r - l + 1
+    ln = m if m % 2 == 1 else m - 1
+    cands = [(alt[st:st + ln], st) for st in range(l, r - ln + 2)]
+    exp.append(min(cands))
+eq(alt, qs, exp)
+s = "ab" * 99 + "c" + "ba" * 99
+eq(s, [(0, 396), (1, 395), (100, 296), (0, 198)], [(s, 0), (s[1:396], 1), (s[100:297], 100), ("ab" * 98 + "a", 0)])
+''', r'''
+def best_palindromes(s, queries):
+    def isi(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    if not isinstance(s, str) or not 1 <= len(s) <= 400:
+        raise ValueError("s")
+    if not isinstance(queries, (list, tuple)) or len(queries) > 300:
+        raise ValueError("queries")
+    n = len(s)
+    qs = []
+    for q in queries:
+        if not isinstance(q, (list, tuple)) or len(q) != 2 or not isi(q[0]) or not isi(q[1]):
+            raise ValueError("query")
+        if not 0 <= q[0] <= q[1] < n:
+            raise ValueError("range")
+        qs.append((q[0], q[1]))
+    # Manacher: d1[c] = number of odd palindromes centred at c, d2[c] = even ones with right centre c
+    d1 = [0] * n
+    lo, hi = 0, -1
+    for i in range(n):
+        k = 1 if i > hi else min(d1[lo + hi - i], hi - i + 1)
+        while i - k >= 0 and i + k < n and s[i - k] == s[i + k]:
+            k += 1
+        d1[i] = k
+        if i + k - 1 > hi:
+            lo, hi = i - k + 1, i + k - 1
+    d2 = [0] * n
+    lo, hi = 0, -1
+    for i in range(n):
+        k = 0 if i > hi else min(d2[lo + hi - i + 1], hi - i + 1)
+        while i - k - 1 >= 0 and i + k < n and s[i - k - 1] == s[i + k]:
+            k += 1
+        d2[i] = k
+        if i + k - 1 > hi:
+            lo, hi = i - k, i + k - 1
+    out = []
+    for l, r in qs:
+        best = 0
+        cands = []
+        for c in range(l, r + 1):
+            k = min(d1[c], c - l + 1, r - c + 1)
+            ln = 2 * k - 1
+            if ln > best:
+                best, cands = ln, [c - k + 1]
+            elif ln == best:
+                cands.append(c - k + 1)
+        for c in range(l + 1, r + 1):
+            k = min(d2[c], c - l, r - c + 1)
+            ln = 2 * k
+            if ln > best:
+                best, cands = ln, [c - k]
+            elif ln == best and ln > 0:
+                cands.append(c - k)
+        out.append(min((s[st:st + best], st) for st in cands))
+    return out
+''')
+
+
+task("v4_29_maximal_runs", r'''
+Write `maximal_runs(s)` that lists all maximal repetitions ("runs") of a string.
+`s` is a str with 0..300 characters (any characters). Anything else, including a string longer
+than 300, is a ValueError.
+A period of a string t is an integer p >= 1 such that t[k] == t[k + p] for every k with
+0 <= k and k + p < len(t). The smallest period of t is the smallest such p (len(t) itself is
+always a period, so one exists for every non-empty t).
+A run is a triple (i, j, p) that describes the substring t = s[i:j] (0-based, j exclusive) with
+all of these properties:
+1. p is the smallest period of t;
+2. len(t) >= 2 * p (the pattern repeats at least twice);
+3. it cannot be extended to the left with the same period: i == 0 or s[i - 1] != s[i - 1 + p];
+4. it cannot be extended to the right with the same period: j == len(s) or s[j] != s[j - p].
+The result is the list of all runs as tuples (i, j, p), sorted ascending by i, then j (two runs
+never have the same i and j). An empty string, or a string without any run, gives [].
+Runs may overlap and may contain other runs. A substring that has several periods (for instance
+"aaaa" has the periods 1, 2, 3 and 4) is reported once, with its smallest one.
+Example 1: "aabaabaa" gives [(0, 2, 1), (0, 8, 3), (3, 5, 1), (6, 8, 1)]. The substring
+"abaaba" (positions 1..6) has period 3 but is not a run, because it extends to the left: "a"
+at 0 equals "a" at 3.
+Example 2: "abab" gives [(0, 4, 2)]; "aaaa" gives [(0, 4, 1)]; "abcab" gives [].
+Example 3: "xaaaxaaax" gives [(0, 9, 4), (1, 4, 1), (5, 8, 1)].
+''', r'''
+import random
+
+def eq(s, exp):
+    got = maximal_runs(s)
+    assert isinstance(got, list) and got == exp and all(isinstance(t, tuple) and len(t) == 3 for t in got), (s, got, exp)
+
+def bad(s):
+    try:
+        maximal_runs(s)
+    except ValueError:
+        return True
+    return False
+
+eq("aabaabaa", [(0, 2, 1), (0, 8, 3), (3, 5, 1), (6, 8, 1)])
+eq("abab", [(0, 4, 2)])
+eq("aaaa", [(0, 4, 1)])
+eq("abcab", [])
+eq("xaaaxaaax", [(0, 9, 4), (1, 4, 1), (5, 8, 1)])
+eq("", [])
+eq("a", [])
+eq("aa", [(0, 2, 1)])
+eq("ab", [])
+eq("aba", [])
+eq("abaab", [(2, 4, 1)])
+eq("ababa", [(0, 5, 2)])
+eq("abaaba", [(0, 6, 3), (2, 4, 1)])
+eq("abcabcab", [(0, 8, 3)])
+eq("abcabca", [(0, 7, 3)])
+eq("abcabc", [(0, 6, 3)])
+eq("zabcabcz", [(1, 7, 3)])
+eq("aabaab", [(0, 2, 1), (0, 6, 3), (3, 5, 1)])
+eq("abaabaab", [(0, 8, 3), (2, 4, 1), (5, 7, 1)])
+eq("a" * 300, [(0, 300, 1)])
+eq("ab" * 150, [(0, 300, 2)])
+eq("abc" * 100, [(0, 300, 3)])
+eq("a" * 50 + "b" + "a" * 50, [(0, 50, 1), (51, 101, 1)])
+eq("ab" * 5 + "ba" * 5, [(0, 10, 2), (1, 19, 9), (3, 17, 7), (5, 15, 5), (7, 13, 3), (9, 11, 1), (10, 20, 2)])
+eq("ééxééx", [(0, 2, 1), (0, 6, 3), (3, 5, 1)])
+eq("AaAaA", [(0, 5, 2)])
+eq("aAaA", [(0, 4, 2)])
+for s in [None, 5, b"abab", ["a", "a"], ("a", "a"), "a" * 301, 1.5, True]:
+    assert bad(s), s
+eq("a" * 299 + "b", [(0, 299, 1)])
+
+# oracle: test every substring and every period directly
+def oracle(s):
+    n = len(s)
+    out = []
+    for i in range(n):
+        for j in range(i + 2, n + 1):
+            t = s[i:j]
+            L = j - i
+            p = 0
+            for q in range(1, L + 1):
+                if all(t[k] == t[k + q] for k in range(L - q)):
+                    p = q
+                    break
+            if 2 * p > L:
+                continue
+            if i > 0 and s[i - 1] == s[i - 1 + p]:
+                continue
+            if j < n and s[j] == s[j - p]:
+                continue
+            out.append((i, j, p))
+    return sorted(out)
+
+random.seed(4029)
+for it in range(260):
+    al = random.choice(["ab", "ab", "ab", "abc", "a", "aab", "xyé"])
+    n = random.randint(0, 16)
+    r = random.random()
+    if r < 0.4:
+        s = "".join(random.choice(al) for _ in range(n))
+    else:
+        blocks = ""
+        while len(blocks) < n:
+            u = "".join(random.choice(al) for _ in range(random.randint(1, 4)))
+            blocks += u * random.randint(1, 4) + random.choice(["", "", u[:2], random.choice(al)])
+        s = blocks[:n]
+    eq(s, oracle(s))
+for it in range(12):
+    n = random.randint(40, 70)
+    u = "".join(random.choice("ab") for _ in range(random.randint(1, 6)))
+    s = ""
+    while len(s) < n:
+        s += u * random.randint(1, 5) + random.choice(["a", "b", "ab", ""])
+    s = s[:n]
+    eq(s, oracle(s))
+# Fibonacci word, 60 characters
+fa, fb = "a", "ab"
+while len(fb) < 60:
+    fa, fb = fb, fb + fa
+eq(fb[:60], oracle(fb[:60]))
+''', r'''
+def maximal_runs(s):
+    if not isinstance(s, str) or len(s) > 300:
+        raise ValueError("s")
+    n = len(s)
+    out = []
+    for p in range(1, n // 2 + 1):
+        k = 0
+        while k + p < n:
+            if s[k] != s[k + p]:
+                k += 1
+                continue
+            a = k
+            while k + p < n and s[k] == s[k + p]:
+                k += 1
+            if k - a >= p:
+                t = s[a:k + p]
+                pi = [0] * len(t)
+                for x in range(1, len(t)):
+                    q = pi[x - 1]
+                    while q and t[x] != t[q]:
+                        q = pi[q - 1]
+                    if t[x] == t[q]:
+                        q += 1
+                    pi[x] = q
+                if len(t) - pi[-1] == p:
+                    out.append((a, k + p, p))
+    out.sort()
+    return out
+''')
+
+
+task("v4_30_cocircular", r'''
+Write `densest_circle(points)` that finds the circle holding the most of the given points.
+`points` is a list or tuple of 0..40 points, each a list or tuple of two ints (x, y) (bool is
+not an int) with |x|, |y| <= 10**6. The points must be pairwise different. Anything else is a
+ValueError. A point is identified by its position in `points`, counted from 0.
+Consider every circle that passes through at least three of the points that are not on one
+line (three points on one line lie on no circle; any three points that are not on one line
+lie on exactly one circle). For such a circle C let S(C) be the set of positions of all the
+points that lie exactly on C (on the circle itself, not inside it). The answer is
+(k, indices): k = the largest |S(C)| over all these circles, and indices = the tuple of the
+positions in S(C), ascending. If several circles reach the largest k, pick the one whose
+ascending position tuple is lexicographically smallest (first difference decides; all these
+tuples have length k). If there are fewer than 3 points, or all the points are on one line, so
+that no circle exists, the answer is (0, ()).
+The test must be exact: coordinates are up to 10**6, so floating point is not safe. At most 40
+points means about 10**4 triples, which is fine.
+Example 1: [(0, 0), (2, 0), (1, 1), (0, 2), (2, 2)] gives (4, (0, 1, 3, 4)). The four corners
+of the square lie on the circle with centre (1, 1); the centre point itself is not on it.
+Example 2: [(0, 0), (1, 0), (0, 1), (1, 1), (5, 5), (6, 5), (5, 6), (6, 6)] gives
+(4, (0, 1, 2, 3)): two circles hold 4 points each, the one with the smaller position tuple wins.
+Example 3: [(0, 0), (1, 1), (2, 2), (0, 3)] gives (3, (0, 1, 3)): positions 0, 1, 2 are on one
+line, and the three triples that are not on one line each give a circle with 3 points.
+''', r'''
+import random
+from fractions import Fraction as F
+from itertools import combinations
+
+# oracle: every triple, centre and r^2 by Cramer with Fractions, then test all points
+def oracle(P):
+    best = (0, ())
+    n = len(P)
+    for i, j, k in combinations(range(n), 3):
+        (ax, ay), (bx, by), (cx, cy) = P[i], P[j], P[k]
+        det = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+        if det == 0:
+            continue
+        b2 = (bx * bx + by * by - ax * ax - ay * ay)
+        c2 = (cx * cx + cy * cy - ax * ax - ay * ay)
+        # 2(bx-ax) X + 2(by-ay) Y = b2 ; 2(cx-ax) X + 2(cy-ay) Y = c2
+        X = F(b2 * (cy - ay) - c2 * (by - ay), 2 * det)
+        Y = F(c2 * (bx - ax) - b2 * (cx - ax), 2 * det)
+        r2 = (ax - X) ** 2 + (ay - Y) ** 2
+        mem = tuple(t for t in range(n) if (P[t][0] - X) ** 2 + (P[t][1] - Y) ** 2 == r2)
+        assert i in mem and j in mem and k in mem
+        if len(mem) > best[0] or (len(mem) == best[0] and mem < best[1]):
+            best = (len(mem), mem)
+    return best
+
+def eq(p, exp):
+    got = densest_circle(p)
+    assert isinstance(got, tuple) and len(got) == 2 and got == exp and type(got[0]) is int and isinstance(got[1], tuple), (p, got, exp)
+    if len(p) <= 12:
+        assert oracle(p) == exp, ("test expectation disagrees with the oracle", p, exp)
+
+def bad(p):
+    try:
+        densest_circle(p)
+    except ValueError:
+        return True
+    return False
+
+eq([(0, 0), (2, 0), (1, 1), (0, 2), (2, 2)], (4, (0, 1, 3, 4)))
+eq([(0, 0), (1, 0), (0, 1), (1, 1), (5, 5), (6, 5), (5, 6), (6, 6)], (4, (0, 1, 2, 3)))
+eq([(5, 5), (6, 5), (5, 6), (6, 6), (0, 0), (1, 0), (0, 1), (1, 1)], (4, (0, 1, 2, 3)))
+eq([(0, 0), (1, 1), (2, 2), (0, 3)], (3, (0, 1, 3)))
+eq([], (0, ()))
+eq([(0, 0)], (0, ()))
+eq([(0, 0), (1, 0)], (0, ()))
+eq([(0, 0), (1, 1), (2, 2)], (0, ()))
+eq([(0, 0), (1, 1), (2, 2), (-3, -3), (10, 10)], (0, ()))
+eq([(3, 0), (0, 0), (7, 0), (1, 0)], (0, ()))
+eq([(0, 0), (1, 0), (0, 1)], (3, (0, 1, 2)))
+eq(((0, 0), (1, 0), (0, 1)), (3, (0, 1, 2)))
+eq([[0, 0], [4, 0], [0, 3]], (3, (0, 1, 2)))
+eq([(0, 0), (1, 0), (0, 1), (2, 2)], (3, (0, 1, 2)))
+eq([(0, 0), (1, 0), (0, 1), (1, 1)], (4, (0, 1, 2, 3)))
+eq([(1, 1), (0, 0), (1, 0), (0, 1), (3, 7)], (4, (0, 1, 2, 3)))
+# the unit square plus its centre and a point inside the circle: still the 4 corners
+eq([(0, 0), (2, 0), (2, 2), (0, 2), (1, 1), (1, 0)], (4, (0, 1, 2, 3)))
+# a point inside or outside, not on the circle (distance squared 2 vs 1 and 3)
+eq([(0, 0), (2, 0), (0, 2), (2, 2), (1, 1)], (4, (0, 1, 2, 3)))
+# 12 lattice points on x^2 + y^2 = 25, shuffled, plus 8 others
+ring = [(5, 0), (-5, 0), (0, 5), (0, -5), (3, 4), (3, -4), (-3, 4), (-3, -4), (4, 3), (4, -3), (-4, 3), (-4, -3)]
+other = [(1, 1), (2, 3), (-2, 1), (6, 6), (7, -1), (0, 0), (1, -4), (-1, 2)]
+P = ring + other
+eq(P, (12, tuple(range(12))))
+Q = P[::3] + P[1::3] + P[2::3]
+eq(Q, (12, tuple(sorted(i for i, q in enumerate(Q) if q[0] ** 2 + q[1] ** 2 == 25))))
+# huge scale and offset
+S = 10 ** 5
+eq([(x * S + 3, y * S - 7) for x, y in ring[:6] + [(1, 1), (2, 3)]], (6, (0, 1, 2, 3, 4, 5)))
+M = 10 ** 6
+eq([(M, 0), (-M, 0), (0, M), (0, -M), (0, 0), (M - 1, 0)], (4, (0, 1, 2, 3)))
+eq([(M, M), (-M, -M), (M, -M), (-M, M), (M, 0)], (4, (0, 1, 2, 3)))
+eq([(M, M), (M - 1, M), (M, M - 1), (-M, -M), (M - 1, M - 1)], (4, (0, 1, 2, 4)))
+# lexicographic choice between circles of equal size, different sizes of circles
+eq([(0, 0), (9, 9), (1, 0), (9, 10), (0, 1), (10, 9), (1, 1), (10, 10)], (4, (0, 2, 4, 6)))
+eq([(9, 9), (0, 0), (9, 10), (1, 0), (10, 9), (0, 1), (10, 10), (1, 1)], (4, (0, 2, 4, 6)))
+# 40 points on a 7 x 6 grid: circles with 8 lattice points exist; check the answer is a real circle with k >= 8
+G = [(x, y) for x in range(7) for y in range(6)][:40]
+for GG in (G, G[::-1], G[7:] + G[:7]):
+    k, idx = densest_circle(GG)
+    assert k >= 8 and len(idx) == k and list(idx) == sorted(idx) and len(set(idx)) == k
+    a, b, c = (GG[i] for i in idx[:3])
+    det = 2 * ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    assert det != 0
+    ux = ((c[1] - a[1]) * ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) - (b[1] - a[1]) * ((c[0] - a[0]) ** 2 + (c[1] - a[1]) ** 2)) / det
+    uy = ((b[0] - a[0]) * ((c[0] - a[0]) ** 2 + (c[1] - a[1]) ** 2) - (c[0] - a[0]) * ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)) / det
+    cx, cy = a[0] + ux, a[1] + uy
+    assert all(abs((GG[i][0] - cx) ** 2 + (GG[i][1] - cy) ** 2 - ux * ux - uy * uy) < 1e-9 for i in idx)
+    assert sum(1 for q in GG if abs((q[0] - cx) ** 2 + (q[1] - cy) ** 2 - ux * ux - uy * uy) < 1e-9) == k
+# errors
+for p in [None, 5, "ab", {(0, 0), (1, 1), (2, 5)}, [(0, 0), (0, 0), (1, 1)], [(0, 0), (1, 0), (0, 0)], [(0, 0), (1, 0), [0, 0]], [(0, 0), (1, 0), (0, 1.0)],
+          [(0, 0), (1, 0), (0, True)], [(0, 0), (1, 0), (0,)], [(0, 0), (1, 0), (0, 1, 2)], [(0, 0), (1, 0), (0, M + 1)], [(0, 0), (1, 0), (-M - 1, 1)],
+          [(0, 0), (1, 0), None], [(0, 0), (1, 0), 3], [(0, 0), (1, 0), "ab"], [(0, 0), (1, 0), (0, "1")], [(i, i * i) for i in range(41)],
+          [(0, 0), (0, 0)], [(1, 1), (1, 1)], [(0, 0), (1, 0), (False, 1)], [(0, 0), (1, 0), (0, None)]]:
+    assert bad(p), p
+
+random.seed(4030)
+for it in range(200):
+    R = random.choice([2, 3, 3, 4, 5])
+    n = random.randint(0, 10)
+    allp = [(x, y) for x in range(-R, R + 1) for y in range(-R, R + 1)]
+    if random.random() < 0.3:
+        # prefer lattice points on a few circles around the origin
+        rad = random.choice([1, 2, 4, 5, 8, 9, 10, 13, 25])
+        allp = [q for q in allp if q[0] ** 2 + q[1] ** 2 in (rad, rad + 1, 2 * rad)] or allp
+    n = min(n, len(allp))
+    P = random.sample(allp, n)
+    if random.random() < 0.3:
+        P = [list(q) for q in P]
+    eq(P, oracle(P))
+for it in range(6):
+    P = random.sample([(x, y) for x in range(-3, 4) for y in range(-3, 4)], random.randint(12, 14))
+    eq_o = oracle(P)
+    eq(P, eq_o)
+Pm = [(x * 1000 + y, y * 999 - x) for x in range(-2, 3) for y in range(-2, 3)]
+eq(Pm[:12], oracle(Pm[:12]))
+''', r'''
+from math import gcd
+
+
+def densest_circle(points):
+    def ok(v):
+        return isinstance(v, int) and not isinstance(v, bool) and abs(v) <= 10 ** 6
+    if not isinstance(points, (list, tuple)) or len(points) > 40:
+        raise ValueError("points")
+    P = []
+    for p in points:
+        if not isinstance(p, (list, tuple)) or len(p) != 2 or not ok(p[0]) or not ok(p[1]):
+            raise ValueError("point")
+        P.append((p[0], p[1]))
+    if len(set(P)) != len(P):
+        raise ValueError("duplicate")
+    n = len(P)
+    groups = {}
+    for i in range(n):
+        ax, ay = P[i]
+        for j in range(i + 1, n):
+            bx, by = P[j][0] - ax, P[j][1] - ay
+            b2 = bx * bx + by * by
+            for k in range(j + 1, n):
+                cx, cy = P[k][0] - ax, P[k][1] - ay
+                d = 2 * (bx * cy - by * cx)
+                if d == 0:
+                    continue
+                c2 = cx * cx + cy * cy
+                ux = cy * b2 - by * c2
+                uy = bx * c2 - cx * b2
+                X, Y = ax * d + ux, ay * d + uy
+                r2 = ux * ux + uy * uy
+                if d < 0:
+                    d, X, Y = -d, -X, -Y
+                g = gcd(gcd(X, Y), d)
+                den = d * d
+                h = gcd(r2, den)
+                key = (X // g, Y // g, d // g, r2 // h, den // h)
+                s = groups.get(key)
+                if s is None:
+                    groups[key] = {i, j, k}
+                else:
+                    s.add(i)
+                    s.add(j)
+                    s.add(k)
+    best = (0, ())
+    for s in groups.values():
+        cand = (len(s), tuple(sorted(s)))
+        if cand[0] > best[0] or (cand[0] == best[0] and cand[1] < best[1]):
+            best = cand
+    return best
+''')
+
 TASKS = T
 PROBE_IDS = [t["id"] for t in T[:10]]
