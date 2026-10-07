@@ -1,0 +1,136 @@
+{
+ "label": "qwen-v3-fix-k4e2-vk",
+ "set": "v3",
+ "model": "qwen3.6-35b-a3b",
+ "tasks": 5,
+ "k": 4,
+ "e": 2,
+ "task_budget": 98304,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "fix_from": "qwen-v3-agent-k4e4-vk-np4.jsonl",
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 3,
+ "visible_pass": 3,
+ "completion_tokens_total": 236304,
+ "turns_total": 22,
+ "wall_s": 3150.5,
+ "gtt_peak_gib": 28.27,
+ "per_task": [
+  {
+   "task": "v3_02_forth_vm",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 40157
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 31559,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 7,
+   "completion_tokens": 71716,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_13_farthest_vertex",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9627,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9627,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_21_mod_sqrts",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "pass",
+     "tokens": 45482,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 4,
+   "completion_tokens": 45482,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_25_hist_calendar",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44294
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 43465
+    }
+   ],
+   "turns": 8,
+   "completion_tokens": 87759,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_30_billiard",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "repeat_error",
+     "tokens": 10812
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "repeat_error",
+     "tokens": 10908
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 21720,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 5.8,
+ "gtt_model_gib": 22.47
+}
