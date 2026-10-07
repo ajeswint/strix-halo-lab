@@ -1,0 +1,125 @@
+{
+ "label": "deepseek-v3-fix-k4e2-hip",
+ "set": "v3",
+ "model": "deepseek-v4-flash",
+ "tasks": 5,
+ "k": 4,
+ "e": 2,
+ "task_budget": 98304,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8080",
+ "fix_from": "qwen-v3-agent-k4e4-vk-np4.jsonl",
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 1,
+ "solved": 5,
+ "visible_pass": 5,
+ "completion_tokens_total": 112477,
+ "turns_total": 12,
+ "wall_s": 7447.0,
+ "gtt_peak_gib": 91.47,
+ "per_task": [
+  {
+   "task": "v3_02_forth_vm",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "pass",
+     "tokens": 34810,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 4,
+   "completion_tokens": 34810,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_13_farthest_vertex",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9250,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9250,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_21_mod_sqrts",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19538,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19538,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_25_hist_calendar",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 30296,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 30296,
+   "no_fresh": false
+  },
+  {
+   "task": "v3_30_billiard",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 18583,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 18583,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 5.8,
+ "gtt_model_gib": 85.67
+}
