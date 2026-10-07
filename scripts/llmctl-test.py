@@ -4,7 +4,7 @@ server in a transient user unit, llmctl-test on :18081), a throwaway DB and a fa
 real endpoints. Safe to run anytime, including with a model resident.
 Usage: python3 scripts/llmctl-test.py
 """
-import os, pty, sqlite3, subprocess, sys, tempfile, time
+import os, pty, re, sqlite3, subprocess, sys, tempfile, time
 from pathlib import Path
 
 CTL = str(Path(__file__).resolve().parent / "llmctl.py")
@@ -79,6 +79,7 @@ try:
     rc, out = ctl("invite", "test")
     check("invite test rc", rc == 0, out)
     check("invite ACTIVE row", [r[2] for r in rows()] == ["ACTIVE"], rows())
+    check("ACTIVE note compares delta to delta", re.search(r"\+[\d.]+ over the [\d.]+ GiB before \(expected \+0 GiB\)", rows()[0][3] or ""), rows())
     check("unit running", unit_active())
     rc, out = ctl("status")
     check("status ACTIVE", rc == 0 and "state: ACTIVE test" in out, out)

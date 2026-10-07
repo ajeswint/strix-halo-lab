@@ -60,7 +60,7 @@ class Endpoint:
     unit: str
     port: int
     model: str                    # model path (shard 1 of a split GGUF); preflight sizes it
-    gtt_need: float               # GiB, expected resident (README Benchmarks); reported, not enforced
+    gtt_need: float               # GiB the model adds to GTT over the pre-invite baseline (measured); reported, not enforced
     serve: str = ""               # llm-serve.sh model name; empty = not started through llm-serve.sh
     confirm_end: bool = False     # ending it needs a TTY and the word yes
     health_wait: int = 180        # bounded seconds for /health after the start command returns
@@ -68,12 +68,16 @@ class Endpoint:
     preflight: tuple = ()         # test-only override of the preflight argv
 
 
+# gtt_need is a delta (absolute GTT carries the ~5.8 GiB non-llama client). Measured 2026-10-07 (invite, sampler max):
+# qwen +22.4 at ctx 65536 np 4 (28.2 over 5.8; the stale Qwen ended earlier: 28.3), file 20.8; deepseek +85.5
+# (91.1 over 5.8 now, 91.47 peak over 5.8 in the v3 fixer run), file 84.7; laguna +20.7 at ctx 32768 np 1 (21.17
+# over 0.52 idle, 2026-10-05 smoke), file 19.1. KV cache and buffers grow with ctx and np.
 ENDPOINTS = {e.name: e for e in (
-    Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 21, serve="qwen"),
-    Endpoint("laguna", "user", "llm-8081", 8081, "/data/models/Laguna-XS-2.1-Q4_K_M.gguf", 19.1, serve="laguna"),
-    # health_wait is a first value: the 86 GiB load time has not been measured under llmctl yet.
+    Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22.4, serve="qwen"),
+    Endpoint("laguna", "user", "llm-8081", 8081, "/data/models/Laguna-XS-2.1-Q4_K_M.gguf", 20.7, serve="laguna"),
+    # health_wait is a first value: the load took 21 s (2026-10-07, page cache state not checked, probably warm); a cold-cache load is unmeasured.
     Endpoint("deepseek", "system", "llama-deepseek", 8080,
-             "/data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf", 86,
+             "/data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf", 85.5,
              confirm_end=True, health_wait=600),
 )}
 TEST_ENDPOINTS = {e.name: e for e in (
@@ -308,7 +312,8 @@ def do_invite(db, name, opts, note=None):
     if not ep:
         say(f"unknown endpoint {name!r}; known: {', '.join(REGISTRY)}")
         return 2
-    if gtt_used() is None:
+    g0 = gtt_used()
+    if g0 is None:
         return refuse("mem_info_gtt_used is unreadable; failing closed")
     row = live_row(db)
     if row:
@@ -339,7 +344,7 @@ def do_invite(db, name, opts, note=None):
         if not health(ep, ep.health_wait):
             raise RuntimeError(f"no /health on :{ep.port} within {ep.health_wait} s or unit exited")
         g = gtt_used()
-        sset(db, sid, "ACTIVE", pid=main_pid(ep), note=f"GTT {gib(g) if g is not None else '?'} (expected ~{ep.gtt_need:g} GiB)")
+        sset(db, sid, "ACTIVE", pid=main_pid(ep), note=f"GTT {gib(g) if g is not None else '?'}, {f'+{(g - g0) / GiB:.1f}' if g is not None else '?'} over the {gib(g0)} before (expected +{ep.gtt_need:g} GiB)")
         say(f"session {sid}: ACTIVE {name} on :{ep.port}, GTT {gib(g) if g is not None else '?'}")
         return 0
     except BaseException as e:   # includes KeyboardInterrupt: nothing may stay resident under a FAILED row
@@ -352,7 +357,7 @@ def do_invite(db, name, opts, note=None):
 def end_active(db, row, why):
     """BYE for the ACTIVE row. Returns rc."""
     ep = REGISTRY[row["endpoint"]]
-    msg = confirm_end(ep, f"end {ep.name} (session {row['id']}, ~{ep.gtt_need:g} GiB resident)")
+    msg = confirm_end(ep, f"end {ep.name} (session {row['id']}, +{ep.gtt_need:g} GiB GTT)")
     if msg:
         return refuse(msg)
     sset(db, row["id"], "BYE", pid=os.getpid())
