@@ -1,0 +1,334 @@
+{
+ "label": "qwen-v4-probe-agent-k4e4-vk-np4",
+ "set": "v4",
+ "model": "qwen3.6-35b-a3b",
+ "tasks": 10,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 4,
+ "visible_pass": 4,
+ "completion_tokens_total": 1198419,
+ "turns_total": 112,
+ "wall_s": 11853.3,
+ "gtt_peak_gib": 28.34,
+ "per_task": [
+  {
+   "task": "v4_01_json_patch",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41665
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41001
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 29538,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 11,
+   "completion_tokens": 112204,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_02_mini_asm",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 196608,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_03_dst_zone",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41928
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41502
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41724
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42742
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 167896,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_04_rr_priority",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 37755
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 39839
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19327
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 39942
+    }
+   ],
+   "turns": 14,
+   "completion_tokens": 136863,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_05_hm_infer",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 43438
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 20756
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44755
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 21218
+    }
+   ],
+   "turns": 12,
+   "completion_tokens": 130167,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_06_phi_blocks",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43734
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19282
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43363
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 40912
+    }
+   ],
+   "turns": 14,
+   "completion_tokens": 147291,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_07_sub_game",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46281
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 30626
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 20330,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 9,
+   "completion_tokens": 97237,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_08_lattice_poly",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9472,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9472,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_09_dec_round",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41956
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43162
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44506
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43097
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 172721,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_10_bracelets",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 27960,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 27960,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 5.8,
+ "gtt_model_gib": 22.54
+}
