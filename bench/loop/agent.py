@@ -4,7 +4,7 @@
   agent.py --selftest [--set v1]                       loop logic against a scripted fake model; no server
   agent.py --label L --set v1 --tasks id,id -k 4 -e 4  run against the :8081 server
   agent.py --regrade results/X.jsonl --set v1          fresh-seed regrade of a run.py result file
-  agent.py --label L --set v3 --tasks id,id --fix-from results/X.jsonl -k 4 -e 2 --model M
+  agent.py --label L --set v3 --tasks id,id --fix-from results/X.jsonl -k 4 -e 2 --model M [--api URL]
                                                        fix mode: start every episode from a stored failure
 
 One model, one action: write solution.py. The critic is the test file, run in run.py's
@@ -251,9 +251,11 @@ def main():
                     help="completion tokens per task before no new episode starts (default: best-of-16 hard cap)")
     ap.add_argument("--parallel", type=int, default=4, help="tasks in flight; match the server's -np")
     ap.add_argument("--gtt-baseline", type=float)
+    ap.add_argument("--api", default=run.API, help="server base URL (default :8081; llama-deepseek is on :8080)")
     ap.add_argument("--fix-from", metavar="JSONL", help="fix mode: start each episode from the stored failure of each task in this loop jsonl")
     a = ap.parse_args()
     run.load_set(a.set)
+    run.API = a.api
     if a.fix_from and not a.tasks:
         ap.error("--fix-from needs --tasks")
     if a.tasks:
@@ -288,7 +290,7 @@ def main():
     summary = {
         "label": a.label, "set": a.set, "model": a.model, "tasks": len(run.TASKS), "k": a.k, "e": a.e,
         "task_budget": a.task_budget, "fresh_seed": FRESH_SEED, "sampling": run.SAMPLING,
-        "fix_from": os.path.basename(a.fix_from) if a.fix_from else None,
+        "api": a.api, "fix_from": os.path.basename(a.fix_from) if a.fix_from else None,
         "reasoning_budget": run.REASONING_BUDGET, "max_tokens": run.MAX_TOKENS, "parallel": a.parallel,
         "solved": sum(s["solved"] for s in tasks_out), "visible_pass": sum(s["visible_pass"] for s in tasks_out),
         "completion_tokens_total": sum(s["completion_tokens"] for s in tasks_out),
