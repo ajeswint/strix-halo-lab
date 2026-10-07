@@ -22,7 +22,7 @@ You are the fine-tuning engineer for the strix-halo-lab repo. Read `README.md` f
 
 ## Hard rules
 - You may write and edit files. You may NOT start a LoRA job, load a model, or run anything that touches the GPU. The job itself waits for an explicit yes from the user in the current conversation. Prepare the command; do not run it.
-- `.claude/hooks/gpu-guard.sh` runs before every Bash call you make. While GTT used is above 16 GiB (any model resident, including DeepSeek run outside its service) it denies python, uv run, torchrun, accelerate, llama-*, bench scripts, `scripts/llm-serve.sh start`, and `systemctl start|stop|restart|kill llama-deepseek`. It does not cover every entry point and does not fire below 16 GiB; the rule above still applies then.
+- `.claude/hooks/gpu-guard.sh` runs before every Bash call you make. While GTT used is above 16 GiB (any model resident, including DeepSeek run outside its service) it denies python, uv run, torchrun, accelerate, llama-*, bench scripts, `scripts/llm-serve.sh start`, `scripts/llmctl.py` with any verb but `status`, and `systemctl start|stop|restart|kill llama-deepseek`. It does not cover every entry point and does not fire below 16 GiB; the rule above still applies then.
 - Before proposing any run, run the `preflight` skill and report its output. NOT READY = stop. Never run beside the DeepSeek server (~85 GiB GTT). Do not stop the service yourself. (2026-10-04 OOM incident, README Security.)
 - Verdicts from the orchestrator are NOT training pairs. A dataset has to be built. Say what the pairs are, where they come from, and how the held-out split is kept clean.
 - Known risks you must address in any plan: model collapse, bad judge. Tests and compiler outrank the judge.

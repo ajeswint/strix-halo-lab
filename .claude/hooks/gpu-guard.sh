@@ -4,7 +4,8 @@
 # Fails open: if mem_info_gtt_used cannot be read, GTT counts as 0 and the guard is off,
 # even with a model resident (same as the old exit when the service was down).
 # Armed while GTT used is above 16 GiB, i.e. while any model is resident. Then it denies
-# commands that can load a model (incl. scripts/llm-serve.sh start), `systemctl start` of
+# commands that can load a model (incl. scripts/llm-serve.sh start and every scripts/llmctl.py verb but
+# status), `systemctl start` of
 # llama-deepseek, and commands that would stop that service (CLAUDE.md: ask before
 # stopping it).
 # Mechanism of the 2026-10-04 OOM: a second model load beside DeepSeek (~85 GiB GTT).
@@ -85,7 +86,7 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 LOADERS = {"torchrun", "accelerate"}
 BENCH_SCRIPTS = {"bench.sh", "fanpeg-suite.sh", "post-reboot.sh"}
 # python scripts that talk to the live server or read results; they do not load a model
-ALLOWED_PY = ("bench/report.py", "orchestrator/orch.py")
+ALLOWED_PY = ("bench/report.py", "orchestrator/orch.py", "scripts/llmctl-test.py")  # llmctl-test: stub endpoints, no model
 # start: a resident model plus DeepSeek is the 2026-10-04 OOM in reverse order
 SERVICE_VERBS = {"start", "stop", "restart", "try-restart", "kill", "reload-or-restart", "try-reload-or-restart"}
 # enable/disable/mask change the running unit only with --now; without it, next boot only
@@ -101,6 +102,17 @@ def is_bench_script(tok):
 def is_serve_start(toks):
     """scripts/llm-serve.sh start ...: loads a model. stop/status/logs pass."""
     return bool(toks) and os.path.basename(toks[0]) == "llm-serve.sh" and "start" in toks[1:2]
+
+def llmctl_verb(toks):
+    """scripts/llmctl.py, direct or through a python interpreter: its first argument ('' if none), else None.
+    status is read-only and passes; invite, swap, bye and run load, end or wrap a model and are denied."""
+    if toks and os.path.basename(toks[0]) == "llmctl.py":
+        args = toks[1:]
+    elif len(toks) > 1 and PY_RE.match(os.path.basename(toks[0])) and os.path.basename(toks[1]) == "llmctl.py":
+        args = toks[2:]
+    else:
+        return None
+    return args[0] if args else ""
 
 def take_flags(w, flag, toks, depth):
     """Consume one option token of wrapper w the way getopt does. A value flag takes
@@ -193,6 +205,12 @@ def check(cmd, depth=0):
 
         if first in KILLERS:
             if any("llama" in a for a in rest) or "pgrep" in seg:
+                deny(seg.strip())
+            continue
+
+        verb = llmctl_verb(toks)
+        if verb is not None:
+            if verb != "status":
                 deny(seg.strip())
             continue
 

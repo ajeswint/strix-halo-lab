@@ -18,7 +18,7 @@ python3 orchestrator/orch.py findings --all --detail 1
 ## Running a review
 
 Needs llama-deepseek on :8080. That holds ~85 GiB GTT and blocks every other load.
-1. `systemctl is-active llama-deepseek`. If inactive, starting it needs the user's yes and the `preflight` skill with the DeepSeek shard-1 path first. If `scripts/llm-serve.sh status` shows a small model resident, it must be stopped first.
+1. `scripts/llmctl.py status`. If idle, `scripts/llmctl.py invite deepseek` (needs the user's yes; it runs the preflight with the shard-1 path itself). If a small model is resident, `scripts/llmctl.py swap deepseek` (the user's yes, and the user runs it if gpu-guard denies). Ending DeepSeek afterwards is `scripts/llmctl.py bye`, run by the user in a terminal.
 2. Committed work only: it reviews the last reviewed commit..HEAD. Commit first.
 3. `python3 orchestrator/orch.py review ~/projects/strix-halo-lab`. Expect ~7 min (the full 6,144-token reasoning budget is used every run). Do not send other requests to :8080 meanwhile: the single slot evicts the cached prefix.
 4. Exit 0 with `skipped` = no new commits or server down. Exit 1 = error; the raw response is kept in the run row.

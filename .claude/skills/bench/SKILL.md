@@ -5,7 +5,7 @@ description: Run llama-bench under Framework's fixed conditions with bench/bench
 
 # Benchmarks
 
-Before running: run the `preflight` skill with the model, and get the user's yes (a GPU run). Nothing else on the GPU while it runs; bench numbers taken beside another load are void.
+Before running: `scripts/llmctl.py status` must say idle (bench.sh loads its own model outside a session; an ACTIVE or UNOWNED model makes the numbers void and the preflight NOT READY: `llmctl bye` first, the user's call for DeepSeek). Then run the `preflight` skill with the model, and get the user's yes (a GPU run). Nothing else on the GPU while it runs; bench numbers taken beside another load are void.
 
 ```
 /data/bench/bench.sh t4-qwen-recheck /data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf

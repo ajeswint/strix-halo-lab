@@ -11,6 +11,7 @@
 - Own errors plainly and correct forward.
 - Stay in this repo's scope (the Roadmap in README.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
 - Install the entire stack for a step first, then test. Never test one component while other installs are pending or running.
+- Model servers start and stop only through `scripts/llmctl.py` (sessions; `llm-serve` skill). Long clients (agent.py, run.py) run as `scripts/llmctl.py run -- ...` inside an ACTIVE session: that is the memory cap (2026-10-07: a 95 GiB python3 OOM-killed Cursor). Ending DeepSeek is the user's, at a terminal.
 - Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `scripts/preflight.sh` with the model path (`preflight` skill), right before the load. NOT READY = stop. Never load beside the DeepSeek server (~85 GiB GTT); ask before stopping it. (2026-10-04 OOM incident, README Security.)
 - Procedures live in `.claude/skills/` (preflight, llm-serve, bench, measure, orch-review, live-sync, torch-install, model-add, handoff). Use the skill instead of re-deriving the steps. When a procedure changes, amend its skill in the same commit.
 - After presenting options or a list, stop and wait for the user's choice.

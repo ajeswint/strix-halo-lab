@@ -1,4 +1,6 @@
 -- Orchestrator memory, schema v1. Applied by orch.py when PRAGMA user_version < 1.
+-- The sessions table after the marker at the end is idempotent (IF NOT EXISTS): orch.py creates it on a fresh DB,
+-- scripts/llmctl.py creates it on the existing one. user_version stays 1 by design.
 -- One writer process at a time (the review job or a verdict command); WAL lets readers run alongside.
 
 CREATE TABLE repos (
@@ -51,3 +53,20 @@ CREATE TABLE verdicts (
   decided_by TEXT NOT NULL,            -- 'aj', 'claude', 'grok', ...
   decided_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- sessions: scripts/llmctl.py (one model resident at a time). Everything below the marker line is run by llmctl.py
+-- on every connect; keep it idempotent.
+-- llmctl:sessions
+-- pid: llmctl's own pid while INVITE/PREFLIGHT/LOADING/BYE (so a dead controller is detectable), the server's
+-- MainPID while ACTIVE. The unique partial index allows one live session at a time.
+CREATE TABLE IF NOT EXISTS sessions (
+  id       INTEGER PRIMARY KEY,
+  endpoint TEXT NOT NULL,              -- registry name, or 'unowned:<unit>' for a resident model llmctl did not start
+  state    TEXT NOT NULL CHECK (state IN ('INVITE', 'PREFLIGHT', 'LOADING', 'ACTIVE', 'BYE', 'ENDED', 'FAILED', 'ABORTED')),
+  started  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ended    TEXT,
+  pid      INTEGER,
+  note     TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_live ON sessions ((1))
+  WHERE state IN ('INVITE', 'PREFLIGHT', 'LOADING', 'ACTIVE', 'BYE');

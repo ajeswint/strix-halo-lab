@@ -1,0 +1,3 @@
+# llmctl (scripts/llmctl.py): start and stop the DeepSeek unit without a password.
+# Exactly these two commands, no wildcards: sudo matches the arguments literally.
+aj ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-deepseek, /usr/bin/systemctl stop llama-deepseek

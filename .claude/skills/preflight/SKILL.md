@@ -5,7 +5,7 @@ description: Memory preflight before loading any model, running llama-bench/llam
 
 # Memory preflight
 
-Run it immediately before the load, from the repo root, with the model you are about to load:
+`scripts/llmctl.py invite` runs it and prints it for a server session (`llm-serve` skill). Run it yourself, immediately before the load, from the repo root, with the model you are about to load, for everything that is not a session: llama-bench, llama-perplexity, bench scripts, training. Not while a session is ACTIVE: it reads NOT READY by design.
 
 ```
 scripts/preflight.sh /data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
@@ -16,7 +16,7 @@ No argument checks the box only. For split GGUFs pass shard 1; the script sums a
 - Exit 0 + `READY`: proceed. Report the `gtt_used / mem_available / llama-deepseek` line to the user with the result.
 - Exit 1 + `NOT READY`: stop. Report every `-` reason line. Do not work around it.
   - `llama-deepseek is active`: ask the user before stopping it. Never stop it yourself.
-  - `llama process running` / `a model is resident`: something else holds the GPU. Find it (`pgrep -a llama-`, `scripts/llm-serve.sh status`) and report; stop only what you started this session.
+  - `llama process running` / `a model is resident`: something else holds the GPU. Find it (`scripts/llmctl.py status`, `pgrep -a llama-`) and report; end only what you invited this session (`llmctl bye`).
   - `MemAvailable < need`: another workload (Chrome, Unreal, a build) is using RAM. Report; do not kill it.
 
 ## What READY means
