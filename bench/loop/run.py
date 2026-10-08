@@ -215,8 +215,12 @@ ex(_main())
 """
 
 
+AS_CAP = 1 << 30
+REF_AS_CAP = 512 << 20  # every reference must pass under this; headroom measured 2026-10-08: all 150 refs pass at 256 MiB
+
+
 def _limits():
-    resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+    resource.setrlimit(resource.RLIMIT_AS, (AS_CAP, AS_CAP))
 
 
 def _sandbox(code, tests, timeout):
@@ -391,9 +395,14 @@ def probe_selftest(t):
 
 
 def selftest():
+    global AS_CAP
     ok = True
     for t in TASKS:
-        good, err = grade(t["ref"], t["tests"])
+        AS_CAP = REF_AS_CAP
+        try:
+            good, err = grade(t["ref"], t["tests"])
+        finally:
+            AS_CAP = 1 << 30
         empty, _ = grade("", t["tests"])
         status = "ok" if good and not empty else "FAIL"
         ok &= status == "ok"
