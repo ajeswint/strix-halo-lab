@@ -6,7 +6,7 @@
   --tasks id,id --seed-start 4      subset of the set, seeds 4..4+n-1 (extends an earlier run)
 
 Grading runs each candidate in bwrap: no network, read-only /usr, only a scratch dir
-writable, 4 GiB address-space cap, 60 s wall timeout. The oracle is not on disk: the harness
+writable, 1 GiB address-space cap, 60 s wall timeout. The oracle is not on disk: the harness
 imports the solution, then reads the oracle from stdin; a static deny-list (deny_check) is a
 tripwire, not isolation (README "Grader hardening"). pass@1 = mean pass rate over all
 samples (unbiased for k=1); best-of-N = share of tasks where any sample passes, i.e. the
@@ -216,7 +216,7 @@ ex(_main())
 
 
 def _limits():
-    resource.setrlimit(resource.RLIMIT_AS, (4 << 30, 4 << 30))
+    resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
 
 
 def _sandbox(code, tests, timeout):
