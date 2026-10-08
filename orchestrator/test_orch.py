@@ -4,9 +4,10 @@ throwaway git repo, a throwaway DB (ORCH_DB) and a stub llama-server on a random
 The real DB and the real server on :8080 are never touched. Safe to run anytime, including with a model resident.
 Usage: python3 orchestrator/test_orch.py
 
-These are the hygiene fixtures written BEFORE the fixes (accord points 2-8, 10). Expected on the unfixed orch.py:
-the control, the at-the-boundary allowance and the two Regression cases pass, everything else fails. Not written yet: the content of orchestrator/context.md (point 2). The review_paths design and the --path CLI were
-approved by the user 2026-10-08.
+Written before the code they test (accord of 2026-10-08, approved by the user): hygiene fixes (context, omissions,
+token guard, caps, insert failures, spaces, review_paths, --path) in 30c7f6b/37d302b, fixed in ea41d43; scope file
+(orchestrator/scope.txt, 'excluded') and `baseline` in the ScopeFile and Baseline classes, written before their code.
+Regression and control cases pass before and after by design.
 """
 import json, os, sqlite3, subprocess, sys, tempfile, threading, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -200,10 +201,25 @@ class OrchCase(unittest.TestCase):
                            text=True, timeout=120)
         return r.returncode, r.stdout + r.stderr
 
-    def marker(self):
+    def baseline(self, commit, api="http://127.0.0.1:1"):
+        """`orch.py baseline REPO COMMIT`. The server is unreachable by default: a baseline must not need it."""
+        env = {**os.environ, **GIT_ENV, "ORCH_DB": str(self.db), "ORCH_API": api}
+        r = subprocess.run([sys.executable, ORCH, "baseline", str(self.repo), commit], env=env, capture_output=True,
+                           text=True, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+
+    def last_run(self):
         with sqlite3.connect(self.db) as c:
-            row = c.execute("SELECT last_reviewed_commit FROM repos WHERE path = ?",
-                            (str(self.repo.resolve()),)).fetchone()
+            c.row_factory = sqlite3.Row
+            return c.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+
+    def marker(self):
+        try:
+            with sqlite3.connect(self.db) as c:
+                row = c.execute("SELECT last_reviewed_commit FROM repos WHERE path = ?",
+                                (str(self.repo.resolve()),)).fetchone()
+        except sqlite3.OperationalError:          # no DB or no repos table yet: nothing was ever recorded
+            return None
         return row[0] if row else None
 
     def dispositions(self, run_id=None):
@@ -453,6 +469,170 @@ class ReviewPaths(OrchCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("B-ONLY-SENTINEL", self.stub.prompt())
         self.assertEqual(self.marker(), head)
+
+
+class ScopeFile(OrchCase):
+    """Approved 2026-10-08: orchestrator/scope.txt in the reviewed repo (one fnmatch glob per line, `#` comments),
+    read at HEAD. A changed path that matches is 'excluded': not sent, does not block the marker; the first 3 lines at
+    HEAD are sent so code that reads the file is not judged blind (the cause of run 2's false positives)."""
+
+    def scope(self, *globs):
+        self.write("orchestrator/scope.txt", "# excluded from review\n" + "\n".join(globs) + "\n")
+
+    def test_excluded_oversize_file_does_not_refuse_and_gets_a_sample(self):
+        self.scope("*.jsonl")
+        self.write("data/big.jsonl", big_file("bigdata", 25_000))
+        self.write("a.py", "print(1)\n")
+        head = self.commit()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)
+        self.assertEqual(self.dispositions()["data/big.jsonl"], "excluded")
+        self.assertIn(sentinel("bigdata", "START"), self.stub.prompt())
+        self.assertNotIn(sentinel("bigdata", "END"), self.stub.prompt())
+
+    def test_scope_file_is_itself_reviewed(self):
+        self.scope("*.jsonl")
+        head = self.commit()
+        rc, out = self.review()
+        self.assertEqual(self.dispositions()["orchestrator/scope.txt"], "sent")
+        self.assertIn("*.jsonl", self.stub.prompt())
+
+    def test_uncommitted_scope_file_is_ignored(self):
+        """The reviewable set is committed content, not the working tree."""
+        self.write("data/big.jsonl", big_file("bigdata", 25_000))
+        head = self.commit()
+        self.scope("*.jsonl")                       # written after the commit, never committed
+        rc, out = self.review()
+        self.assert_refused(rc, head, "oversize .jsonl and an uncommitted scope file")
+        self.assertEqual(self.dispositions()["data/big.jsonl"], "oversize")
+
+    def test_excluded_disposition_is_accepted_by_the_check(self):
+        self.write("a.py", "print(1)\n")
+        self.commit()
+        self.assertEqual(self.review()[0], 0)
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO review_paths (run_id, path, disposition) VALUES (1, 'x', 'excluded')")
+
+    def test_scope_file_comments_and_blank_lines_are_ignored(self):
+        self.write("orchestrator/scope.txt", "# a comment\n\n   \n*.jsonl\n")
+        self.write("data/big.jsonl", big_file("bigdata", 25_000))
+        self.write("notes.md", "plain\n")
+        head = self.commit()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        d = self.dispositions()
+        self.assertEqual((d["data/big.jsonl"], d["notes.md"]), ("excluded", "sent"))
+
+
+class Baseline(OrchCase):
+    """`orch.py baseline REPO COMMIT`: sets last_reviewed_commit without sending anything. No model, no server,
+    never status ok. kind='review' (runs.kind has a CHECK), status='skipped', note = JSON. Paths matching the scope
+    file are 'excluded', every other path in empty..COMMIT is 'out_of_scope'. The next review is COMMIT..HEAD."""
+
+    NOTE_KEYS = {"baseline", "commit", "user", "at", "scope_blob", "globs", "statement", "run_id"}
+
+    def seed(self):
+        self.write("orchestrator/scope.txt", "*.jsonl\n")
+        self.write("a.py", "print(1)\n")
+        self.write("data/x.jsonl", "{}\n")
+        self.write("huge.py", big_file("huge", 40_000))      # over the per-file cap: irrelevant to a baseline
+        return self.commit("seed")
+
+    def test_sets_the_marker_without_the_server_or_the_model(self):
+        c1 = self.seed()
+        rc, out = self.baseline(c1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), c1)
+        self.assertEqual(self.stub.requests, [])
+        run = self.last_run()
+        self.assertEqual((run["kind"], run["status"]), ("review", "skipped"))
+
+    def test_note_has_the_six_fields_and_the_globs(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        run = self.last_run()
+        note = json.loads(run["note"])
+        self.assertEqual(set(note), self.NOTE_KEYS)
+        self.assertIs(note["baseline"], True)
+        self.assertEqual(note["commit"], c1)
+        self.assertTrue(note["user"] and note["at"])
+        self.assertEqual(note["scope_blob"], self.git("rev-parse", f"{c1}:orchestrator/scope.txt"))
+        self.assertEqual(note["globs"], ["*.jsonl"])
+        self.assertIn("no model ran", note["statement"])
+        self.assertIn("no findings produced", note["statement"])
+        self.assertEqual(note["run_id"], run["id"])
+
+    def test_records_every_path_as_excluded_or_out_of_scope(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.assertEqual(self.dispositions(), {
+            "README.md": "out_of_scope", "CLAUDE.md": "out_of_scope", "a.py": "out_of_scope",
+            "huge.py": "out_of_scope", "orchestrator/scope.txt": "out_of_scope", "data/x.jsonl": "excluded"})
+
+    def test_baseline_without_a_scope_file_still_works(self):
+        self.write("a.py", "print(1)\n")
+        c1 = self.commit()
+        rc, out = self.baseline(c1)
+        self.assertEqual(rc, 0, out)
+        note = json.loads(self.last_run()["note"])
+        self.assertEqual((note["scope_blob"], note["globs"]), (None, []))
+
+    def test_next_review_is_commit_to_head(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.write("b.py", "print(2)\n")
+        head = self.commit("later")
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)
+        self.assertIn("print(2)", self.stub.prompt())
+        self.assertNotIn("print(1)", self.stub.prompt())
+        self.assertEqual(self.dispositions(), {"b.py": "sent"})
+
+    def test_baseline_at_an_older_commit_leaves_later_commits_to_review(self):
+        c1 = self.seed()
+        self.write("b.py", "print(2)\n")
+        head = self.commit("later")
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.assertEqual(self.marker(), c1)
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)
+
+    def test_unknown_commit_is_refused(self):
+        self.seed()
+        rc, out = self.baseline("0" * 40)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("refused", out)
+        self.assertIsNone(self.marker())
+
+    def test_commit_not_in_the_history_of_head_is_refused(self):
+        self.seed()
+        main = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.git("checkout", "-q", "-b", "side")
+        self.write("side.py", "print(3)\n")
+        side = self.commit("side")
+        self.git("checkout", "-q", main)
+        rc, out = self.baseline(side)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("refused", out)
+        self.assertIsNone(self.marker())
+
+    def test_baseline_older_than_the_existing_marker_is_refused(self):
+        c1 = self.seed()
+        self.write("b.py", "print(2)\n")
+        c2 = self.commit("later")
+        self.assertEqual(self.baseline(c2)[0], 0)
+        rc, out = self.baseline(c1)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("refused", out)
+        self.assertEqual(self.marker(), c2)
+
+    def test_baseline_never_records_status_ok(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.assertNotIn("ok", [s for s, _ in self.runs()])
 
 
 class InsertFailure(OrchCase):
