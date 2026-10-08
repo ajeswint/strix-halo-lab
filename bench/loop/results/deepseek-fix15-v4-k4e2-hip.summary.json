@@ -1,0 +1,175 @@
+{
+ "label": "deepseek-fix15-v4-k4e2-hip",
+ "set": "v4",
+ "model": "deepseek-v4-flash",
+ "tasks": 7,
+ "k": 4,
+ "e": 2,
+ "task_budget": 98304,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8080",
+ "fix_from": "fix15-v4-stored.jsonl",
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 1,
+ "solved": 5,
+ "visible_pass": 5,
+ "completion_tokens_total": 186677,
+ "turns_total": 19,
+ "wall_s": 12290.8,
+ "gtt_peak_gib": 91.98,
+ "per_task": [
+  {
+   "task": "v4_03_dst_zone",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19970
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "repeat_error",
+     "tokens": 10044
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 30014,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_04_rr_priority",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "repeat_error",
+     "tokens": 9184
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "repeat_error",
+     "tokens": 9243
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 18427,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_05_hm_infer",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 21199,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 21199,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_06_phi_blocks",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19332,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19332,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_09_dec_round",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 38776
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19820,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 6,
+   "completion_tokens": 58596,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_19_leap_clock",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 20309,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 20309,
+   "no_fresh": false
+  },
+  {
+   "task": "v4_20_list_schedule",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 18800,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 18800,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 6.5,
+ "gtt_model_gib": 85.48
+}
