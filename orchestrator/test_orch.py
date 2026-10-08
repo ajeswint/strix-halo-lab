@@ -202,7 +202,8 @@ class OrchCase(unittest.TestCase):
 
     def marker(self):
         with sqlite3.connect(self.db) as c:
-            row = c.execute("SELECT last_reviewed_commit FROM repos").fetchone()
+            row = c.execute("SELECT last_reviewed_commit FROM repos WHERE path = ?",
+                            (str(self.repo.resolve()),)).fetchone()
         return row[0] if row else None
 
     def dispositions(self, run_id=None):
@@ -247,7 +248,7 @@ class Control(OrchCase):
 class Context(OrchCase):
     def test_claude_md_reaches_the_reviewer_even_with_a_large_readme(self):
         """Point 2: repo_context() slices README+CLAUDE.md at 24,000 chars; CLAUDE.md is never sent."""
-        self.write("README.md", "".join(f"readme line {i:05d} " + "r" * 60 + "\n" for i in range(1000)))
+        self.write("README.md", "".join(f"readme line {i:05d} " + "r" * 60 + "\n" for i in range(340)))  # ~27,500 chars: over the old 24,000 slice, under the per-file cap
         self.write("CLAUDE.md", "RULE-SENTINEL-CLAUDE: do not propose Docker\n")
         self.commit("first")
         rc, out = self.review()

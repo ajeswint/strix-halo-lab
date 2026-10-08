@@ -1,6 +1,7 @@
--- Orchestrator memory, schema v1. Applied by orch.py when PRAGMA user_version < 1.
--- The sessions table after the marker at the end is idempotent (IF NOT EXISTS): orch.py creates it on a fresh DB,
--- scripts/llmctl.py creates it on the existing one. user_version stays 1 by design.
+-- Orchestrator memory, schema v2. orch.py applies the whole file when PRAGMA user_version < 1 (fresh DB) and only the
+-- v2 block (marked below) when it is 1, then sets user_version 2. The v2 block and the sessions table below the llmctl marker
+-- are idempotent (IF NOT EXISTS). scripts/llmctl.py runs only what follows the llmctl marker, so anything new for
+-- orch.py goes above it.
 -- One writer process at a time (the review job or a verdict command); WAL lets readers run alongside.
 
 CREATE TABLE repos (
@@ -52,6 +53,18 @@ CREATE TABLE verdicts (
   reason     TEXT NOT NULL,
   decided_by TEXT NOT NULL,            -- 'aj', 'claude', 'grok', ...
   decided_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- schema:v2 (user_version 2): which paths a review run covered. repos.last_reviewed_commit stays the only cursor and
+-- moves only when the run is 'ok' and every path in base..HEAD is 'sent'. 'sent' = in the prompt of a run that went
+-- out; 'oversize' = diff over the per-file cap; 'budget' = dropped by the character ceiling, or the whole review
+-- refused by the token guard; 'out_of_scope' = filtered out by --path. A run that skipped (no new commits, server
+-- down) has no rows; a legacy v1 run has none either. Plain INSERT, never OR IGNORE: the CHECK must raise.
+CREATE TABLE IF NOT EXISTS review_paths (
+  run_id      INTEGER NOT NULL REFERENCES runs(id),
+  path        TEXT NOT NULL,
+  disposition TEXT NOT NULL CHECK (disposition IN ('sent', 'oversize', 'budget', 'out_of_scope')),
+  PRIMARY KEY (run_id, path)
 );
 
 -- sessions: scripts/llmctl.py (one model resident at a time). Everything below the marker line is run by llmctl.py

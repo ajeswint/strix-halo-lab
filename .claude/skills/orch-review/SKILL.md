@@ -19,9 +19,9 @@ python3 orchestrator/orch.py findings --all --detail 1
 
 Needs llama-deepseek on :8080. That holds ~85 GiB GTT and blocks every other load.
 1. `scripts/llmctl.py status`. If idle, `scripts/llmctl.py invite deepseek` (needs the user's yes; it runs the preflight with the shard-1 path itself). If a small model is resident, `scripts/llmctl.py swap deepseek` (the user's yes, and the user runs it if gpu-guard denies). Ending DeepSeek afterwards is `scripts/llmctl.py bye`, run by the user in a terminal.
-2. Committed work only: it reviews the last reviewed commit..HEAD. Commit first.
+2. Committed work only: it reviews the last reviewed commit..HEAD. Commit first. The first connect to a v1 DB upgrades it to `user_version` 2 (adds `review_paths`).
 3. `python3 orchestrator/orch.py review ~/projects/strix-halo-lab`. Expect ~7 min (the full 6,144-token reasoning budget is used every run). Do not send other requests to :8080 meanwhile: the single slot evicts the cached prefix.
-4. Exit 0 with `skipped` = no new commits or server down. Exit 1 = error; the raw response is kept in the run row.
+4. Exit 0 with `skipped` = no new commits or server down. Exit 1 = error (raw response kept in the run row) or `refused:` (a path was oversize or past the budget, or the token guard could not fit the prompt; the model was not called and the marker did not move). `python3 orchestrator/orch.py runs` shows the note; the `review_paths` rows of that run list each path's disposition. A scoped review (`--path P`, repeatable) can finish `ok` but never moves the marker unless it covered every changed path.
 
 ## Triage
 
