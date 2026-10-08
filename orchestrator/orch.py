@@ -28,6 +28,8 @@ MAX_DIFF_CHARS = 300_000      # loose ceiling, far above what fits the 64k conte
 CONTEXT_FILES = ("orchestrator/context.md", "CLAUDE.md")  # the context slot; README.md is not sent whole
 SCOPE_FILE = "orchestrator/scope.txt"  # fnmatch globs (one per line, # comments) of paths excluded from review
 SAMPLE_LINES, SAMPLE_LINE_CHARS = 3, 1500  # head sample of each excluded file that changed
+SAMPLE_TOTAL_CHARS = 13_500   # all samples together: three files at the per-file maximum (run 4: 38 files, 72,502 chars)
+SAMPLE_NAMES_MAX = 50         # past the budget excluded paths are only listed, at most this many, then a count
 MEMORY_LIMIT = 30
 REASONING_BUDGET = 6144      # server forces end-of-thinking here (llama.cpp reasoning_budget_tokens)
 MAX_TOKENS = 12288           # reasoning + JSON answer; 8192 with no budget ran out mid-reasoning (run 1)
@@ -105,18 +107,26 @@ def changed_files(repo, base, head):
 
 
 def build_diff(repo, base, head, scope=(), globs=()):
-    """Per-file diff of base..head. Returns (text, chars, dispositions): path -> sent | oversize | budget |
-    out_of_scope | excluded (the review_paths values). Only 'sent' paths are diffed in the text; an excluded path that
-    still exists at head contributes its first lines, so code that reads it is not judged blind (run 2)."""
-    parts, samples, disp, total = [], [], {}, 0
+    """Per-file diff of base..head. Returns (text, dispositions, sampled): path -> sent | oversize | budget |
+    out_of_scope | excluded (the review_paths values). Only 'sent' paths are diffed in the text. A changed excluded path
+    that still exists at head contributes its first lines, so code that reads it is not judged blind (run 2), until
+    SAMPLE_TOTAL_CHARS is used up; the rest are listed by name only (at most SAMPLE_NAMES_MAX, then a count). `sampled`
+    is the set of excluded paths whose sample went in. Nothing here refuses: the token guard is the hard stop."""
+    parts, samples, names, disp, sampled, total, used = [], [], [], {}, set(), 0, 0
     for f in changed_files(repo, base, head):
         if is_excluded(f, globs):
             disp[f] = "excluded"
             try:
-                lines = git(repo, "show", f"{head}:{f}").splitlines()[:SAMPLE_LINES]
+                lines = [l[:SAMPLE_LINE_CHARS] for l in git(repo, "show", f"{head}:{f}").splitlines()[:SAMPLE_LINES]]
             except subprocess.CalledProcessError:
                 lines = []
-            samples.append(f"  {f}" + "".join(f"\n    | {l[:SAMPLE_LINE_CHARS]}" for l in lines))
+            body = sum(len(l) for l in lines)
+            if lines and used + body <= SAMPLE_TOTAL_CHARS:
+                used += body
+                sampled.add(f)
+                samples.append(f"  {f}" + "".join(f"\n    | {l}" for l in lines))
+            else:
+                names.append(f)
             continue
         if not in_scope(f, scope):
             disp[f] = "out_of_scope"
@@ -133,7 +143,11 @@ def build_diff(repo, base, head, scope=(), globs=()):
     if samples:
         parts.append("Excluded from review by orchestrator/scope.txt (changed, not diffed; first lines at HEAD):\n"
                      + "\n".join(samples))
-    return "\n".join(parts), total, disp
+    if names:
+        shown = ", ".join(names[:SAMPLE_NAMES_MAX]) + (f", and {len(names) - SAMPLE_NAMES_MAX} more excluded"
+                                                       if len(names) > SAMPLE_NAMES_MAX else "")
+        parts.append(f"Also excluded, no sample (sample budget {SAMPLE_TOTAL_CHARS} chars used or file gone): {shown}")
+    return "\n".join(parts), disp, sampled
 
 
 def repo_context(repo):
@@ -244,7 +258,8 @@ def cmd_review(a):
         sys.exit(f"refused: {note}")
 
     _, globs = load_scope(repo, head)
-    diff, chars, disp = build_diff(repo, base or EMPTY_TREE, head, scope, globs)
+    diff, disp, sampled = build_diff(repo, base or EMPTY_TREE, head, scope, globs)
+    chars = len(diff)  # the whole diff text the model gets, samples included (run 4 stored only the sent diffs)
     omitted = sorted(p for p, d in disp.items() if d in ("oversize", "budget"))
     if omitted:
         shown = ", ".join(f"{p} ({disp[p]})" for p in omitted[:10]) + (" ..." if len(omitted) > 10 else "")
@@ -259,7 +274,7 @@ def cmd_review(a):
     log = git(repo, "log", "--oneline", f"{base}..{head}" if base else head).strip()
     # Order: static -> slow-changing -> per-run, so llama-server's prompt cache reuses the longest prefix.
     user = (f"Repository: {repo.name}\n\n{repo_context(repo)}\n\n"
-            f"===== Past verdicts =====\n{memory(db, r['id'], list(disp))}\n\n"
+            f"===== Past verdicts =====\n{memory(db, r['id'], [p for p, d in disp.items() if d == "sent" or p in sampled])}\n\n"
             f"===== Commits under review =====\n{log}\n\n"
             + (f"===== Scope =====\nOnly these paths are included: {', '.join(scope)}\n\n" if scope else "")
             + f"===== Diff =====\n{diff}")
