@@ -557,6 +557,22 @@ PY
 - Memory plan: `scripts/preflight.sh` right before each load (the Qwen GGUF, then shard 1 of the DeepSeek GGUF); NOT READY = stop. The cap stays 8 GiB (`llmctl run` default), `--as` 16 GiB. The Q arm carries the ~3.7 GiB `agent.py` peak seen in v4b and v5 (cause not established, one `MemoryError` turn in each); with `--parallel 4` two such graders could together pass 8 GiB, and a cap kill (exit 137) leaves the session ACTIVE and is reported, not retried. D runs `--parallel 1`, so one grader at a time. DeepSeek holds ~85 GiB of GTT: nothing else loads while it is up, no Chrome, Unreal or builds. Ending DeepSeek (`bye`) is the user's, at a terminal.
 - Needs the user's yes, separately: the Q arms (`invite qwen`) and the DeepSeek invite. Neither is part of this commit. Copying the drifted `tasks_v5.py`, `run.py`, `tasks_v4.py` and the probe result files to `/data/bench` is a separate live-sync step, not in this commit.
 
+Result, control arm Q only (run 2026-10-07/08; preflight READY at 6.3 GiB GTT used; session 7, `invite qwen --ctx 65536 --np 4`; both arms through `llmctl run`, `--gtt-baseline 6.3`; llama.cpp build-vk). The DeepSeek arm has not run, so there is no verdict. Pre-run commit: ba90a8f.
+
+```
+question:  does DeepSeek fix-mode add >= 3 solved tasks over the Qwen control on the 15?   stated in: ba90a8f
+control Q: qwen-fix15-v4-k4e2-vk 1/7 + qwen-fix15-v5-k4e2-vk 0/8 = 1/15 (fresh seed; regrades match)   929,992 tokens, 87 turns, 9,502 s (2.64 h)
+bar:       D >= Q + 3, so D >= 4 of 15. A gap of +2 is a lead. Q = 1, so +3 is reachable.
+verdict:   not scored. DeepSeek has not run.
+```
+
+- Solved: only `v4_20_list_schedule` (episode 1, `pass` after a `max_turns` episode 0). The other 14 failed; no v5 task was solved. Regrade (`agent.py --regrade` with each file's own `--set`): v4 fresh 1 / visible 1, v5 fresh 0 / visible 0, equal to the summaries.
+- Per set: v4 40 turns, 419,317 tokens, 4,096.4 s, `gtt_model_gib` 22.65 (peak 28.95); v5 47 turns, 510,675 tokens, 5,406.4 s, `gtt_model_gib` 22.69 (peak 28.99). 87 of the 120-turn ceiling, 2.64 h against the 3.5 h ceiling. 15 of 87 turns were cut at the 12,288 cap (v4 7, v5 8); 0 deny-list trips.
+- Stops: both episodes ended on a repeat (`repeat_error` or `repeat_code`) for four tasks, which is why they used 2 to 7 turns: `v4_04_rr_priority` (2 turns), `v5_04_gate_trace` (2), `v5_08_pruned_phis` (2), `v5_10_step_snap` (7). Every other unsolved task ran at least one episode to `max_turns` (`v4_03_dst_zone`, `v5_01_table_zone` and `v5_07_branch_influence` in both).
+- Memory: `agent.py` `memory.peak` **3,740 MiB** (v4) and **3,737 MiB** (v5) under the 8,192 MiB cap, the same ~3.7 GiB as the tasks 11-30 and v5 arms, again with `--parallel 4`. Two `MemoryError` turns (`v4_06_phi_blocks` episode 0 turn 0; `v5_06_group_infer` episode 1 turn 2) and six `timeout` turns (v4_04_rr_priority 2, v4_06_phi_blocks 3, v5_07_branch_influence 1). The cause of the peak is still not established, and the cap stays 8 GiB.
+- Reading: the control recovered 1 of 15 from the stored failure with up to 8 turns, against 3 of 5 on the v3 stored failures, so these 15 are harder to repair than the v3 five were. One run, no spread estimate; the 1 is a count under a sampler that flips ~11% under batching, not a rate.
+- Files: `bench/loop/results/qwen-fix15-v4-k4e2-vk.{jsonl,summary.json}` and `qwen-fix15-v5-k4e2-vk.{jsonl,summary.json}`. The fix-from files `fix15-v4-stored.jsonl` and `fix15-v5-stored.jsonl` are filters of the committed result jsonl and stay untracked.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
