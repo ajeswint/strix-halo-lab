@@ -742,6 +742,118 @@ class BaselineGuards(OrchCase):
         self.assertIn("BASELINE", self.runs_text())
 
 
+class SampleCap(OrchCase):
+    """Accord 2026-10-08 (run 4: 72,502 of 149,560 diff chars were samples of 38 excluded files, leaving 519 tokens of
+    margin): the sample appendix is capped in total at 13,500 chars (three files at the 3 x 1,500 per-file maximum);
+    past the cap excluded paths are listed by name without a body, at most 50, then a count; nothing is refused;
+    diff_chars is the length of the whole diff text the model got; excluded still wins over --path."""
+
+    def excluded(self, n):
+        self.write("orchestrator/scope.txt", "*.jsonl\n")
+        for i in range(n):
+            line = f"S{i:03d}-" + "Q" * 1493                       # exactly 1,500 chars, sentinel at the start
+            self.write(f"data/f{i:03d}.jsonl", "\n".join([line, "Q" * 1500, "Q" * 1500, "Q" * 1500]) + "\n")
+        self.write("a.py", "print(1)\n")
+        return self.commit()
+
+    def test_sample_appendix_is_capped_in_total_and_never_refuses(self):
+        head = self.excluded(10)
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)
+        prompt = self.stub.prompt()
+        self.assertLessEqual(prompt.count("Q"), 13_500)
+        for i in (0, 1, 2):
+            self.assertIn(f"S{i:03d}-", prompt)
+        self.assertNotIn("S003-", prompt)
+
+    def test_excluded_paths_past_the_cap_are_listed_by_name_without_a_body(self):
+        head = self.excluded(10)
+        rc, out = self.review()
+        prompt = self.stub.prompt()
+        for i in range(3, 10):
+            self.assertIn(f"data/f{i:03d}.jsonl", prompt)
+            self.assertNotIn(f"S{i:03d}-", prompt)
+        self.assertEqual({p: d for p, d in self.dispositions().items() if p.endswith(".jsonl")},
+                         {f"data/f{i:03d}.jsonl": "excluded" for i in range(10)})
+
+    def test_the_names_only_list_is_bounded(self):
+        head = self.excluded(80)
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        prompt = self.stub.prompt()
+        self.assertIn("data/f052.jsonl", prompt)           # 3 sampled + 50 names = f000..f052
+        self.assertNotIn("data/f053.jsonl", prompt)
+        self.assertIn("27 more", prompt)
+
+    def test_excluded_still_wins_over_path_but_stays_bounded(self):
+        head = self.excluded(10)
+        rc, out = self.review(None, "--path", "a.py", "--path", "README.md", "--path", "CLAUDE.md",
+                              "--path", "orchestrator/scope.txt")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)               # every non-excluded path is in scope: the marker moves
+        self.assertLessEqual(self.stub.prompt().count("Q"), 13_500)
+
+    def test_diff_chars_is_the_whole_diff_text_the_model_got(self):
+        head = self.excluded(10)
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        diff = self.stub.prompt().split("===== Diff =====\n", 1)[1]
+        with sqlite3.connect(self.db) as c:
+            stored = c.execute("SELECT diff_chars FROM runs ORDER BY id DESC LIMIT 1").fetchone()[0]
+        self.assertEqual(stored, len(diff))
+
+
+class MemoryKeys(OrchCase):
+    """Finding #5 (run 4, accepted): memory() ranks verdicts on the files of the diff first. It must be keyed on the
+    paths the model actually sees (sent, plus excluded paths whose sample went in), not on out_of_scope or unsampled
+    excluded ones. 30 newer verdicts on a path the model never sees must not push out the one on a sent path."""
+
+    def seed_verdicts(self, noisy_path):
+        with sqlite3.connect(self.db) as c:
+            repo_id = c.execute("SELECT id FROM repos").fetchone()[0]
+            run_id = c.execute("SELECT id FROM runs").fetchone()[0]
+            rows = [("src/s.py", "REASON-SENTINEL-SENT", "2026-01-01T00:00:00Z")] + \
+                   [(noisy_path, f"noise {i}", "2026-02-01T00:00:00Z") for i in range(30)]
+            for i, (f, reason, at) in enumerate(rows):
+                fid = c.execute("INSERT INTO findings (run_id, repo_id, fingerprint, file, severity, title, detail) "
+                                "VALUES (?, ?, ?, ?, 'low', ?, 'd')", (run_id, repo_id, f"fp{i}", f, f"title {i}")).lastrowid
+                c.execute("INSERT INTO verdicts (finding_id, verdict, reason, decided_by, decided_at) "
+                          "VALUES (?, 'rejected', ?, 'aj', ?)", (fid, reason, at))
+
+    def test_out_of_scope_paths_do_not_crowd_out_verdicts_on_sent_paths(self):
+        self.write("src/s.py", "print(1)\n")
+        self.write("docs/d.md", "doc\n")
+        self.commit("one")
+        self.assertEqual(self.review()[0], 0)
+        self.seed_verdicts("docs/d.md")
+        self.write("src/s.py", "print(2)\n")
+        self.write("docs/d.md", "doc changed\n")
+        self.commit("two")
+        self.stub.requests.clear()
+        rc, out = self.review(None, "--path", "src")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.dispositions()["docs/d.md"], "out_of_scope")
+        self.assertIn("REASON-SENTINEL-SENT", self.stub.prompt())
+
+    def test_unsampled_excluded_paths_do_not_crowd_out_verdicts_on_sent_paths(self):
+        self.write("orchestrator/scope.txt", "*.jsonl\n")
+        self.write("src/s.py", "print(1)\n")
+        self.commit("one")
+        self.assertEqual(self.review()[0], 0)
+        self.seed_verdicts("data/f003.jsonl")
+        for i in range(4):                                   # f000..f002 get a sample, f003 does not
+            line = f"S{i:03d}-" + "Q" * 1493
+            self.write(f"data/f{i:03d}.jsonl", "\n".join([line, "Q" * 1500, "Q" * 1500]) + "\n")
+        self.write("src/s.py", "print(2)\n")
+        self.commit("two")
+        self.stub.requests.clear()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("S003-", self.stub.prompt())
+        self.assertIn("REASON-SENTINEL-SENT", self.stub.prompt())
+
+
 class InsertFailure(OrchCase):
     def test_finding_missing_a_field_marks_the_run_error(self):
         """Point 7: the finding loop is outside the try block; a missing field raises KeyError there, finish() is
