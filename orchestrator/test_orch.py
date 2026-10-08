@@ -5,8 +5,8 @@ The real DB and the real server on :8080 are never touched. Safe to run anytime,
 Usage: python3 orchestrator/test_orch.py
 
 These are the hygiene fixtures written BEFORE the fixes (accord points 2-8, 10). Expected on the unfixed orch.py:
-the control, the at-the-boundary allowance and the two Regression cases pass, everything else fails. Not written yet, pending a design decision: the scoped-review table (point 4, user_version 2) and the
-content of orchestrator/context.md (point 2).
+the control, the at-the-boundary allowance and the two Regression cases pass, everything else fails. Not written yet: the content of orchestrator/context.md (point 2). The review_paths design and the --path CLI were
+approved by the user 2026-10-08.
 """
 import json, os, sqlite3, subprocess, sys, tempfile, threading, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +16,79 @@ ORCH = str(Path(__file__).resolve().parent / "orch.py")
 MAX_TOKENS = 12288
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+V1_DDL = """-- Orchestrator memory, schema v1. Applied by orch.py when PRAGMA user_version < 1.
+-- The sessions table after the marker at the end is idempotent (IF NOT EXISTS): orch.py creates it on a fresh DB,
+-- scripts/llmctl.py creates it on the existing one. user_version stays 1 by design.
+-- One writer process at a time (the review job or a verdict command); WAL lets readers run alongside.
+
+CREATE TABLE repos (
+  id                   INTEGER PRIMARY KEY,
+  path                 TEXT NOT NULL UNIQUE,
+  name                 TEXT NOT NULL,
+  last_reviewed_commit TEXT              -- HEAD of the last successful review; NULL = never reviewed
+);
+
+CREATE TABLE runs (
+  id                INTEGER PRIMARY KEY,
+  repo_id           INTEGER NOT NULL REFERENCES repos(id),
+  kind              TEXT NOT NULL CHECK (kind IN ('review')),
+  model             TEXT,
+  base_commit       TEXT,              -- NULL on a first review (whole tree)
+  head_commit       TEXT,
+  status            TEXT NOT NULL CHECK (status IN ('running', 'ok', 'skipped', 'error')),
+  note              TEXT,              -- why skipped, or the error
+  started_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  finished_at       TEXT,
+  seconds           REAL,
+  diff_chars        INTEGER,
+  truncated         INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens     INTEGER,
+  cached_tokens     INTEGER,
+  completion_tokens INTEGER,
+  raw_response      TEXT               -- model's JSON content, kept for audit
+);
+
+CREATE TABLE findings (
+  id          INTEGER PRIMARY KEY,
+  run_id      INTEGER NOT NULL REFERENCES runs(id),
+  repo_id     INTEGER NOT NULL REFERENCES repos(id),
+  fingerprint TEXT NOT NULL,           -- sha1(file + normalised title); same issue reported twice is stored once
+  file        TEXT NOT NULL,
+  line        INTEGER,                 -- NULL when the model gives 0 / unknown
+  severity    TEXT NOT NULL CHECK (severity IN ('high', 'medium', 'low')),
+  title       TEXT NOT NULL,
+  detail      TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  UNIQUE (repo_id, fingerprint)
+);
+CREATE INDEX findings_file ON findings (repo_id, file);
+
+-- One verdict per finding; re-deciding overwrites. A finding with no row here is open.
+CREATE TABLE verdicts (
+  finding_id INTEGER PRIMARY KEY REFERENCES findings(id),
+  verdict    TEXT NOT NULL CHECK (verdict IN ('accepted', 'rejected')),
+  reason     TEXT NOT NULL,
+  decided_by TEXT NOT NULL,            -- 'aj', 'claude', 'grok', ...
+  decided_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- sessions: scripts/llmctl.py (one model resident at a time). Everything below the marker line is run by llmctl.py
+-- on every connect; keep it idempotent.
+-- llmctl:sessions
+-- pid: llmctl's own pid while INVITE/PREFLIGHT/LOADING/BYE (so a dead controller is detectable), the server's
+-- MainPID while ACTIVE. The unique partial index allows one live session at a time.
+CREATE TABLE IF NOT EXISTS sessions (
+  id       INTEGER PRIMARY KEY,
+  endpoint TEXT NOT NULL,              -- registry name, or 'unowned:<unit>' for a resident model llmctl did not start
+  state    TEXT NOT NULL CHECK (state IN ('INVITE', 'PREFLIGHT', 'LOADING', 'ACTIVE', 'BYE', 'ENDED', 'FAILED', 'ABORTED')),
+  started  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  ended    TEXT,
+  pid      INTEGER,
+  note     TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_live ON sessions ((1))
+  WHERE state IN ('INVITE', 'PREFLIGHT', 'LOADING', 'ACTIVE', 'BYE');
+"""  # schema.sql as of 30c7f6b (user_version 1), frozen for the upgrade test
 GOOD_FINDING = {"file": "a.py", "line": 1, "severity": "low", "title": "t", "detail": "d"}
 
 
@@ -121,9 +194,9 @@ class OrchCase(unittest.TestCase):
         self.git("commit", "-q", "-m", msg)
         return self.git("rev-parse", "HEAD")
 
-    def review(self, api=None):
+    def review(self, api=None, *extra):
         env = {**os.environ, **GIT_ENV, "ORCH_DB": str(self.db), "ORCH_API": api or self.stub.url}
-        r = subprocess.run([sys.executable, ORCH, "review", str(self.repo)], env=env, capture_output=True,
+        r = subprocess.run([sys.executable, ORCH, "review", str(self.repo), *extra], env=env, capture_output=True,
                            text=True, timeout=120)
         return r.returncode, r.stdout + r.stderr
 
@@ -131,6 +204,12 @@ class OrchCase(unittest.TestCase):
         with sqlite3.connect(self.db) as c:
             row = c.execute("SELECT last_reviewed_commit FROM repos").fetchone()
         return row[0] if row else None
+
+    def dispositions(self, run_id=None):
+        """{path: disposition} of the last run (or run_id)."""
+        with sqlite3.connect(self.db) as c:
+            rid = run_id or c.execute("SELECT max(id) FROM runs").fetchone()[0]
+            return dict(c.execute("SELECT path, disposition FROM review_paths WHERE run_id = ?", (rid,)).fetchall())
 
     def runs(self):
         with sqlite3.connect(self.db) as c:
@@ -273,6 +352,106 @@ class Regression(OrchCase):
         with sqlite3.connect(self.db) as c:
             self.assertEqual(c.execute("SELECT count(*) FROM findings").fetchone()[0], 1)
         self.assertEqual([s for s, _ in self.runs()], ["ok", "ok"])
+
+
+class ReviewPaths(OrchCase):
+    """Approved design: table review_paths(run_id, path, disposition) in user_version 2. 'sent' = in the prompt of a
+    run that went out; 'oversize' = over the per-file cap; 'budget' = dropped by the character ceiling or by a token
+    guard refusal; 'out_of_scope' = filtered by --path. The marker moves only when every path is 'sent'."""
+
+    def test_fresh_db_is_version_2_and_records_every_path(self):
+        self.write("a.py", "print(1)\n")
+        self.commit()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.dispositions(), {"README.md": "sent", "CLAUDE.md": "sent", "a.py": "sent"})
+
+    def test_v1_database_is_upgraded_and_keeps_its_rows(self):
+        with sqlite3.connect(self.db) as c:
+            c.executescript(V1_DDL)
+            c.execute("PRAGMA user_version=1")
+            c.execute("INSERT INTO repos (path, name, last_reviewed_commit) VALUES ('/old', 'old', 'abc')")
+            c.execute("INSERT INTO runs (repo_id, kind, status) VALUES (1, 'review', 'ok')")
+            c.execute("INSERT INTO findings (run_id, repo_id, fingerprint, file, severity, title, detail) "
+                      "VALUES (1, 1, 'fp', 'f.py', 'low', 't', 'd')")
+            c.execute("INSERT INTO verdicts (finding_id, verdict, reason, decided_by) VALUES (1, 'rejected', 'r', 'aj')")
+        self.write("a.py", "print(1)\n")
+        head = self.commit()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(c.execute("SELECT count(*) FROM review_paths WHERE run_id = 1").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT last_reviewed_commit FROM repos WHERE id = 1").fetchone()[0], "abc")
+            self.assertEqual(c.execute("SELECT verdict FROM verdicts").fetchone()[0], "rejected")
+        self.assertEqual(self.marker(), head)
+
+    def test_disposition_check_rejects_unknown_values(self):
+        self.write("a.py", "print(1)\n")
+        self.commit()
+        self.assertEqual(self.review()[0], 0)
+        with sqlite3.connect(self.db) as c:
+            with self.assertRaises(sqlite3.IntegrityError):
+                c.execute("INSERT INTO review_paths (run_id, path, disposition) VALUES (1, 'x', 'bogus')")
+
+    def test_oversize_path_is_recorded_and_blocks_the_marker(self):
+        self.write("small.py", big_file("small", 500))
+        self.write("my huge.py", big_file("huge", 40_000))
+        head = self.commit()
+        rc, out = self.review()
+        self.assert_refused(rc, head, "oversize path")
+        d = self.dispositions()
+        self.assertEqual(d["my huge.py"], "oversize")
+        self.assertEqual(d["small.py"], "sent")
+
+    def test_character_ceiling_records_budget_and_refuses(self):
+        for i in range(30):
+            self.write(f"h{i:02d}.py", big_file(f"h{i:02d}", 12_000))
+        head = self.commit()
+        rc, out = self.review()
+        self.assert_refused(rc, head, "diff over the character ceiling")
+        self.assertIn("budget", self.dispositions().values())
+
+    def test_token_guard_refusal_records_budget_not_sent(self):
+        self.write("a.py", "print(1)\n")
+        head = self.commit()
+        self.stub.input_tokens = 60_000
+        rc, out = self.review()
+        self.assert_refused(rc, head, "guard refusal")
+        self.assertEqual(set(self.dispositions().values()), {"budget"})
+
+    def test_scoped_review_runs_but_does_not_move_the_marker(self):
+        self.write("src/a.py", "print(1)\n")
+        self.write("docs/b.md", "doc B-ONLY-SENTINEL\n")
+        head = self.commit()
+        rc, out = self.review(None, "--path", "src")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([s for s, _ in self.runs()], ["ok"])
+        self.assertIn("print(1)", self.stub.prompt())
+        self.assertNotIn("B-ONLY-SENTINEL", self.stub.prompt())
+        self.assertEqual(self.dispositions(), {"src/a.py": "sent", "docs/b.md": "out_of_scope",
+                                               "README.md": "out_of_scope", "CLAUDE.md": "out_of_scope"})
+        self.assertNotEqual(self.marker(), head)
+
+    def test_scoped_review_that_covers_every_path_moves_the_marker(self):
+        self.write("src/a.py", "print(1)\n")
+        head = self.commit()
+        rc, out = self.review(None, "--path", "src", "--path", "README.md", "--path", "CLAUDE.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.marker(), head)
+
+    def test_full_review_after_a_scoped_one_still_covers_everything(self):
+        self.write("src/a.py", "print(1)\n")
+        self.write("docs/b.md", "doc B-ONLY-SENTINEL\n")
+        head = self.commit()
+        self.assertEqual(self.review(None, "--path", "src")[0], 0)
+        self.stub.requests.clear()
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("B-ONLY-SENTINEL", self.stub.prompt())
+        self.assertEqual(self.marker(), head)
 
 
 class InsertFailure(OrchCase):
