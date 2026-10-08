@@ -187,6 +187,8 @@ Every passing v0 solution was textually distinct after whitespace removal. That 
 
 Principle applied: set-and-forget fixes, no polling loops or watchdogs unless a setting is seen to revert.
 
+**Resolved after writing (2026-10-08):** `b883745`, `eda3c30` and `407323c` were pushed (`origin/main` = `407323c`), and `run.py` and `tasks_v6.py` were synced to `/data/bench/loop` (`cmp` identical; `drift-check.sh` then reported only the two root-only files). The rows above are the state at writing.
+
 ---
 
 ## 6. Incidents (they shaped the process)
