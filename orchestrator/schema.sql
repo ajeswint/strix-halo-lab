@@ -56,14 +56,17 @@ CREATE TABLE verdicts (
 );
 
 -- schema:v2 (user_version 2): which paths a review run covered. repos.last_reviewed_commit stays the only cursor and
--- moves only when the run is 'ok' and every path in base..HEAD is 'sent'. 'sent' = in the prompt of a run that went
+-- moves only when the run is 'ok' and every path in base..HEAD is 'sent' or 'excluded'. 'sent' = in the prompt of a run that went
 -- out; 'oversize' = diff over the per-file cap; 'budget' = dropped by the character ceiling, or the whole review
--- refused by the token guard; 'out_of_scope' = filtered out by --path. A run that skipped (no new commits, server
+-- refused by the token guard; 'out_of_scope' = filtered out by --path; 'excluded' = matched a glob of the repo's
+-- orchestrator/scope.txt (not sent, only a 3-line sample; does not block the marker). The marker rule is: run 'ok' and
+-- every path 'sent' or 'excluded'. `orch.py baseline` is the one exception: it sets the marker without a review,
+-- as kind 'review' / status 'skipped' with a JSON note, and writes 'excluded' / 'out_of_scope' for every path. A run that skipped (no new commits, server
 -- down) has no rows; a legacy v1 run has none either. Plain INSERT, never OR IGNORE: the CHECK must raise.
 CREATE TABLE IF NOT EXISTS review_paths (
   run_id      INTEGER NOT NULL REFERENCES runs(id),
   path        TEXT NOT NULL,
-  disposition TEXT NOT NULL CHECK (disposition IN ('sent', 'oversize', 'budget', 'out_of_scope')),
+  disposition TEXT NOT NULL CHECK (disposition IN ('sent', 'oversize', 'budget', 'out_of_scope', 'excluded')),
   PRIMARY KEY (run_id, path)
 );
 

@@ -1,0 +1,7 @@
+# Paths excluded from orch.py review (fnmatch; * also matches /). Read from the committed tree at HEAD.
+# Excluded files are not diffed; the first 3 lines at HEAD are sent so code that reads them is not judged blind.
+# This file is itself reviewed. Data and logs only: add source here only as a deliberate decision.
+bench/loop/results/*
+*.jsonl
+*.log
+*.summary.json

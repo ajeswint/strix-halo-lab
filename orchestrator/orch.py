@@ -4,11 +4,13 @@
 Stdlib only. Talks to llama-server's OpenAI-compatible API.
 
   orch.py review REPO_PATH [--path P ...]   review commits since the last reviewed one (--path: scoped review)
+  orch.py baseline REPO_PATH COMMIT  set the reviewed marker without a review (no model); records what it waived
   orch.py findings [--all] [--repo PATH]
   orch.py verdict ID accepted|rejected REASON [--by NAME]
   orch.py runs [-n N]
 """
-import argparse, hashlib, json, os, re, sqlite3, subprocess, sys, time, urllib.error, urllib.request
+import argparse, fnmatch, getpass, hashlib, json, os, re, sqlite3, subprocess, sys, time, urllib.error, urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 DB = Path(os.environ.get("ORCH_DB", "/data/orch/orch.db"))
@@ -23,6 +25,8 @@ MAX_FILE_DIFF_CHARS = 32_000  # per-file diff cap for source
 MAX_DATA_DIFF_CHARS = 20_000  # per-file diff cap for results/ and .jsonl
 MAX_DIFF_CHARS = 300_000      # loose ceiling, far above what fits the 64k context
 CONTEXT_FILES = ("orchestrator/context.md", "CLAUDE.md")  # the context slot; README.md is not sent whole
+SCOPE_FILE = "orchestrator/scope.txt"  # fnmatch globs (one per line, # comments) of paths excluded from review
+SAMPLE_LINES, SAMPLE_LINE_CHARS = 3, 1500  # head sample of each excluded file that changed
 MEMORY_LIMIT = 30
 REASONING_BUDGET = 6144      # server forces end-of-thinking here (llama.cpp reasoning_budget_tokens)
 MAX_TOKENS = 12288           # reasoning + JSON answer; 8192 with no budget ran out mid-reasoning (run 1)
@@ -73,6 +77,20 @@ def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
 
 
+def load_scope(repo, ref):
+    """(blob id, globs) of SCOPE_FILE as committed at ref; (None, []) if the repo has none."""
+    try:
+        blob = git(repo, "rev-parse", f"{ref}:{SCOPE_FILE}").strip()
+        text = git(repo, "show", f"{ref}:{SCOPE_FILE}")
+    except subprocess.CalledProcessError:
+        return None, []
+    return blob, [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
+
+
+def is_excluded(path, globs):
+    return any(fnmatch.fnmatchcase(path, g) for g in globs)
+
+
 def in_scope(path, scope):
     return not scope or any(path == p or path.startswith(p + "/") for p in scope)
 
@@ -81,12 +99,24 @@ def file_cap(path):
     return MAX_DATA_DIFF_CHARS if path.endswith(".jsonl") or "/results/" in "/" + path else MAX_FILE_DIFF_CHARS
 
 
-def build_diff(repo, base, head, scope=()):
+def changed_files(repo, base, head):
+    return [f for f in git(repo, "diff", "--name-only", "-z", base, head).split("\0") if f]
+
+
+def build_diff(repo, base, head, scope=(), globs=()):
     """Per-file diff of base..head. Returns (text, chars, dispositions): path -> sent | oversize | budget |
-    out_of_scope (the review_paths values). Only 'sent' paths are in the text."""
-    files = [f for f in git(repo, "diff", "--name-only", "-z", base, head).split("\0") if f]
-    parts, disp, total = [], {}, 0
-    for f in files:
+    out_of_scope | excluded (the review_paths values). Only 'sent' paths are diffed in the text; an excluded path that
+    still exists at head contributes its first lines, so code that reads it is not judged blind (run 2)."""
+    parts, samples, disp, total = [], [], {}, 0
+    for f in changed_files(repo, base, head):
+        if is_excluded(f, globs):
+            disp[f] = "excluded"
+            try:
+                lines = git(repo, "show", f"{head}:{f}").splitlines()[:SAMPLE_LINES]
+            except subprocess.CalledProcessError:
+                lines = []
+            samples.append(f"  {f}" + "".join(f"\n    | {l[:SAMPLE_LINE_CHARS]}" for l in lines))
+            continue
         if not in_scope(f, scope):
             disp[f] = "out_of_scope"
             continue
@@ -99,6 +129,9 @@ def build_diff(repo, base, head, scope=()):
             disp[f] = "sent"
             parts.append(d)
             total += len(d)
+    if samples:
+        parts.append("Excluded from review by orchestrator/scope.txt (changed, not diffed; first lines at HEAD):\n"
+                     + "\n".join(samples))
     return "\n".join(parts), total, disp
 
 
@@ -209,7 +242,8 @@ def cmd_review(a):
         finish(db, run_id, "error", f"refused: {note}", diff_chars=chars, truncated=1)
         sys.exit(f"refused: {note}")
 
-    diff, chars, disp = build_diff(repo, base or EMPTY_TREE, head, scope)
+    _, globs = load_scope(repo, head)
+    diff, chars, disp = build_diff(repo, base or EMPTY_TREE, head, scope, globs)
     omitted = sorted(p for p, d in disp.items() if d in ("oversize", "budget"))
     if omitted:
         shown = ", ".join(f"{p} ({disp[p]})" for p in omitted[:10]) + (" ..." if len(omitted) > 10 else "")
@@ -244,7 +278,7 @@ def cmd_review(a):
                                  (run_id, r["id"], fingerprint(f["file"], f["title"]), f["file"], f["line"] or None,
                                   f["severity"], f["title"], f["detail"]))
                 new += cur.rowcount
-            if all(d == "sent" for d in disp.values()):  # a scoped review never moves the marker
+            if all(d in ("sent", "excluded") for d in disp.values()):  # a scoped review never moves the marker
                 db.execute("UPDATE repos SET last_reviewed_commit = ? WHERE id = ?", (head, r["id"]))
     except Exception as e:
         note = f"{type(e).__name__}: {e}"
@@ -259,6 +293,49 @@ def cmd_review(a):
            prompt_tokens=u.get("prompt_tokens"), completion_tokens=u.get("completion_tokens"),
            cached_tokens=(u.get("prompt_tokens_details") or {}).get("cached_tokens"))
     print(f"run {run_id}: {len(found)} findings ({new} new) in {time.time() - t:.0f}s")
+
+
+def is_ancestor(repo, a, b):
+    return subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b],
+                          capture_output=True).returncode == 0
+
+
+def cmd_baseline(a):
+    """Set the reviewed marker to COMMIT without reviewing: the way to start a repo whose empty-tree diff can never be
+    sent in full. No model, no server. The run is kind 'review' (runs.kind has a CHECK), status 'skipped', and its
+    note says what was waived; review_paths holds one row per path of the waived range."""
+    repo = Path(a.repo).resolve()
+    try:
+        commit = git(repo, "rev-parse", "--verify", "--quiet", f"{a.commit}^{{commit}}").strip()
+    except subprocess.CalledProcessError:
+        sys.exit(f"refused: unknown commit {a.commit}")
+    head = git(repo, "rev-parse", "HEAD").strip()
+    if not is_ancestor(repo, commit, head):
+        sys.exit(f"refused: {commit[:12]} is not HEAD or an ancestor of HEAD")
+    db = connect()
+    with db:
+        db.execute("INSERT OR IGNORE INTO repos (path, name) VALUES (?, ?)", (str(repo), repo.name))
+    r = db.execute("SELECT * FROM repos WHERE path = ?", (str(repo),)).fetchone()
+    marker = r["last_reviewed_commit"]
+    if marker and not is_ancestor(repo, marker, commit):
+        sys.exit(f"refused: {commit[:12]} is older than, or unrelated to, the existing marker {marker[:12]}")
+    blob, globs = load_scope(repo, commit)
+    disp = {f: "excluded" if is_excluded(f, globs) else "out_of_scope"
+            for f in changed_files(repo, marker or EMPTY_TREE, commit)}
+    with db:  # run, rows, note and marker commit together or not at all
+        run_id = db.execute("INSERT INTO runs (repo_id, kind, model, base_commit, head_commit, status) "
+                            "VALUES (?, 'review', NULL, ?, ?, 'skipped')", (r["id"], marker, commit)).lastrowid
+        note = {"baseline": True, "commit": commit, "user": getpass.getuser(),
+                "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "scope_blob": blob, "globs": globs,
+                "statement": "no model ran; no findings produced; paths not sent are not reviewed", "run_id": run_id}
+        db.execute("UPDATE runs SET note = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+                   (json.dumps(note), run_id))
+        db.executemany("INSERT INTO review_paths (run_id, path, disposition) VALUES (?, ?, ?)",
+                       [(run_id, path, d) for path, d in disp.items()])
+        db.execute("UPDATE repos SET last_reviewed_commit = ? WHERE id = ?", (commit, r["id"]))
+    n_ex = sum(d == "excluded" for d in disp.values())
+    print(f"baseline run {run_id}: marker {commit[:12]}; {len(disp)} paths recorded "
+          f"({n_ex} excluded, {len(disp) - n_ex} out_of_scope); no model ran")
 
 
 def cmd_findings(a):
@@ -307,6 +384,7 @@ def main():
     x = s.add_parser("review"); x.add_argument("repo")
     x.add_argument("--path", action="append", default=[], help="scoped review: only this file or directory (repeatable)")
     x.set_defaults(fn=cmd_review)
+    x = s.add_parser("baseline"); x.add_argument("repo"); x.add_argument("commit"); x.set_defaults(fn=cmd_baseline)
     x = s.add_parser("findings"); x.add_argument("--all", action="store_true"); x.add_argument("--repo")
     x.add_argument("--detail", type=int, metavar="ID"); x.set_defaults(fn=cmd_findings)
     x = s.add_parser("verdict"); x.add_argument("id", type=int)
