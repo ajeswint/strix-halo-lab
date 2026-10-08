@@ -61,8 +61,9 @@ CREATE TABLE verdicts (
 -- refused by the token guard; 'out_of_scope' = filtered out by --path; 'excluded' = matched a glob of the repo's
 -- orchestrator/scope.txt (not sent, only a 3-line sample; does not block the marker). The marker rule is: run 'ok' and
 -- every path 'sent' or 'excluded'. `orch.py baseline` is the one exception: it sets the marker without a review,
--- as kind 'review' / status 'skipped' with a JSON note, and writes 'excluded' / 'out_of_scope' for every path. A run that skipped (no new commits, server
--- down) has no rows; a legacy v1 run has none either. Plain INSERT, never OR IGNORE: the CHECK must raise.
+-- as kind 'review' / status 'skipped' with a JSON note, and writes 'excluded' / 'out_of_scope' for every path. A run that skipped because there were no new
+-- commits or the server was down has no rows; a skip because nothing in scope changed does (it looked); a legacy v1
+-- run has none. Plain INSERT, never OR IGNORE: the CHECK must raise.
 CREATE TABLE IF NOT EXISTS review_paths (
   run_id      INTEGER NOT NULL REFERENCES runs(id),
   path        TEXT NOT NULL,

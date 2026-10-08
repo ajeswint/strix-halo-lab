@@ -10,6 +10,7 @@ Stdlib only. Talks to llama-server's OpenAI-compatible API.
   orch.py runs [-n N]
 """
 import argparse, fnmatch, getpass, hashlib, json, os, re, sqlite3, subprocess, sys, time, urllib.error, urllib.request
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -248,6 +249,13 @@ def cmd_review(a):
     if omitted:
         shown = ", ".join(f"{p} ({disp[p]})" for p in omitted[:10]) + (" ..." if len(omitted) > 10 else "")
         refuse(f"{len(omitted)} path(s) not sent in full: {shown}", chars)
+    if "sent" not in disp.values():
+        # Nothing in scope changed (only excluded or --path-filtered paths). No model call, and the marker stays: the
+        # next real change is reviewed together with this range, so nothing is claimed that was not looked at.
+        record_paths(db, run_id, disp)
+        counts = ", ".join(f"{n} {d}" for d, n in sorted(Counter(disp.values()).items())) or "no files"
+        finish(db, run_id, "skipped", f"nothing reviewable in range ({counts}); marker unchanged", diff_chars=0)
+        return print(f"skipped: nothing reviewable in range ({counts}); marker unchanged")
     log = git(repo, "log", "--oneline", f"{base}..{head}" if base else head).strip()
     # Order: static -> slow-changing -> per-run, so llama-server's prompt cache reuses the longest prefix.
     user = (f"Repository: {repo.name}\n\n{repo_context(repo)}\n\n"
@@ -317,14 +325,15 @@ def cmd_baseline(a):
         db.execute("INSERT OR IGNORE INTO repos (path, name) VALUES (?, ?)", (str(repo), repo.name))
     r = db.execute("SELECT * FROM repos WHERE path = ?", (str(repo),)).fetchone()
     marker = r["last_reviewed_commit"]
-    if marker and not is_ancestor(repo, marker, commit):
-        sys.exit(f"refused: {commit[:12]} is older than, or unrelated to, the existing marker {marker[:12]}")
+    if marker:  # a second stamp would waive the commits since the first one without a review
+        sys.exit(f"refused: a marker already exists ({marker[:12]}); a baseline only initialises, review instead")
     blob, globs = load_scope(repo, commit)
-    disp = {f: "excluded" if is_excluded(f, globs) else "out_of_scope"
-            for f in changed_files(repo, marker or EMPTY_TREE, commit)}
+    disp = {f: "excluded" if is_excluded(f, globs) else "out_of_scope" for f in changed_files(repo, EMPTY_TREE, commit)}
+    if "out_of_scope" not in disp.values():  # every path excluded (or no files): the baseline would waive nothing real
+        sys.exit("refused: no path is left in scope, a baseline over this tree would be vacuous")
     with db:  # run, rows, note and marker commit together or not at all
         run_id = db.execute("INSERT INTO runs (repo_id, kind, model, base_commit, head_commit, status) "
-                            "VALUES (?, 'review', NULL, ?, ?, 'skipped')", (r["id"], marker, commit)).lastrowid
+                            "VALUES (?, 'review', NULL, NULL, ?, 'skipped')", (r["id"], commit)).lastrowid
         note = {"baseline": True, "commit": commit, "user": getpass.getuser(),
                 "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "scope_blob": blob, "globs": globs,
                 "statement": "no model ran; no findings produced; paths not sent are not reviewed", "run_id": run_id}
@@ -373,7 +382,8 @@ def cmd_runs(a):
     db = connect()
     for r in db.execute("SELECT r.*, p.name FROM runs r JOIN repos p ON p.id = r.repo_id ORDER BY r.id DESC LIMIT ?",
                         (a.n,)):
-        print(f"{r['id']:<4} {r['started_at']} {r['name']:<20} {r['status']:<8} "
+        status = "BASELINE" if r["kind"] == "review" and r["status"] == "skipped" and r["model"] is None else r["status"]
+        print(f"{r['id']:<4} {r['started_at']} {r['name']:<20} {status:<8} "
               f"{(r['seconds'] or 0):>6.0f}s p={r['prompt_tokens']} cached={r['cached_tokens']} "
               f"c={r['completion_tokens']}  {r['note'] or ''}")
 
