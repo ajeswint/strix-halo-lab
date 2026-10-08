@@ -208,6 +208,11 @@ class OrchCase(unittest.TestCase):
                            text=True, timeout=120)
         return r.returncode, r.stdout + r.stderr
 
+    def runs_text(self):
+        env = {**os.environ, "ORCH_DB": str(self.db)}
+        return subprocess.run([sys.executable, ORCH, "runs"], env=env, capture_output=True, text=True,
+                              timeout=60).stdout
+
     def last_run(self):
         with sqlite3.connect(self.db) as c:
             c.row_factory = sqlite3.Row
@@ -633,6 +638,108 @@ class Baseline(OrchCase):
         c1 = self.seed()
         self.assertEqual(self.baseline(c1)[0], 0)
         self.assertNotIn("ok", [s for s, _ in self.runs()])
+
+
+class BaselineGuards(OrchCase):
+    """Accord 2026-10-08 (user + reviewer): a range with nothing in scope skips without a model call and leaves the
+    marker; a baseline is for initialising only (no marker, a non-empty in-scope census, no --path, committed content
+    only); a baseline run is told apart from a skip by model NULL and by `orch.py runs`."""
+
+    def seed(self):
+        self.write("orchestrator/scope.txt", "*.jsonl\n")
+        self.write("a.py", "print(1)\n")
+        return self.commit("seed")
+
+    def test_results_only_range_skips_without_a_model_call(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.write("data/r.jsonl", "{}\n")
+        self.commit("results only")
+        rc, out = self.review()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.stub.chats(), [], "the model was called on sample lines alone")
+        run = self.last_run()
+        self.assertEqual(run["status"], "skipped")
+        self.assertTrue(run["model"], "a skip must keep the model name")
+        self.assertEqual(self.marker(), c1)
+        self.assertEqual(self.dispositions(), {"data/r.jsonl": "excluded"})
+
+    def test_scoped_review_with_no_changed_in_scope_path_skips(self):
+        self.write("src/a.py", "print(1)\n")
+        self.write("docs/b.md", "doc\n")
+        c1 = self.commit("seed")
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.write("docs/b.md", "doc changed\n")
+        self.commit("docs only")
+        rc, out = self.review(None, "--path", "src")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.stub.chats(), [])
+        self.assertEqual(self.last_run()["status"], "skipped")
+        self.assertEqual(self.marker(), c1)
+        self.assertEqual(self.dispositions(), {"docs/b.md": "out_of_scope"})
+
+    def test_oversize_in_scope_path_still_refuses_beside_excluded_ones(self):
+        self.write("orchestrator/scope.txt", "*.jsonl\n")
+        self.write("data/r.jsonl", "{}\n")
+        self.write("huge.py", big_file("huge", 40_000))
+        head = self.commit()
+        rc, out = self.review()
+        self.assert_refused(rc, head, "oversize in-scope path")
+        d = self.dispositions()
+        self.assertEqual((d["huge.py"], d["data/r.jsonl"]), ("oversize", "excluded"))
+
+    def test_baseline_where_the_scope_excludes_everything_refuses(self):
+        self.write("orchestrator/scope.txt", "*\n")
+        c1 = self.commit("seed")
+        rc, out = self.baseline(c1)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("refused", out)
+        self.assertIsNone(self.marker())
+
+    def test_second_baseline_over_an_existing_marker_refuses(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.write("b.py", "print(2)\n")
+        c2 = self.commit("later")
+        rc, out = self.baseline(c2)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("refused", out)
+        self.assertEqual(self.marker(), c1)
+
+    def test_baseline_takes_no_path_option(self):
+        c1 = self.seed()
+        env = {**os.environ, **GIT_ENV, "ORCH_DB": str(self.db), "ORCH_API": "http://127.0.0.1:1"}
+        r = subprocess.run([sys.executable, ORCH, "baseline", str(self.repo), c1, "--path", "x"], env=env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIsNone(self.marker())
+
+    def test_model_null_separates_a_baseline_from_a_server_down_skip(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.assertIsNone(self.last_run()["model"])
+        self.write("b.py", "print(2)\n")
+        self.commit("later")
+        rc, out = self.review(api="http://127.0.0.1:1")
+        self.assertEqual(rc, 0, out)
+        run = self.last_run()
+        self.assertEqual(run["status"], "skipped")
+        self.assertTrue(run["model"])
+
+    def test_dirty_work_tree_changes_nothing_a_baseline_records(self):
+        c1 = self.seed()
+        self.write("orchestrator/scope.txt", "*\n")          # uncommitted edit
+        self.write("untracked.py", "print(9)\n")             # untracked file
+        self.assertEqual(self.baseline(c1)[0], 0)
+        note = json.loads(self.last_run()["note"])
+        self.assertEqual(note["globs"], ["*.jsonl"])
+        self.assertEqual(note["scope_blob"], self.git("rev-parse", f"{c1}:orchestrator/scope.txt"))
+        self.assertEqual(set(self.dispositions()), {"README.md", "CLAUDE.md", "a.py", "orchestrator/scope.txt"})
+
+    def test_runs_command_marks_a_baseline(self):
+        c1 = self.seed()
+        self.assertEqual(self.baseline(c1)[0], 0)
+        self.assertIn("BASELINE", self.runs_text())
 
 
 class InsertFailure(OrchCase):
