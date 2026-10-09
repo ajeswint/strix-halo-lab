@@ -5,3 +5,5 @@ bench/loop/results/*
 *.jsonl
 *.log
 *.summary.json
+# Deliberate waiver (2026-10-08): the v6 task file, 268,867-char diff over 606df2d..8caa843, over the 32,000 per-file cap and too big for the 65,536 slot. One file, not tasks*.py. Not model-reviewed.
+bench/loop/tasks_v6.py
