@@ -293,8 +293,8 @@ def extract(content):
     return blocks[-1] if blocks else None
 
 
-def ask(model, prompt, seed):
-    body = {"model": model, "messages": [{"role": "user", "content": prompt + SUFFIX}],
+def ask(model, prompt, seed, suffix=SUFFIX):
+    body = {"model": model, "messages": [{"role": "user", "content": prompt + suffix}],
             "max_tokens": MAX_TOKENS, "reasoning_budget_tokens": REASONING_BUDGET,
             "reasoning_budget_message": "Reasoning budget reached. Write the code block now.",
             "seed": seed, **SAMPLING}

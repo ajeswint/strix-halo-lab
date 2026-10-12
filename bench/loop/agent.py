@@ -16,6 +16,12 @@ repeats, or when the model resubmits code it already tried. Per task: at most E 
 run one after another, stopping at the first episode whose code passes the tests, or
 when the task's completion tokens reach --task-budget.
 
+Plan mode (symbiosis probe): --make-plans asks the model once per task for an implementation plan, no code
+(PLAN_SUFFIX, seed PLAN_SEED, one retry at PLAN_SEED + 1 if the reply is empty), and writes results/<label>.plans.jsonl.
+--plan-from <plans.jsonl> runs the loop above with that plan appended to the task prompt (so every turn carries it)
+and the plan's completion tokens counted against the task budget. A task whose plan is empty runs with no plan
+appended and is flagged plan_empty.
+
 Fix mode (--fix-from): a second model, or the same one, repairs a failure an earlier run left. Each
 episode starts at turn 0 from the stored failure (the last code block and its test error from that
 run's JSONL) instead of the bare task; the stored code counts as already tried for the repeat-code
@@ -37,6 +43,11 @@ import run  # noqa: E402  grade, extract, ask, load_set, GttPeak, sampling const
 
 FRESH_SEED = 104729
 FIX_SEED_BASE = 2000   # fix-mode sampling seeds; disjoint from run.py's 0-15 and the loop's 1000-1033
+PLAN_SEED = 3000       # plan-mode seed; disjoint from the above
+PLAN_SUFFIX = ("\n\nDo not write code. Write an implementation plan for a colleague who will write the module: "
+               "the algorithm and data structures, the order in which the rules apply, the edge cases the tests are "
+               "likely to probe, and the complexity. Numbered steps, at most 600 words, no code blocks.")
+PLAN_HEADER = "\n\nA colleague wrote this plan. Use it where it is right; the tests decide.\n\n<plan>\n{}\n</plan>"
 SEED_RE = re.compile(r"^random\.seed\(\d+\)$", re.M)
 
 
@@ -109,8 +120,39 @@ def episode(task, ep, k, ask, start=None):
     return rows, "max_turns"
 
 
-def solve_task(task, k, e, budget, ask, start=None):
-    rows, eps, tokens = [], [], 0
+def with_plan(task, plan):
+    """The task with the plan appended to its prompt; unchanged when the plan is empty."""
+    return dict(task, prompt=task["prompt"] + PLAN_HEADER.format(plan.strip())) if plan.strip() else task
+
+
+def make_plans(tasks, plan_ask, path, parallel):
+    """One plan per task; returns the rows written to path."""
+    def one(t):
+        r = plan_ask(t["prompt"], PLAN_SEED)
+        tries = [r]
+        if not r["content"].strip():
+            r = plan_ask(t["prompt"], PLAN_SEED + 1)
+            tries.append(r)
+        return {"task": t["id"], "plan": r["content"], "tries": len(tries),
+                "completion_tokens": sum(x["usage"].get("completion_tokens") or 0 for x in tries),
+                "reasoning_chars": sum(x["reasoning_chars"] for x in tries),
+                "finish": [x["finish"] for x in tries], "gen_s": round(sum(x["gen_s"] for x in tries), 1)}
+    with open(path, "w") as f, cf.ThreadPoolExecutor(parallel) as ex:
+        out = []
+        for row in ex.map(one, tasks):
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+            out.append(row)
+            print(f"{row['task']:24} plan chars={len(row['plan'])} tok={row['completion_tokens']} tries={row['tries']}", flush=True)
+    return out
+
+
+def load_plans(path):
+    return {r["task"]: r for r in map(json.loads, open(path))}
+
+
+def solve_task(task, k, e, budget, ask, start=None, tokens0=0):
+    rows, eps, tokens = [], [], tokens0
     for ep in range(e):
         if tokens >= budget:
             eps.append({"episode": ep, "stop": "task_budget"})
@@ -233,6 +275,27 @@ def selftest():
         except SystemExit:
             passed_refused = True
         check("stored_failure refuses a task whose last coded turn passed", passed_refused)
+    # 7. plan mode: the plan rides in every turn's prompt, its tokens count against the budget, empty plan = no plan
+    pt = with_plan(t, "1. MARKER-PLAN step")
+    rows, s = solve_task(pt, 4, 1, 10**9, fake([bad, t["ref"]]), None, 500)
+    check("plan mode: plan in turn 0 and in the feedback turn",
+          all("MARKER-PLAN" in p and "<plan>" in p for p in fake.prompts) and s["solved"])
+    check("plan mode: plan tokens count toward the task total", s["completion_tokens"] == 500 + 200)
+    rows, s = solve_task(t, 1, 4, 150, fake([bad, bad]), None, 100)
+    check("plan mode: plan tokens can exhaust the budget", s["turns"] == 1 and s["episodes"][-1]["stop"] == "task_budget")
+    check("plan mode: an empty plan leaves the task unchanged", with_plan(t, "  \n") is t)
+    with tempfile.TemporaryDirectory() as d:
+        fp = os.path.join(d, "p.plans.jsonl")
+        replies = iter(["", "the plan"])
+        def plan_fake(prompt, seed):
+            plan_fake.seeds.append(seed)
+            return {"content": next(replies), "reasoning_chars": 5, "finish": "stop",
+                    "usage": {"completion_tokens": 40}, "gen_s": 0.0}
+        plan_fake.seeds = []
+        out = make_plans([t], plan_fake, fp, 1)
+        check("make_plans retries an empty plan once at PLAN_SEED + 1, sums tokens",
+              plan_fake.seeds == [PLAN_SEED, PLAN_SEED + 1] and out[0]["plan"] == "the plan"
+              and out[0]["completion_tokens"] == 80 and load_plans(fp)[t["id"]]["tries"] == 2)
     print(f"selftest {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
 
@@ -253,11 +316,15 @@ def main():
     ap.add_argument("--gtt-baseline", type=float)
     ap.add_argument("--api", default=run.API, help="server base URL (default :8081; llama-deepseek is on :8080)")
     ap.add_argument("--fix-from", metavar="JSONL", help="fix mode: start each episode from the stored failure of each task in this loop jsonl")
+    ap.add_argument("--make-plans", action="store_true", help="plan mode: write results/<label>.plans.jsonl, no loop")
+    ap.add_argument("--plan-from", metavar="PLANS_JSONL", help="plan mode: append each task's plan to its prompt; plan tokens count against the budget")
     a = ap.parse_args()
     run.load_set(a.set)
     run.API = a.api
     if a.fix_from and not a.tasks:
         ap.error("--fix-from needs --tasks")
+    if a.plan_from and a.fix_from:
+        ap.error("--plan-from and --fix-from are separate modes")
     if a.tasks:
         want = a.tasks.split(",")
         unknown = set(want) - {t["id"] for t in run.TASKS}
@@ -274,12 +341,30 @@ def main():
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     base = os.path.join(HERE, "results", a.label)
     ask = server_ask(a.model)
+    if a.make_plans:
+        t0 = time.time()
+        rows = make_plans(run.TASKS, lambda p, seed: run.ask(a.model, p, seed, PLAN_SUFFIX), base + ".plans.jsonl", a.parallel)
+        print(f"plans: {len(rows)} tasks, {sum(not r['plan'].strip() for r in rows)} empty, "
+              f"{sum(r['completion_tokens'] for r in rows)} tokens, {time.time() - t0:.0f} s")
+        return 0
+    plans = load_plans(a.plan_from) if a.plan_from else {}
+    if a.plan_from:
+        missing = {t["id"] for t in run.TASKS} - set(plans)
+        if missing:
+            ap.error(f"{a.plan_from}: no plan for {sorted(missing)}")
     starts = {t["id"]: stored_failure(a.fix_from, t["id"]) for t in run.TASKS} if a.fix_from else {}
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
     tasks_out = []
     with open(base + ".jsonl", "w") as f, cf.ThreadPoolExecutor(a.parallel) as ex:
-        for rows, s in ex.map(lambda t: solve_task(t, a.k, a.e, a.task_budget, ask, starts.get(t["id"])), run.TASKS):
+        def go(t):
+            p = plans.get(t["id"])
+            rows, s = solve_task(with_plan(t, p["plan"]) if p else t, a.k, a.e, a.task_budget, ask, starts.get(t["id"]),
+                                 p["completion_tokens"] if p else 0)
+            if p:
+                s.update(plan_tokens=p["completion_tokens"], plan_empty=not p["plan"].strip())
+            return rows, s
+        for rows, s in ex.map(go, run.TASKS):
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             f.flush()
@@ -291,6 +376,7 @@ def main():
         "label": a.label, "set": a.set, "model": a.model, "tasks": len(run.TASKS), "k": a.k, "e": a.e,
         "task_budget": a.task_budget, "fresh_seed": FRESH_SEED, "sampling": run.SAMPLING,
         "api": a.api, "fix_from": os.path.basename(a.fix_from) if a.fix_from else None,
+        "plan_from": os.path.basename(a.plan_from) if a.plan_from else None,
         "reasoning_budget": run.REASONING_BUDGET, "max_tokens": run.MAX_TOKENS, "parallel": a.parallel,
         "solved": sum(s["solved"] for s in tasks_out), "visible_pass": sum(s["visible_pass"] for s in tasks_out),
         "completion_tokens_total": sum(s["completion_tokens"] for s in tasks_out),
