@@ -72,6 +72,7 @@ PyTorch on gfx1151, bf16 square matmul, warm, TFLOPS: 2048² 34.7, 4096² 36.4, 
 - **PyTorch from AMD's gfx1151 wheels**, not `download.pytorch.org` ROCm 7.x wheels (no gfx1151 kernels; Unsloth's AMD page assumes an MI300 via `HSA_OVERRIDE_GFX_VERSION`).
 - **uv gotcha:** the AMD wheel index also hosts `fsspec` (one version). With uv's default first-index strategy that pins `fsspec` and silently backtracks `datasets`/`trl` to 2020-era releases. Always pass `--index-strategy unsafe-best-match` when installing into the torch env with that index.
 - **DeepSeek V4 Flash is a background reviewer**, not an interactive model (1-3 min per turn cached, 4-6 uncached). Interactive and agentic work uses lighter MoE models (Qwen3.6-35B-A3B).
+- **No cross-model plan -> code pairing (2026-10-13).** Symbiosis probe on v5 (pre-run a756b6e): Laguna-plans/Qwen-codes 3/10, Qwen-plans/Laguna-codes 2/10, vs Qwen with its own plan 3/10 and solo 2/10; bar was +3 over the best of those. Laguna solo 0/10.
 - **Four Claude agents in `.claude/agents/`** (systems, trainer, evaluator, red-team); no Claude reviewer, `orch.py` on DeepSeek is the reviewer. `.claude/hooks/gpu-guard.sh` is a PreToolUse tripwire on systems, trainer and evaluator Bash, armed while GTT used is above 16 GiB (any model resident; DeepSeek also loads outside its service via the bench scripts). Armed, it denies model loads, `systemctl start` of llama-deepseek, and stopping that service. One cutoff means two small models cannot be resident together. loop-v1 ran them one at a time and dropped Laguna, so the rule stays. `orchestrator/orch.py` and `bench/report.py` are allowed through. Not on the parent session. Known gaps stay in the script header.
 - **Procedures as skills** in `.claude/skills/`: preflight, llm-serve, bench, measure, orch-review, live-sync, torch-install, model-add, handoff (user-only). Agents preload theirs via `skills:` frontmatter. Deterministic checks are scripts the skills call (`scripts/preflight.sh`, `scripts/llm-serve.sh`, `scripts/drift-check.sh`), so a gate is an exit code, not prose. Small models are served only via `scripts/llm-serve.sh` (transient user unit `llm-8081`, `127.0.0.1:8081`); its `start` runs preflight and is denied by gpu-guard while armed.
 
@@ -692,6 +693,30 @@ Stated before any GPU work (measure skill steps 1-6; this commit adds the README
 - Cost: v5's Qwen arm took 3.68 h for 10 tasks (126 turns); Laguna's loop-v1 wall was within 15% of Qwen's. 5 loop arms ~18.5 h expected, ceiling 5 x 160 turns x ~106 s = ~23.5 h, plus two plan passes (~20 min each). Stated as ~19 h expected, ~24 h ceiling. The GPU is unavailable for other work throughout.
 - Memory plan: as the v5 arm (`invite` runs `scripts/preflight.sh` right before each load, NOT READY = stop; `run` caps the client at `MemoryMax` 8 GiB, `MemorySwapMax=0`; grader `RLIMIT_AS` 1 GiB per candidate). One model resident at a time, `swap` between sessions; no co-residency.
 - Arm command (ids): `--tasks v5_01_table_zone,v5_02_leap_smear,v5_03_petri_starts,v5_04_gate_trace,v5_05_weak_poly,v5_06_group_infer,v5_07_branch_influence,v5_08_pruned_phis,v5_09_sigfig_sci,v5_10_step_snap`
+
+### Result (2026-10-13): not supported, cross-model plan -> code dropped
+
+```
+question:  does a cross-model plan -> code pairing solve >= 3 more v5 tasks than both the best solo loop and the same-model plan control?   stated in: a756b6e
+baseline:  max(A, E) = E qwen-v5-sym-E-qplan   result: 3/10 (n=10, one run)
+change:    max(C, D) = D qwen-v5-sym-D-lplan   result: 3/10 (n=10, one run)
+delta:     0 tasks   threshold: +3   -> drop
+```
+
+| arm | plan -> code | solved (fresh) | tasks solved | tokens (plan + loop) | turns | wall | GTT peak |
+|---|---|---|---|---|---|---|---|
+| A | - -> Qwen | 2/10 | 02, 03 | 1,316,680 | 119 | 3.46 h | 30.33 GiB |
+| B | - -> Laguna | 0/10 | - | 1,538,608 | 141 | 3.68 h | 29.38 GiB |
+| C | Qwen -> Laguna | 2/10 | 02, 03 | 1,386,870 | 128 | 3.23 h | 29.38 GiB |
+| D | Laguna -> Qwen | 3/10 | 02, 03, 04 | 1,287,339 | 114 | 3.27 h | 29.59 GiB |
+| E | Qwen -> Qwen | 3/10 | 02, 03, 04 | 1,364,357 | 118 | 3.61 h | 30.30 GiB |
+
+- Every regrade agreed (visible = fresh for each solve). Every solve in every arm falls inside E's three tasks (leap_smear, petri_starts, gate_trace). No arm solved v5_01, 05-10.
+- E - A = +1 (planning effect), inside the noise. D = E: a Laguna plan was as useful to Qwen as Qwen's own. C - B = +2: a Qwen plan lifted Laguna from 0 to A's level, also noise-thin, and Laguna as coder never beat Qwen as coder. That matches loop-v1 (Laguna's passes a subset of Qwen's) and the v3 fixer (1/5 vs 3/5). The pasted role split (C) is the weakest plan arm.
+- Plans: Qwen 10/10 non-empty, 64,313 tokens, 650 s; Laguna 10/10 non-empty, 65,205 tokens, 484 s, no retry needed in either.
+- Wall: 17.25 h for the five arms plus ~19 min of plans, inside the ~19 h estimate. Client `memory.peak` 945-947 MiB per arm (cap 8 GiB), regrades 28-71 MiB, no cap hits. Every `bye` returned GTT to 7.1 GiB.
+- Deviations: (1) `--gtt-baseline 7.3` was passed to every arm, but the preflights before sessions 2 and 3 read 7.1 GiB, so `gtt_model_gib` is 0.2 GiB low for B, C, D (peaks are unaffected). (2) Laguna's plan for v5_09 sigfig_sci contains two code blocks, against `PLAN_SUFFIX`; it was used as-is, as the pre-run fixes plans before any run. D did not solve v5_09. (3) Some plans ran past 600 words (Qwen up to 665, Laguna's v5_05 720); the limit is in the prompt, not enforced.
+- Next: none from this probe. The open leads stay as they were (DeepSeek fixer stage, the v6 pipeline pre-run). Laguna's role in the ring is undecided; on this evidence it is not the coder.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

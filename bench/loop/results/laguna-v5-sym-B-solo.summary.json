@@ -1,0 +1,371 @@
+{
+ "label": "laguna-v5-sym-B-solo",
+ "set": "v5",
+ "model": "laguna-xs-2.1",
+ "tasks": 10,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "plan_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 0,
+ "visible_pass": 0,
+ "completion_tokens_total": 1538608,
+ "turns_total": 141,
+ "wall_s": 13264.4,
+ "gtt_peak_gib": 29.38,
+ "per_task": [
+  {
+   "task": "v5_01_table_zone",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 43516
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43148
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 45305
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 31574
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 163543,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_02_leap_smear",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44971
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 30508
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 22078
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43403
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 140960,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_03_petri_starts",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 32639
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19159
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18806
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 32738
+    }
+   ],
+   "turns": 12,
+   "completion_tokens": 103342,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_04_gate_trace",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 20791
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41612
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 34203
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 42742
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 139348,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_05_weak_poly",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 48086
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 47200
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 45185
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46101
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 186572,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_06_group_infer",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 23147
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 34412
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43289
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 35473
+    }
+   ],
+   "turns": 12,
+   "completion_tokens": 136321,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_07_branch_influence",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 47127
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42818
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 34123
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46780
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 170848,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_08_pruned_phis",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 31003
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 44553
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44113
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 44579
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 164248,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_09_sigfig_sci",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42077
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 32372
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44203
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41820
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 160472,
+   "no_fresh": false
+  },
+  {
+   "task": "v5_10_step_snap",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 33991
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 45464
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 49152
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44347
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 172954,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 7.3,
+ "gtt_model_gib": 22.08
+}

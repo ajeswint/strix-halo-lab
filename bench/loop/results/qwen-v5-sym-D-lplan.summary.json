@@ -1,0 +1,358 @@
+{
+ "label": "qwen-v5-sym-D-lplan",
+ "set": "v5",
+ "model": "qwen3.6-35b-a3b",
+ "tasks": 10,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "plan_from": "laguna-v5-plans.plans.jsonl",
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 3,
+ "visible_pass": 3,
+ "completion_tokens_total": 1287339,
+ "turns_total": 114,
+ "wall_s": 11773.2,
+ "gtt_peak_gib": 29.59,
+ "per_task": [
+  {
+   "task": "v5_01_table_zone",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42080
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 31137
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41751
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 44848
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 168728,
+   "no_fresh": false,
+   "plan_tokens": 8912,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_02_leap_smear",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 10068,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 19147,
+   "no_fresh": false,
+   "plan_tokens": 9079,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_03_petri_starts",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9432,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 15317,
+   "no_fresh": false,
+   "plan_tokens": 5885,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_04_gate_trace",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 34587
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46342
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 32643,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 122538,
+   "no_fresh": false,
+   "plan_tokens": 8966,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_05_weak_poly",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44631
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46302
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44679
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 46644
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 185123,
+   "no_fresh": false,
+   "plan_tokens": 2867,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_06_group_infer",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44937
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_code",
+     "tokens": 44150
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 33743
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 21404
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 148369,
+   "no_fresh": false,
+   "plan_tokens": 4135,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_07_branch_influence",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42920
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 20638
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 20582
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 32661
+    }
+   ],
+   "turns": 11,
+   "completion_tokens": 117295,
+   "no_fresh": false,
+   "plan_tokens": 494,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_08_pruned_phis",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 44218
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 44895
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 41619
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 40257
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 177638,
+   "no_fresh": false,
+   "plan_tokens": 6649,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_09_sigfig_sci",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 39532
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 38910
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 28193
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 40855
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 156725,
+   "no_fresh": false,
+   "plan_tokens": 9235,
+   "plan_empty": false
+  },
+  {
+   "task": "v5_10_step_snap",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42830
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 43107
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 42266
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 39273
+    }
+   ],
+   "turns": 16,
+   "completion_tokens": 176459,
+   "no_fresh": false,
+   "plan_tokens": 8983,
+   "plan_empty": false
+  }
+ ],
+ "gtt_baseline_gib": 7.3,
+ "gtt_model_gib": 22.29
+}
