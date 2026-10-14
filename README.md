@@ -756,7 +756,23 @@ Result (run 2026-10-14 at bdd9d67, tree clean apart from the two untracked fix15
 - Miss 2, inject_comment_oblique on B (1), a guardian gap not predicted: the source does not parse (`SyntaxError: unexpected indent`, Laguna code). `nhash` then falls back to a hash of the whitespace-normalized text, comments included, so a comment-only canary gets a new hash and passes as a new row. The documented comment gap (comments are not in nhash) holds only for code that parses.
 - displaced: 68 real rows over the five arms (11-15 per arm) were rejected as duplicates of a canary decided before them. Measure-only canaries do change which real rows reach the slot DBs.
 - Wall: A 185 s, B 124, C 305, D 303, E 423 (4 grader processes).
-- Not changed by this result: the guardian, the mutators, `EXPECT`. What each miss would need (attribute names in `_Norm` or a fuzzer rename limited to non-dunder module-level defs; a comment-stripping fallback for unparseable code; err-text comparison for fail-row canaries) is its own pre-run, waiting for the user's choice.
+- Not changed by this result: the guardian, the mutators, `EXPECT`.
+
+Ruling on the misses (Grok 4.7 adversarial check, 2026-10-14; accepted by the user; Claude checked the code and counts on 10c7abb). This replaces the fix list first written above: Attribute names into `_Norm` or a non-dunder rename, comment-stripping in the fallback, err-text match, all in one replay.
+- rename ×3: guardian gap and fuzzer defect together. `_m_rename` rewrites every `def` name except solve and main, dunders included, and every textual use of each name with `\b...\b`, including attribute sites and string literals. `_Norm` rewrites `FunctionDef.name`, `Name` and `arg`, but not `Attribute.attr` or `Constant`. The gap is narrow. Most source-first renames were already caught as duplicates: B 4 of 4, C 6 of 6, D 5 of 5, E 5 of 6, A 1 of 3. The leaks are the spellings `_Norm` never sees.
+- inject_comment_oblique ×1: guardian gap only. On B, 6 of 7 source-first trials were duplicates, because the AST path drops comments. The one leak is the row that does not parse. There the fallback hashes the whitespace-joined text, comments included.
+- Fail-row canaries match on the **exception type**, not the err text. `run.grade` returns the last 600 characters of stderr, and that text quotes the source line and the `loopgrade-` temp dir. A rename that keeps behaviour still changes the text, so an err-text match would mark it BEHAVIOUR_CHANGED and the guardian would never see it. Instead, compare the exception types of the two grades in the same run. A fail that turns into SyntaxError, NameError or AttributeError is BEHAVIOUR_CHANGED. The same AssertionError stays a trial.
+- **No comment stripping in the unparseable fallback.** A `#`-to-end-of-line strip on text that did not parse cannot tell where strings are. `x = "a # one"` and `x = "a # two"` then hash the same. So do two syntax errors that differ only after a `#` inside an unclosed string. `seen` is global, so the later row is rejected, and a canary shuffled first displaces the real one. Strip-then-reparse is worse: if the strip eats the illegal line, the row is promoted into the AST hashes and can duplicate committed code. The comment leak on unparseable code stays a documented gap.
+- Dropped: limiting rename to non-dunder defs. The mutator still rewrites names inside string literals, and `_Norm` does not normalize those, so that leak remains. It would also hide the broken-`__init__` specimen rather than show the guardian catches it. If `Attribute.attr` goes through `_Norm`'s spelling map, a renamed `__init__` hashes as a duplicate even though `Obj()` no longer calls it. Whoever writes that fix's pre-run has to name this case.
+- Not one replay. The four edits change the specimens and the judge together, so a MET would not say which edit did the work. Seed 0 is also not the same trial once the exception-type rule drops rows, because the shuffle runs over whichever canaries were inserted.
+- Order:
+  1. A **record-only pre-run**. Guardian, mutators, `EXPECT` and sealing are unchanged. Per regraded canary, the replay also records:
+     - the exception types of source and canary;
+     - for rename: which spellings were rewritten (def name, dunder, attribute site, string literal);
+     - for comment canaries: whether the source parses.
+
+     Bar: every 10c7abb per-mutation count reproduces. The new columns say how many trials the exception-type rule would move.
+  2. Then **one fix per pre-run**, each replayed against that baseline: first the exception-type match, then `Attribute.attr` in `_Norm`, each with its own bar and its own result. The order of the later fixes is set at each pre-run.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
