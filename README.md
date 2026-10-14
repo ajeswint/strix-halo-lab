@@ -736,9 +736,27 @@ Stated before any run (2026-10-14, goal 1 chosen by the user: fuzzer only, measu
 - Untested by this bar: `FAMILY_QUOTA` (largest (family, kind) count in any arm is 27 against 50) and the flood rule on the stored turns (largest family share about 25% of a flush against 50%). Only the flood fixture flush reaches the flood line.
 - Suspected, not barred (named now so a hit is not a surprise): rename and reformat change string literals and attribute names when the code contains the renamed name or four spaces inside a string, which changes the normalized hash. That shows up as an order-class leak with the source decided first, so the bar fails on it, and that is what the run would be telling us.
 - Also reported: `displaced` per arm, real-row states (COMMITTED / REJECTED / QUARANTINED counts), refused admits by reason, regrade wall time.
-- Smoke run before this text was fixed (scratch root, first 40 rows of arm E, `FUZZ_PER_MUTATOR` 5, not a result): no crash, 0 verdict mismatches, 122 s; rename and reformat had 1 source-first trial each out of 5, which is why the count is 10.
+- Smoke run before this text was fixed (scratch root, first 40 stored turn rows of arm E, of which 28 coded turns were admitted and 12 had no code block; `FUZZ_PER_MUTATOR` 5; not a result): no crash, 20 of 20 mutators (19 fuzz + flood) matched, 0 verdict mismatches, 122 s; rename and reformat had 1 source-first trial each out of 5, which is why the count is 10.
 - Memory plan: no model is loaded. 4 grader processes at a time, `RLIMIT_AS` 1 GiB each (peak about 0.92 GiB per runaway grader, b9a0948), so about 4 GiB of host RAM on top of the resident Grok Bot and Chrome. No preflight needed (no GPU load). `llama-deepseek` and `llm-8081` stay down.
 - Not done: the LLM guardian (slot 3) and LLM adversary (slot 4), live canaries, retrieval into prompts, any guardian fix. Each is its own step after this result.
+
+Result (run 2026-10-14 at bdd9d67, tree clean apart from the two untracked fix15 files; no model loaded, preflight READY at 7.5 GiB GTT, MemAvailable 108 GiB; roots `/data/ring-fuzz/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-fuzz-v5-<arm>.json|.log`). **Bar NOT MET**: C and D MET, A, B and E NOT MET, 4 failing trials in all, each an order-class canary that leaked with its source decided first, each on a `fail` row.
+
+| arm | coded turns admitted | verdict mismatches | canaries | leaked | real committed / rejected | displaced | flood | bar | miss |
+|---|---|---|---|---|---|---|---|---|---|
+| A | 84 | 0 | 189 | 108 | 70 / 14 | 14 | quarantined, 19/19 fixtures | NOT MET | rename: 3 source-first, 2 leaked |
+| B | 115 | 0 | 190 | 105 | 96 / 19 | 14 | quarantined, 19/19 | NOT MET | inject_comment_oblique: 7 source-first, 1 leaked |
+| C | 109 | 0 | 190 | 100 | 94 / 15 | 11 | quarantined, 19/19 | MET | |
+| D | 92 | 0 | 189 | 104 | 77 / 15 | 14 | quarantined, 19/19 | MET | |
+| E | 75 | 0 | 190 | 106 | 60 / 15 | 15 | quarantined, 19/19 | NOT MET | rename: 6 source-first, 1 leaked |
+
+- Held as predicted on all five arms: every caught-class mutator 0 leaks (inject_plain, inject_comment_plain, oversize and the 4 forged ones); every leak-class mutator leaked (5 deadcode variants, inject_oblique, inject_synonym, inject_split, inject_homoglyph); reformat held in every arm; the flood canary was quarantined by the flood rule with all 19 fixtures committed; no mutator not_run.
+- Regrade: 475 of 475 stored verdicts reproduced (0 mismatches). BEHAVIOUR_CHANGED 2 (rename in A and D, source passed, canary failed), so the regrade caught two renames that broke a passing program.
+- Miss 1, rename on A (2) and E (1), a guardian gap plus a fuzzer defect, the suspicion named above: the mutator's regex renames every `def` name except solve and main, including dunders (`__init__` -> `__init___2x`) and methods called as attributes (`self.fresh_tvar`, `self.get_id`). `_Norm` normalizes `Name`, `arg` and `def` names but not `Attribute` names, so the normalized hash changes. These renamed programs are no longer the same program (a broken `__init__`), but the source already failed, so fail -> fail matches the boolean and the regrade cannot see it. Said directly: on a fail row, the boolean regrade does not prove behaviour is preserved.
+- Miss 2, inject_comment_oblique on B (1), a guardian gap not predicted: the source does not parse (`SyntaxError: unexpected indent`, Laguna code). `nhash` then falls back to a hash of the whitespace-normalized text, comments included, so a comment-only canary gets a new hash and passes as a new row. The documented comment gap (comments are not in nhash) holds only for code that parses.
+- displaced: 68 real rows over the five arms (11-15 per arm) were rejected as duplicates of a canary decided before them. Measure-only canaries do change which real rows reach the slot DBs.
+- Wall: A 185 s, B 124, C 305, D 303, E 423 (4 grader processes).
+- Not changed by this result: the guardian, the mutators, `EXPECT`. What each miss would need (attribute names in `_Norm` or a fuzzer rename limited to non-dunder module-level defs; a comment-stripping fallback for unparseable code; err-text comparison for fail-row canaries) is its own pre-run, waiting for the user's choice.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

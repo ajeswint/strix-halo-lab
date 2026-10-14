@@ -1,0 +1,61 @@
+mutation          injected  caught  leaked  leak%
+deadcode                10       0      10  100.0
+deadcode_def            10       0      10  100.0
+deadcode_import         10       0      10  100.0
+deadcode_pass           10       0      10  100.0
+deadcode_str            10       0      10  100.0
+flip_kind               10      10       0    0.0
+inject_comment_oblique       10       7       3   30.0
+inject_comment_plain       10      10       0    0.0
+inject_homoglyph        10       0      10  100.0
+inject_oblique          10       0      10  100.0
+inject_plain            10      10       0    0.0
+inject_split            10       0      10  100.0
+inject_synonym          10       0      10  100.0
+oversize                10      10       0    0.0
+reformat                10       7       3   30.0
+relabel_family          10      10       0    0.0
+rename                  10       6       4   40.0
+replay_seal             10      10       0    0.0
+stale_grader            10      10       0    0.0
+buffer: COMMITTED 94, REJECTED 15
+{
+ "jsonl": "laguna-v5-sym-C-qplan.jsonl",
+ "set": "v5",
+ "slot": 2,
+ "seed": 0,
+ "grader": "ab262ee",
+ "fuzz_per_mutator": 10,
+ "turns": 128,
+ "wall_s": 305.3,
+ "verdict_mismatch": [],
+ "ingest": {
+  "admitted": 109,
+  "skipped_no_code": 19,
+  "refused": {}
+ },
+ "flush": {
+  "flush": 1,
+  "real": 109,
+  "canaries": 190,
+  "committed": 94,
+  "leaked": 100,
+  "displaced": 11
+ },
+ "flood_flush": {
+  "flush": 1,
+  "real": 19,
+  "canaries": 1,
+  "committed": 19,
+  "leaked": 0,
+  "displaced": 0
+ },
+ "flood_fixture_states": {
+  "COMMITTED": 19
+ },
+ "real_states": {
+  "COMMITTED": 94,
+  "REJECTED": 15
+ }
+}
+bar MET {} not run: []

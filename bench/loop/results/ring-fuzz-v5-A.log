@@ -1,0 +1,61 @@
+mutation          injected  caught  leaked  leak%
+deadcode                10       0      10  100.0
+deadcode_def            10       0      10  100.0
+deadcode_import         10       0      10  100.0
+deadcode_pass           10       0      10  100.0
+deadcode_str            10       0      10  100.0
+flip_kind               10      10       0    0.0
+inject_comment_oblique       10       3       7   70.0
+inject_comment_plain       10      10       0    0.0
+inject_homoglyph        10       0      10  100.0
+inject_oblique          10       0      10  100.0
+inject_plain            10      10       0    0.0
+inject_split            10       0      10  100.0
+inject_synonym          10       0      10  100.0
+oversize                10      10       0    0.0
+reformat                10       6       4   40.0
+relabel_family          10      10       0    0.0
+rename                   9       2       7   77.8
+replay_seal             10      10       0    0.0
+stale_grader            10      10       0    0.0
+buffer: COMMITTED 70, REJECTED 14
+{
+ "jsonl": "qwen-v5-sym-A-solo.jsonl",
+ "set": "v5",
+ "slot": 1,
+ "seed": 0,
+ "grader": "ab262ee",
+ "fuzz_per_mutator": 10,
+ "turns": 119,
+ "wall_s": 184.9,
+ "verdict_mismatch": [],
+ "ingest": {
+  "admitted": 84,
+  "skipped_no_code": 35,
+  "refused": {}
+ },
+ "flush": {
+  "flush": 1,
+  "real": 84,
+  "canaries": 189,
+  "committed": 70,
+  "leaked": 108,
+  "displaced": 14
+ },
+ "flood_flush": {
+  "flush": 1,
+  "real": 19,
+  "canaries": 1,
+  "committed": 19,
+  "leaked": 0,
+  "displaced": 0
+ },
+ "flood_fixture_states": {
+  "COMMITTED": 19
+ },
+ "real_states": {
+  "COMMITTED": 70,
+  "REJECTED": 14
+ }
+}
+bar NOT MET {'rename': {'n': 9, 'leak': 7, 'behaviour_changed': 1, 'src_first': 3, 'src_first_dup': 1, 'src_first_leak': 2, 'flood_caught': 0, 'reasons': {'rules ok': 7, 'duplicate (exact or normalized)': 2}, 'expect': 'order', 'ok': False}} not run: []

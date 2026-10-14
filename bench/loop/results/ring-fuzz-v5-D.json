@@ -1,0 +1,331 @@
+{
+ "jsonl": "qwen-v5-sym-D-lplan.jsonl",
+ "set": "v5",
+ "slot": 1,
+ "seed": 0,
+ "grader": "ab262ee",
+ "fuzz_per_mutator": 10,
+ "turns": 114,
+ "wall_s": 302.8,
+ "verdict_mismatch": [],
+ "ingest": {
+  "admitted": 92,
+  "skipped_no_code": 22,
+  "refused": {}
+ },
+ "flush": {
+  "flush": 1,
+  "real": 92,
+  "canaries": 189,
+  "committed": 77,
+  "leaked": 104,
+  "displaced": 14
+ },
+ "flood_flush": {
+  "flush": 1,
+  "real": 19,
+  "canaries": 1,
+  "committed": 19,
+  "leaked": 0,
+  "displaced": 0
+ },
+ "flood_fixture_states": {
+  "COMMITTED": 19
+ },
+ "real_states": {
+  "COMMITTED": 77,
+  "REJECTED": 15
+ },
+ "bar": {
+  "per_mutation": {
+   "rename": {
+    "n": 9,
+    "leak": 4,
+    "behaviour_changed": 1,
+    "src_first": 5,
+    "src_first_dup": 5,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 4,
+     "duplicate (exact or normalized)": 5
+    },
+    "expect": "order",
+    "ok": true
+   },
+   "deadcode_import": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 5,
+    "src_first_dup": 0,
+    "src_first_leak": 5,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "inject_plain": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 4,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "instruction-like text": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "inject_synonym": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 6,
+    "src_first_dup": 0,
+    "src_first_leak": 6,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "oversize": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 7,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "over MAX_CONTENT": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "flip_kind": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 5,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "seal mismatch": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "replay_seal": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 3,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "seal mismatch": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "inject_comment_oblique": {
+    "n": 10,
+    "leak": 5,
+    "behaviour_changed": 0,
+    "src_first": 4,
+    "src_first_dup": 4,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 5,
+     "duplicate (exact or normalized)": 5
+    },
+    "expect": "order",
+    "ok": true
+   },
+   "inject_comment_plain": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 7,
+    "src_first_dup": 5,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "duplicate (exact or normalized)": 7,
+     "instruction-like text": 3
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "inject_split": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 5,
+    "src_first_dup": 0,
+    "src_first_leak": 5,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "inject_oblique": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 3,
+    "src_first_dup": 0,
+    "src_first_leak": 3,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "inject_homoglyph": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 5,
+    "src_first_dup": 0,
+    "src_first_leak": 5,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "deadcode_def": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 8,
+    "src_first_dup": 0,
+    "src_first_leak": 8,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "deadcode": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 4,
+    "src_first_dup": 0,
+    "src_first_leak": 4,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "deadcode_str": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 3,
+    "src_first_dup": 0,
+    "src_first_leak": 3,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "relabel_family": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 7,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "seal mismatch": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "deadcode_pass": {
+    "n": 10,
+    "leak": 10,
+    "behaviour_changed": 0,
+    "src_first": 3,
+    "src_first_dup": 0,
+    "src_first_leak": 3,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 10
+    },
+    "expect": "leak",
+    "ok": true
+   },
+   "reformat": {
+    "n": 10,
+    "leak": 5,
+    "behaviour_changed": 0,
+    "src_first": 5,
+    "src_first_dup": 5,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "rules ok": 5,
+     "duplicate (exact or normalized)": 5
+    },
+    "expect": "order",
+    "ok": true
+   },
+   "stale_grader": {
+    "n": 10,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 7,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 0,
+    "reasons": {
+     "stale grader_ver": 10
+    },
+    "expect": "caught",
+    "ok": true
+   },
+   "flood": {
+    "n": 1,
+    "leak": 0,
+    "behaviour_changed": 0,
+    "src_first": 1,
+    "src_first_dup": 0,
+    "src_first_leak": 0,
+    "flood_caught": 1,
+    "reasons": {
+     "family flood in this flush": 1
+    },
+    "expect": "flood",
+    "ok": true,
+    "fixtures": 19,
+    "fixtures_committed": true
+   }
+  },
+  "not_run": [],
+  "met": true
+ }
+}
