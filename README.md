@@ -789,6 +789,44 @@ Stated before any run (2026-10-14, step 1 of the ruling above; Grok 4.7 set the 
 - Next, and not this run: the exception-type pre-run is scored at seed 0, with these records as its prediction. Grok's ruling says a matching-type trial keeps the guardian result it has in the record. Claude's objection: dropping rows moves the shuffle, so a canary's source-first order can flip. The proposed fix is to keep dropped canaries in the shuffle and drop them at decide time, so the order stays fixed. That is waiting for Grok's accord, and it is part of that pre-run, not this one.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes, `RLIMIT_AS` 1 GiB each. `llama-deepseek` and `llm-8081` stay down. Fresh roots under `/data/ring-record/` (absent now). The 10c7abb roots and results are untouched.
 
+Result (run 2026-10-14 at 309eb71, tree clean apart from the two untracked fix15 files; no model loaded, MemAvailable 110 GiB; roots `/data/ring-record/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-record-v5-<arm>.json|.log`). **Record bar MET on all five arms** (exit 0 each):
+1. The baseline diff is empty on every arm, so every 10c7abb count reproduced.
+2. 150 regraded records per arm, 0 unfilled.
+3. Exactly 6 named rows, all filled.
+
+Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7abb, because timeouts dominate.
+
+| arm | named row | src_exc -> can_exc | src parses | spellings |
+|---|---|---|---|---|
+| A | rename BEHAVIOUR_CHANGED | pass -> NameError | yes | def, name |
+| A | rename source-first leak | AttributeError -> NameError | yes | attribute, def, dunder, name |
+| A | rename source-first leak | AssertionError -> TypeError | yes | attribute, def, dunder, name |
+| B | inject_comment_oblique source-first leak | IndentationError -> IndentationError | no | |
+| D | rename BEHAVIOUR_CHANGED | pass -> NameError | yes | def |
+| E | rename source-first leak | ValueError -> NameError | yes | attribute, def, dunder, name |
+
+- **rename is not behaviour-preserving on v5.** Of 48 rename trials (all on fail rows), the exception type differs in 46. Of the 48 canaries, 45 fail with `NameError` on a name the task's tests call. The cause: `_m_rename` exempts only `solve` and `main`, but v5 tasks are tested through task-specific entry points (`branch_influence`, `format_sigfigs`, ...). The mutator renames the API itself, so the regrade sees fail -> fail and keeps the trial. Every one of the 3 rename leaks is in this set. Under the exception-type rule, 46 of 48 trials become BEHAVIOUR_CHANGED, which leaves 2 rename trials over five arms, so rename is likely not_run on most arms. The trial pairs that differ, as src -> canary:
+  - AssertionError -> NameError: 30
+  - ValueError -> NameError: 4
+  - TypeError -> NameError: 3
+  - timeout -> NameError: 3
+  - MemoryError -> NameError: 2
+  - AttributeError -> NameError: 1
+  - unknown -> NameError: 1
+  - AssertionError -> TypeError: 1
+- Spellings over the 48 rename trials:
+  - def + name: 32
+  - def: 9
+  - attribute + def + dunder + name: 3
+  - def + dunder + name: 2
+  - def + dunder + name + string: 1
+  - unparsed: 1
+
+  All 3 leaks rewrote attribute and dunder spellings. The 41 that rewrote only def and name spellings were all caught as duplicates.
+- **inject_comment_oblique on B**: the source does not parse (IndentationError on both sides). The type matches, so the exception-type rule keeps this trial and the leak stands. This is the guardian gap the ruling names, now confirmed.
+- Every other inside mutator: 0 trials with a differing type (50 trials each, 47-50 of them on fail rows). Records with an `unknown` type: 11 of 750 over 15 mutators, never more than 2 per mutator.
+- What this means for step 2. The exception-type rule mainly removes rename trials. A rename fixed to keep each task's tested entry names would have to be its own pre-run before `Attribute.attr` in `_Norm` can be tested on rename at all. Order and bars are for the next pre-run, waiting for the user's choice and Grok's accord on the fixed shuffle.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
