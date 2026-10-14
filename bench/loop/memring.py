@@ -52,6 +52,13 @@ NameError in the canary's grade reports (name_error). keep_names (replay --keep-
 `name(` in the first Write sentence), which rename leaves alone along with solve and main, so a canary keeps the
 API the tests call. With keep_names set, a source with nothing left to rename makes no rename canary (it would be
 the source plus a newline, a duplicate by both hashes); Ring.rename_skipped counts them.
+exc_rule (replay --exc-rule): a regraded canary whose boolean matches but whose exception type differs from the
+source's (unknown differs from every type, unknown included) is BEHAVIOUR_CHANGED. It stays in the buffer and the
+shuffled list at its place, _rules still decides it, a commit still updates seen and the flush counts (so a real row
+rejected as its duplicate is still displaced), but it never reaches a slot DB, is not leaked, and its break outcome
+is BEHAVIOUR_CHANGED, which bar() leaves out of n, leak and src_first. A boolean mismatch is still skipped before
+insert. replay --predict J holds every record to J's record of the same seed: same plan and grades, the predicted
+drops BEHAVIOUR_CHANGED with J's outcome as rules_outcome, every other record J's outcome, reason and src_after.
 replay --baseline J checks that every count
 of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
 
@@ -227,12 +234,14 @@ def nhash(content):
 
 
 class Ring:
-    def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None, keep_names=None):
+    def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None, keep_names=None,
+                 exc_rule=False):
         """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries.
         keep_names: {task_id: names rename must not touch} (Record); default none beyond solve and main."""
         self.root, self.live_canaries, self.rng, self.fuzz = root, live_canaries, random.Random(seed), fuzz
         self.regrade, self.keep_names, self.rename_skipped = regrade, keep_names or {}, 0
         self.records, self._rec = [], {}   # Record (docstring); _rec: canary buffer id -> its record
+        self.exc_rule, self._bc_kept = exc_rule, set()   # exc_rule (docstring); canary ids kept in place as BEHAVIOUR_CHANGED
         os.makedirs(root, exist_ok=True)
         kp = os.path.join(root, "seal.key")
         if not os.path.exists(kp):
@@ -434,6 +443,9 @@ class Ring:
                 self.buf.execute("INSERT INTO breaks (flush, mutation, outcome, reason) VALUES (?,?,?,?)",
                                  (flush_id, name, "BEHAVIOUR_CHANGED", f"source passed={not passed}, canary passed={passed}"))
                 continue
+            r_ = c["_rec"]
+            if self.exc_rule and (r_["src_exc"] != r_["can_exc"] or r_["src_exc"] == "unknown"):
+                c["bc_kept"] = True   # stays in place (docstring: exc_rule); the flush logs it
             v = {"passed": True, "err": ""} if passed else {"passed": False, "err": err}   # the canary's own grade
             c["verdict_json"] = json.dumps(v, sort_keys=True)
             c["seal"] = self._mac(c["slot"], c["kind"], c["task_id"], c["family"], c["hash"], v, c["grader_ver"])
@@ -446,6 +458,8 @@ class Ring:
                 (c["slot"], c["kind"], c["task_id"], c["family"], c["hash"], c["nhash"], c["content"],
                  c["verdict_json"], c["grader_ver"], c["seal"], name, src["id"])).lastrowid
             self._rec[cid] = c["_rec"]
+            if c.get("bc_kept"):
+                self._bc_kept.add(cid)
             made += 1
         return made
 
@@ -508,13 +522,16 @@ class Ring:
                 v = self._llm_veto(r)
                 if v:
                     state, why = "QUARANTINED", v
+            kept = r["id"] in self._bc_kept
             if state == "COMMITTED":
                 seen.setdefault(r["hash"], r["canary"])
                 seen.setdefault(r["nhash"], r["canary"])
-                if r["canary"]:
+                if kept:
+                    state = "BEHAVIOUR_CHANGED"
+                elif r["canary"]:
                     leaked += 1
                     state = "LEAKED"
-                if not r["canary"] or self.live_canaries:
+                if not r["canary"] or (self.live_canaries and not kept):
                     self.slots[r["slot"]].execute(
                         "INSERT OR IGNORE INTO rows (kind, task_id, family, hash, nhash, content, verdict_json, grader_ver, canary, buffer_id)"
                         " VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -522,11 +539,14 @@ class Ring:
                          r["grader_ver"], r["canary"], r["id"]))
                     committed += 1
             if r["canary"]:
-                out, after = "LEAK" if state == "LEAKED" else "CAUGHT", int(pos.get(r["src_id"], -1) > pos[r["id"]])
+                out = "LEAK" if state in ("LEAKED", "BEHAVIOUR_CHANGED") else "CAUGHT"
+                after = int(pos.get(r["src_id"], -1) > pos[r["id"]])
                 self.buf.execute("INSERT INTO breaks (flush, mutation, buffer_id, outcome, reason, src_after) VALUES (?,?,?,?,?,?)",
-                                 (fid, r["mutation"], r["id"], out, why, after))
+                                 (fid, r["mutation"], r["id"], "BEHAVIOUR_CHANGED" if kept else out, why, after))
                 if r["id"] in self._rec:
-                    self._rec[r["id"]].update(outcome=out, reason=why, src_after=after)
+                    self._rec[r["id"]].update(outcome="BEHAVIOUR_CHANGED" if kept else out, reason=why, src_after=after)
+                    if kept:
+                        self._rec[r["id"]]["rules_outcome"] = out
             self.buf.execute("UPDATE buffer SET state = ?, reason = ?, flush = ? WHERE id = ?", (state, why, fid, r["id"]))
         real = sum(1 for r in rows if not r["canary"])
         self.buf.execute("UPDATE flushes SET real = ?, canaries = ?, committed = ?, leaked = ?, displaced = ? WHERE id = ?",
@@ -654,14 +674,14 @@ def replay(a):
                              else (False, "no code block"), turns))
     mism = [(t["task"], t["episode"], t["turn"]) for t, (p, _) in zip(turns, verdicts) if t["code"] is not None and p != t["passed"]]
     keep = {t["id"]: prompt_names(t["prompt"]) for t in run.TASKS} if a.keep_prompt_names else None
-    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
+    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, exc_rule=a.exc_rule)
     ing = ring.ingest(a.slot, fam.__getitem__, turns, verdicts)
     fl = ring.flush()
     b = ring.bar({m: e for m, e in EXPECT.items() if m != "flood"})
     # flood: own root and flush, so its fixtures cannot quarantine the stored turns. FLOOD_TOTAL // 2 fixtures in
     # FLOOD_FAMILY commit (count == the max(2, share x total) line), the rest in FLOOD_OTHER, then one flood canary of
     # FLOOD_FAMILY decided last (id order): the first row over the line, predicted QUARANTINED by the flood rule.
-    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
+    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, exc_rule=a.exc_rule)
     nx = int(flood_line(FLOOD_TOTAL))
     picked, seen_n = [], set()
     for t, v in zip(turns, verdicts):
@@ -691,7 +711,32 @@ def replay(a):
            "fuzz_per_mutator": FUZZ_PER_MUTATOR, "turns": len(turns), "wall_s": round(time.time() - t0, 1),
            "verdict_mismatch": mism, "ingest": ing, "flush": fl, "flood_flush": ffl, "flood_fixture_states": fx_states,
            "real_states": {r[0]: r[1] for r in ring.buf.execute("SELECT state, COUNT(*) FROM buffer WHERE canary = 0 GROUP BY state")},
-           "bar": b, "records": ring.records, "keep_prompt_names": bool(a.keep_prompt_names)}
+           "bar": b, "records": ring.records, "keep_prompt_names": bool(a.keep_prompt_names), "exc_rule": bool(a.exc_rule)}
+    if a.predict:   # exc_rule scored against the record of the same seed (docstring: exc_rule)
+        ref = json.load(open(a.predict))["records"]
+        new, bad, drops = ring.records, [], 0
+        for i, (o, n) in enumerate(zip(ref, new)):
+            why = []
+            if (o["mutation"], o["src_id"]) != (n["mutation"], n["src_id"]):
+                why.append("plan")
+            if ("src_exc" in o) != ("src_exc" in n) or (o.get("src_exc"), o.get("can_exc")) != (n.get("src_exc"), n.get("can_exc")):
+                why.append("grade")
+            drop = "src_exc" in o and o.get("outcome") != "BEHAVIOUR_CHANGED" and (o["src_exc"] != o["can_exc"] or o["src_exc"] == "unknown")
+            drops += drop
+            if drop and (n.get("outcome") != "BEHAVIOUR_CHANGED" or n.get("rules_outcome") != o.get("outcome")):
+                why.append("drop outcome")
+            if not drop and n.get("outcome") != o.get("outcome"):
+                why.append("outcome")
+            if (n.get("reason"), n.get("src_after")) != (o.get("reason"), o.get("src_after")):
+                why.append("reason/src_after")
+            if why:
+                bad.append({"i": i, "mutation": o["mutation"], "why": why})
+        if len(ref) != len(new):
+            bad.append({"i": None, "why": [f"records {len(ref)} vs {len(new)}"]})
+        rn = b["per_mutation"].get("rename", {})
+        res["predict_bar"] = {"reference": os.path.basename(a.predict), "records": len(new), "predicted_drops": drops,
+                              "mismatches": bad, "rename_src_first": rn.get("src_first", 0),
+                              "rename_src_first_leak": rn.get("src_first_leak", 0), "met": not bad}
     if a.keep_prompt_names:   # fuzzer-fix bar: no rename canary breaks a prompt-named entry; rename still scored
         rn = [r for r in ring.records if r["mutation"] == "rename" and "src_exc" in r]
         broke = [r for r in rn if r["name_error"] in keep.get(r["task_id"], set())]
@@ -729,6 +774,10 @@ def replay(a):
             json.dump(res, f, indent=1)
     if a.keep_prompt_names:
         print("rename bar", "MET" if res["rename_bar"]["met"] else "NOT MET", json.dumps(res["rename_bar"]))
+    if a.predict:
+        print("predict bar", "MET" if res["predict_bar"]["met"] else "NOT MET", json.dumps(res["predict_bar"])[:2000])
+    if a.predict:
+        return 0 if res["predict_bar"]["met"] else 1
     if a.baseline:
         return 0 if res["record_bar"]["met"] else 1
     if a.keep_prompt_names:
@@ -865,6 +914,30 @@ def selftest():
         check("keep_names: rename keeps the entry name", "def api(" in out and "helper_0x(xs)" in out and "def helper(" not in out)
         check("keep_names: nothing left to rename makes no canary",
               ring._m_rename({"content": "def api(xs):\n    return 1\n", "task_id": "t"}) is None and ring.rename_skipped == 1)
+    def exc_ring(d, rule):   # 6 fail rows; every regraded canary raises a different type than its source
+        ring = Ring(d, fuzz=True, seed=5, exc_rule=rule, regrade=lambda items: [(False, "TypeError: x")] * len(items))
+        v = {"passed": False, "err": "AssertionError"}
+        for i in range(6):
+            c = f"def solve(xs):\n    return helper(xs) + {i}\ndef helper(xs):\n    return len(xs)\n"
+            ring.admit(1, "fail", f"t{i}", "fam", c, v, ring.seal(1, "fail", f"t{i}", "fam", c, v))
+        return ring, ring.flush()
+    with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
+        r0, f0 = exc_ring(d1, False)
+        r1, f1 = exc_ring(d2, True)
+        same = all((o["mutation"], o["src_id"], o.get("reason"), o.get("src_after")) == (n["mutation"], n["src_id"], n.get("reason"), n.get("src_after"))
+                   for o, n in zip(r0.records, r1.records)) and len(r0.records) == len(r1.records)
+        reg = [n for n in r1.records if "src_exc" in n]
+        check("exc_rule: same plan, order and reasons; regraded canaries BEHAVIOUR_CHANGED with the old outcome kept",
+              same and reg and all(n["outcome"] == "BEHAVIOUR_CHANGED" and n["rules_outcome"] == o["outcome"]
+                                   for o, n in zip(r0.records, r1.records) if "src_exc" in n))
+        check("exc_rule: displaced and real states unchanged; kept canaries never reach a slot DB",
+              f0["displaced"] == f1["displaced"] and f1["leaked"] < f0["leaked"]
+              and r1.slots[1].execute("SELECT COUNT(*) FROM rows WHERE canary = 1").fetchone()[0] == 0
+              and [tuple(x) for x in r0.buf.execute("SELECT id, state FROM buffer WHERE canary = 0 ORDER BY id")]
+              == [tuple(x) for x in r1.buf.execute("SELECT id, state FROM buffer WHERE canary = 0 ORDER BY id")])
+        b1 = r1.bar({m: e for m, e in EXPECT.items() if m != "flood"})
+        check("exc_rule: bar() leaves BEHAVIOUR_CHANGED out of n", all(
+            b1["per_mutation"].get(m, {"n": 0})["n"] == 0 for m in r1._mutations() if r1._mutations()[m][1]))
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -890,6 +963,8 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--keep-prompt-names", action="store_true",
                     help="rename leaves the task prompt's backticked name( entry points alone (fuzzer fix)")
+    ap.add_argument("--exc-rule", action="store_true", help="exception-type mismatch is BEHAVIOUR_CHANGED, kept in place")
+    ap.add_argument("--predict", help="replay JSON of the same seed without --exc-rule: exit 0 only if every record matches")
     ap.add_argument("--baseline", help="replay JSON at the same seed: exit 0 only if every count reproduces (Record)")
     a = ap.parse_args()
     if a.selftest:

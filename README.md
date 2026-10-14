@@ -868,6 +868,34 @@ Result (run 2026-10-14 at 63917fe, tree clean apart from the two untracked fix15
 - displaced: A 15, B 12, C 13, D 13, E 14.
 - Next: the exception-type pre-run, scored at seed 0 against this run's records, with the fixed shuffle (Grok accord). Then `Attribute.attr` in `_Norm`. Each waits for the user's go.
 
+## memring exception-type rule, fixed shuffle, scored against the fuzzer-fix record (pre-run)
+
+Stated before any run (2026-10-14; the user: "good to go on the exception-type pre-run"). Design: Grok 4.7's accord on the fixed shuffle and on 3 implementation points. Written by Claude. This is a judge change, measure-only, and not a keep/drop for memory. The question: with the API kept, does an exception-type match drop exactly the canaries whose type changed, and leave every other decision where `ring-rename-v5-<arm>.json` put it?
+- Change (this commit, `bench/loop/memring.py`): `Ring(exc_rule=)`, set by `replay --exc-rule`, off by default. A regraded canary whose boolean matches but whose exception type differs from its source's becomes BEHAVIOUR_CHANGED. `unknown` differs from every type, including another `unknown`. Such a canary:
+  - stays in the buffer and in the shuffled list at its place, so `len(rows)` does not change;
+  - is still decided by `_rules`. A commit still updates `seen` and the flush counts, so a real row rejected as its duplicate is still displaced, with the "(of a canary)" reason.
+  - never reaches a slot DB, even with `--live-canaries`, and is not counted as leaked;
+  - logs break outcome BEHAVIOUR_CHANGED, which `bar()` leaves out of n, leak and src_first. Its record keeps the outcome `_rules` gave it as `rules_outcome`.
+
+  A boolean mismatch is still skipped before insert, as in the reference run (fc463df has 0). `replay --predict J` aligns records by plan index, and the exit code follows the result. It holds every record to J on all of these:
+  - the same mutation and source, and the same `src_exc` and `can_exc` ("grade");
+  - each predicted drop is BEHAVIOUR_CHANGED with `rules_outcome` equal to J's outcome;
+  - every other record keeps J's outcome;
+  - every record keeps J's reason and `src_after`.
+  - Selftests: `memring.py --selftest` (3 new checks), `agent.py --selftest --set v5` and `run.py --selftest` pass. The new checks compare the same seed with and without the rule: same plan, order and reasons; drops keep the old outcome as `rules_outcome`; displaced and the real rows' states are unchanged; no canary in a slot DB; `bar()` n is 0 when every inside canary is dropped.
+  - Smoke on the first 20 rows of arm E against the amended fuzzer-fix smoke (scratch, not a result): 189 records, 2 predicted drops, 0 mismatches. Without `--exc-rule`, the records are identical to the fuzzer-fix smoke.
+- Command, per arm: `python3 bench/loop/memring.py replay --root /data/ring-exc/A --set v5 --slot 1 --seed 0 --keep-prompt-names --exc-rule --predict bench/loop/results/ring-rename-v5-A.json --out bench/loop/results/ring-exc-v5-A.json bench/loop/results/qwen-v5-sym-A-solo.jsonl`. B-E are the same with their root, slot, reference, out and file.
+- Bar, per arm: the prediction bar, 0 mismatches. The prediction is computed mechanically from `ring-rename-v5-<arm>.json` before the run.
+  - Predicted drops: A 12, B 1, C 0, D 2, E 2, which is 17 in all.
+    - rename 7: A 4, B 1, D 1, E 1.
+    - unknown/unknown pairs 11: 10 on v5_04 gate_trace and 1 on v5_01. A 1 of these is rename, the other 10 are other mutators (A 8, D 1, E 1).
+    - Grok's "six of the 39 rename trials drop" did not count A's rename unknown/unknown pair, which drops under the accorded unknown rule. The arm counts below are unaffected, because that trial is source-after.
+  - rename source-first trials after the drop: A 2, B 1, C 2, D 3, E 3 (Grok's figures, rechecked). Source-first rename leaks: 1 remains (A v5_06, AttributeError on both sides). E's leak drops.
+  - 2 of the 12 source-first rename duplicates drop (B v5_06, D v5_05).
+- Expected, and not part of the bar: per-mutation counts move. On the EXPECT bar, A should still miss on rename (the v5_06 leak) and B on inject_comment_oblique (same-type IndentationError). The other mutators' EXPECT results are reported as they come out.
+- What it does not measure: rename on a passing program. 38 of the 39 rename trials are fail rows. The one pass trial (A v5_02) is source-after, so the order bar does not score it. A pass-row sample would be a new record.
+- Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-exc/`. Earlier roots and results are untouched.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
