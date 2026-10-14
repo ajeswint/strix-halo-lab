@@ -822,7 +822,7 @@ Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7ab
   - def + dunder + name + string: 1
   - unparsed: 1
 
-  All 3 leaks rewrote attribute and dunder spellings. The 41 that rewrote only def and name spellings were all caught as duplicates.
+  With the source decided first: all 21 renames with no attribute spelling were caught as duplicates (def + name 13, def 6, def + dunder + name 2). All 3 leaks are exactly the 3 renames that rewrote an attribute spelling, so `Attribute.attr` is the whole source-first gap on this data. The 24 renames decided before their source leak or are caught by order, as designed, and are not scored. (Corrected before push of the follow-up: the first text of this result said "the 41 that rewrote only def and name spellings were all caught as duplicates", which was unchecked and wrong; 20 of those 41 leaked source-after.)
 - **inject_comment_oblique on B**: the source does not parse (IndentationError on both sides). The type matches, so the exception-type rule keeps this trial and the leak stands. This is the guardian gap the ruling names, now confirmed.
 - Every other inside mutator: 0 trials with a differing type (50 trials each, 47-50 of them on fail rows). Records with an `unknown` type: 11 of 750 over 15 mutators, never more than 2 per mutator.
 - What this means for step 2. The exception-type rule mainly removes rename trials. A rename fixed to keep each task's tested entry names would have to be its own pre-run before `Attribute.attr` in `_Norm` can be tested on rename at all. Order and bars are for the next pre-run, waiting for the user's choice and Grok's accord on the fixed shuffle.
