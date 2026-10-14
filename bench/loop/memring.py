@@ -47,7 +47,10 @@ never regraded. flood is not in the fuzz plan: replay runs it in its own root an
 
 Record (measure-only, changes no decision, draws no randomness): every canary gets a dict in Ring.records with
 src_parses; regraded ones add src_exc and can_exc (exc_type of the source's and the canary's grade from this
-process); rename adds the spellings the regex rewrote (spellings()). replay --baseline J checks that every count
+process); rename adds the spellings the regex rewrote (spellings()), how many names it renamed, and the name a
+NameError in the canary's grade reports (name_error). keep_names (replay --keep-prompt-names): per task, the names the task prompt asks for (prompt_names: backticked
+`name(`), which rename leaves alone along with solve and main, so a canary keeps the API the tests call.
+replay --baseline J checks that every count
 of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
 
 Placeholders (TBD, set by the user): FAMILY_QUOTA, FLUSH_FAMILY_SHARE, CANARY_RATE, PRUNE_*, the slot 3/4
@@ -142,10 +145,21 @@ def parses(content):
         return False
 
 
-def spellings(content):
+def prompt_names(prompt):
+    """Function names a task prompt asks for (`name(` in backticks): the entry points the tests call."""
+    return set(re.findall(r"`(\w+)\(", prompt))
+
+
+def name_error(err):
+    """The name a NameError reports, with rename's _Nx suffix stripped, or None."""
+    m = re.search(r"NameError: name '(\w+?)(?:_\d+x)?' is not defined", err or "")
+    return m.group(1) if m else None
+
+
+def spellings(content, keep=frozenset()):
     """Where the names _m_rename rewrites occur in the source: def, dunder (a dunder def), attribute (Attribute.attr),
     name (Name.id), string (a str Constant containing the word); ['unparsed'] if the source does not parse."""
-    names = set(re.findall(r"\bdef (\w+)", content)) - {"solve", "main"}
+    names = set(re.findall(r"\bdef (\w+)", content)) - {"solve", "main"} - set(keep)
     try:
         tree = ast.parse(content)
     except (SyntaxError, ValueError, RecursionError):
@@ -209,10 +223,11 @@ def nhash(content):
 
 
 class Ring:
-    def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None):
-        """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries."""
+    def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None, keep_names=None):
+        """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries.
+        keep_names: {task_id: names rename must not touch} (Record); default none beyond solve and main."""
         self.root, self.live_canaries, self.rng, self.fuzz = root, live_canaries, random.Random(seed), fuzz
-        self.regrade = regrade
+        self.regrade, self.keep_names = regrade, keep_names or {}
         self.records, self._rec = [], {}   # Record (docstring); _rec: canary buffer id -> its record
         os.makedirs(root, exist_ok=True)
         kp = os.path.join(root, "seal.key")
@@ -315,7 +330,7 @@ class Ring:
         return c
 
     def _m_rename(self, r):
-        names = sorted(set(re.findall(r"\bdef (\w+)", r["content"])) - {"solve", "main"})
+        names = sorted(set(re.findall(r"\bdef (\w+)", r["content"])) - {"solve", "main"} - self.keep_names.get(r["task_id"], set()))
         c = r["content"]
         for i, n in enumerate(names):
             c = re.sub(rf"\b{n}\b", f"{n}_{i}x", c)
@@ -387,9 +402,11 @@ class Ring:
                                  (flush_id, name, "ADVERSARY_ERROR", repr(e)[:300]))
                 continue
             if c is not None:
-                rec = {"mutation": name, "src_id": src["id"], "src_parses": parses(src["content"])}
+                rec = {"mutation": name, "src_id": src["id"], "task_id": src["task_id"], "src_parses": parses(src["content"])}
                 if name == "rename":
-                    rec["spellings"] = spellings(src["content"])
+                    keep = self.keep_names.get(src["task_id"], set())
+                    rec["spellings"] = spellings(src["content"], keep)
+                    rec["renamed"] = len(set(re.findall(r"\bdef (\w+)", src["content"])) - {"solve", "main"} - keep)
                 c["_rec"] = rec
                 self.records.append(rec)
                 cands.append((name, src, c))
@@ -403,7 +420,7 @@ class Ring:
                 continue
             passed, err = grades[i]
             sv = json.loads(src["verdict_json"])
-            c["_rec"].update(src_exc=exc_type(sv["passed"], sv["err"]), can_exc=exc_type(passed, err))
+            c["_rec"].update(src_exc=exc_type(sv["passed"], sv["err"]), can_exc=exc_type(passed, err), name_error=name_error(err))
             if passed != sv["passed"]:
                 c["skip"] = True
                 c["_rec"]["outcome"] = "BEHAVIOUR_CHANGED"
@@ -629,14 +646,15 @@ def replay(a):
     verdicts = list(pool.map(lambda t: run.grade(t["code"], tests[t["task"]]) if t["code"] is not None
                              else (False, "no code block"), turns))
     mism = [(t["task"], t["episode"], t["turn"]) for t, (p, _) in zip(turns, verdicts) if t["code"] is not None and p != t["passed"]]
-    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade)
+    keep = {t["id"]: prompt_names(t["prompt"]) for t in run.TASKS} if a.keep_prompt_names else None
+    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
     ing = ring.ingest(a.slot, fam.__getitem__, turns, verdicts)
     fl = ring.flush()
     b = ring.bar({m: e for m, e in EXPECT.items() if m != "flood"})
     # flood: own root and flush, so its fixtures cannot quarantine the stored turns. FLOOD_TOTAL // 2 fixtures in
     # FLOOD_FAMILY commit (count == the max(2, share x total) line), the rest in FLOOD_OTHER, then one flood canary of
     # FLOOD_FAMILY decided last (id order): the first row over the line, predicted QUARANTINED by the flood rule.
-    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade)
+    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
     nx = int(flood_line(FLOOD_TOTAL))
     picked, seen_n = [], set()
     for t, v in zip(turns, verdicts):
@@ -666,7 +684,16 @@ def replay(a):
            "fuzz_per_mutator": FUZZ_PER_MUTATOR, "turns": len(turns), "wall_s": round(time.time() - t0, 1),
            "verdict_mismatch": mism, "ingest": ing, "flush": fl, "flood_flush": ffl, "flood_fixture_states": fx_states,
            "real_states": {r[0]: r[1] for r in ring.buf.execute("SELECT state, COUNT(*) FROM buffer WHERE canary = 0 GROUP BY state")},
-           "bar": b, "records": ring.records}
+           "bar": b, "records": ring.records, "keep_prompt_names": bool(a.keep_prompt_names)}
+    if a.keep_prompt_names:   # fuzzer-fix bar: no rename canary breaks a prompt-named entry; rename still scored
+        rn = [r for r in ring.records if r["mutation"] == "rename" and "src_exc" in r]
+        broke = [r for r in rn if r["name_error"] in keep.get(r["task_id"], set())]
+        d = b["per_mutation"].get("rename", {})
+        res["rename_bar"] = {"regraded": len(rn), "entry_name_errors": len(broke), "name_errors": sum(r["name_error"] is not None for r in rn),
+                             "type_changed": sum(r["src_exc"] != r["can_exc"] for r in rn),
+                             "renamed_none": sum(r["renamed"] == 0 for r in rn),
+                             "src_first": d.get("src_first", 0),
+                             "met": len(broke) == 0 and d.get("src_first", 0) >= 1}
     if a.baseline:   # record-only identity check: every earlier count reproduces, every regraded record is filled
         base = json.load(open(a.baseline))
         keys = ["turns", "verdict_mismatch", "ingest", "flush", "flood_flush", "flood_fixture_states", "real_states"]
@@ -693,8 +720,12 @@ def replay(a):
     if a.out:
         with open(a.out, "w") as f:
             json.dump(res, f, indent=1)
+    if a.keep_prompt_names:
+        print("rename bar", "MET" if res["rename_bar"]["met"] else "NOT MET", json.dumps(res["rename_bar"]))
     if a.baseline:
         return 0 if res["record_bar"]["met"] else 1
+    if a.keep_prompt_names:
+        return 0 if res["rename_bar"]["met"] else 1
     return 0 if res["bar"]["met"] else 1
 
 
@@ -816,6 +847,14 @@ def selftest():
         check("record: regraded canaries carry both exc types and an outcome",
               rg and all(r["src_exc"] == r["can_exc"] == "AssertionError" and "outcome" in r for r in rg))
         check("record: rename carries its spellings", rn and all(r["spellings"] == ["def", "name"] for r in rn))
+    check("prompt_names and name_error", prompt_names("Write `f_one(xs)` and `g(a, b)`; `h` is a value.") == {"f_one", "g"}
+          and name_error("NameError: name 'helper_0x' is not defined") == "helper"
+          and name_error("NameError: name 'helper' is not defined") == "helper" and name_error("AssertionError") is None)
+    with tempfile.TemporaryDirectory() as d:   # keep_names: rename leaves the prompt's entry alone, renames the rest
+        ring = Ring(d, keep_names={"t": {"api"}})
+        c = "def api(xs):\n    return helper(xs)\ndef helper(xs):\n    return len(xs)\n"
+        out = ring._m_rename({"content": c, "task_id": "t"})["content"]
+        check("keep_names: rename keeps the entry name", "def api(" in out and "helper_0x(xs)" in out and "def helper(" not in out)
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -839,6 +878,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--parallel", type=int, default=4, help="grader processes in flight (1 GiB address space each)")
     ap.add_argument("--out")
+    ap.add_argument("--keep-prompt-names", action="store_true",
+                    help="rename leaves the task prompt's backticked name( entry points alone (fuzzer fix)")
     ap.add_argument("--baseline", help="replay JSON at the same seed: exit 0 only if every count reproduces (Record)")
     a = ap.parse_args()
     if a.selftest:

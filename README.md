@@ -805,7 +805,7 @@ Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7ab
 | D | rename BEHAVIOUR_CHANGED | pass -> NameError | yes | def |
 | E | rename source-first leak | ValueError -> NameError | yes | attribute, def, dunder, name |
 
-- **rename is not behaviour-preserving on v5.** Of 48 rename trials (all on fail rows), the exception type differs in 46. Of the 48 canaries, 45 fail with `NameError` on a name the task's tests call. The cause: `_m_rename` exempts only `solve` and `main`, but v5 tasks are tested through task-specific entry points (`branch_influence`, `format_sigfigs`, ...). The mutator renames the API itself, so the regrade sees fail -> fail and keeps the trial. Every one of the 3 rename leaks is in this set. Under the exception-type rule, 46 of 48 trials become BEHAVIOUR_CHANGED, which leaves 2 rename trials over five arms, so rename is likely not_run on most arms. The trial pairs that differ, as src -> canary:
+- **rename is not behaviour-preserving on v5.** Of 48 rename trials (all on fail rows), the exception type differs in 46. Of the 48 canaries, 45 fail with `NameError` on a name the task's tests call. The cause: `_m_rename` exempts only `solve` and `main`, but v5 tasks are tested through task-specific entry points (`branch_influence`, `format_sigfigs`, ...). The mutator renames the API itself, so the regrade sees fail -> fail and keeps the trial. All 45 NameError names are in the task prompt's backticked `name(` set. All 3 rename leaks are among the 46 type changes: 2 are NameError, and 1 (A) is AssertionError -> TypeError. (Corrected: an earlier line said all 3 leaks were in the NameError set.) Under the exception-type rule, 46 of 48 trials become BEHAVIOUR_CHANGED, which leaves 2 rename trials over five arms, so rename is likely not_run on most arms. The trial pairs that differ, as src -> canary:
   - AssertionError -> NameError: 30
   - ValueError -> NameError: 4
   - TypeError -> NameError: 3
@@ -814,6 +814,7 @@ Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7ab
   - AttributeError -> NameError: 1
   - unknown -> NameError: 1
   - AssertionError -> TypeError: 1
+  - timeout -> SyntaxError: 1 (missing from the first text of this list, which summed to 45 of 46)
 - Spellings over the 48 rename trials:
   - def + name: 32
   - def: 9
@@ -822,10 +823,31 @@ Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7ab
   - def + dunder + name + string: 1
   - unparsed: 1
 
-  With the source decided first: all 21 renames with no attribute spelling were caught as duplicates (def + name 13, def 6, def + dunder + name 2). All 3 leaks are exactly the 3 renames that rewrote an attribute spelling, so `Attribute.attr` is the whole source-first gap on this data. The 24 renames decided before their source leak or are caught by order, as designed, and are not scored. (Corrected before push of the follow-up: the first text of this result said "the 41 that rewrote only def and name spellings were all caught as duplicates", which was unchecked and wrong; 20 of those 41 leaked source-after.)
-- **inject_comment_oblique on B**: the source does not parse (IndentationError on both sides). The type matches, so the exception-type rule keeps this trial and the leak stands. This is the guardian gap the ruling names, now confirmed.
+  With the source decided first: all 21 renames with no attribute spelling were caught as duplicates (def + name 13, def 6, def + dunder + name 2). All 3 leaks are the 3 renames that rewrote an attribute spelling. That fits `_Norm` skipping `Attribute.attr`, but it is **unproven**: n is 3, all 3 also rewrote a dunder and broke the program, and no `_Norm` change has been run. It is a prediction for the `Attribute.attr` pre-run, not a finding. The 24 renames decided before their source leak or are caught by order, as designed, and are not scored. (Corrected before push of the follow-up: the first text of this result said "the 41 that rewrote only def and name spellings were all caught as duplicates", which was unchecked and wrong; 20 of those 41 leaked source-after.)
+- **inject_comment_oblique on B**: the source does not parse (IndentationError on both sides). The type matches, so the exception-type rule keeps this trial and the leak stands. This fits the guardian gap the ruling names (the text fallback hashes comments), but it is **unproven**: one row, and the record says only that the source does not parse, not which hash path decided it.
 - Every other inside mutator: 0 trials with a differing type (50 trials each, 47-50 of them on fail rows). Records with an `unknown` type: 11 of 750 over 15 mutators, never more than 2 per mutator.
-- What this means for step 2. The exception-type rule mainly removes rename trials. A rename fixed to keep each task's tested entry names would have to be its own pre-run before `Attribute.attr` in `_Norm` can be tested on rename at all. Order and bars are for the next pre-run, waiting for the user's choice and Grok's accord on the fixed shuffle.
+- What this means for step 2. The exception-type rule mainly removes rename trials. A rename fixed to keep each task's tested entry names has to be its own pre-run before `Attribute.attr` in `_Norm` can be tested on rename at all. Next: the fuzzer-fix pre-run below. After it, the exception-type rule (fixed shuffle, waiting for Grok's accord), then `Attribute.attr`.
+
+## memring rename fuzzer fix: keep the prompt's entry names (pre-run)
+
+Stated before any run (2026-10-14; the user chose fuzzer fix first, "observer judgment confirms review"). Written by Claude. Method: the test-called names come from the task **prompt**, not the tests, so test content never reaches the mutator. This is Grok's prompt-based method as relayed by the user; Grok's own text was not pasted into this session, so the rule below is Claude's reading of it and can be corrected before the run. Not a keep/drop, and not a guardian change. The question: with the API kept, is rename behaviour-preserving on v5? And does the source-first rename gap shrink to the attribute spellings?
+- Change (this commit, `bench/loop/memring.py`):
+  - `prompt_names(prompt)` returns every backticked `` `name(`` in the task prompt. For v5 that is `resolve`, `table_zone_eval`, `smeared_ms`, `unsmeared_ms`, `petri_starts`, `gate_trace`, `weak_infer`, `group_type`, `branch_influence`, `live_phi_sites`, `format_sigfigs`, `snap_to_step`.
+  - `Ring(keep_names=)`: rename leaves those names alone, as well as solve and main. The default is empty, so `agent.py --ring` and every earlier command are unchanged. The flag is off in `replay` unless `--keep-prompt-names` is given.
+  - Records add `task_id`, `renamed` (how many names rename touched), and `name_error`: the name a NameError reports, with the `_Nx` suffix stripped.
+  - Checked before writing this, on the 10c7abb canaries: all 45 NameError names are in this set. That check read the tests and grades of the record run, which the mutator never sees.
+  - Selftests: `memring.py --selftest` (2 new checks), `agent.py --selftest --set v5` and `run.py --selftest` pass.
+  - Smoke on the first 20 rows of arm E (scratch, not a result). Without the flag, the bar and flush are byte-identical to the 309eb71 smoke. With it: 10 rename canaries regraded, 0 NameErrors, 2 type changes, 3 sources with nothing left to rename, rename bar met.
+- Command, per arm: `python3 bench/loop/memring.py replay --root /data/ring-rename/A --set v5 --slot 1 --seed 0 --keep-prompt-names --out bench/loop/results/ring-rename-v5-A.json bench/loop/results/qwen-v5-sym-A-solo.jsonl`. B-E are the same with their root, slot, out and file, as in the fuzz pre-run. The exit code follows the rename bar.
+- Bar (per arm, fuzzer only):
+  1. 0 regraded rename canaries (trial or BEHAVIOUR_CHANGED) with a NameError on a prompt-named entry.
+  2. rename has at least 1 source-first trial (not not_run).
+- Predictions, reported and not part of the bar:
+  - Rename type changes over five arms fall from 46/48 to at most 10.
+  - Every source-first "rules ok" rename leak rewrote an attribute spelling. This is the unproven attribution: a leak without one would falsify it. No source-first trial with an attribute spelling leaves it untested.
+  - `renamed_none` is reported: a source with no other def gives a rename canary that only adds a newline, which is a reformat-class trial and not a rename.
+- Not comparable to 10c7abb or 309eb71 counts. Rename canaries change content, the BEHAVIOUR_CHANGED count can change, and so the insertions and the shuffle move for every mutator. The other mutators' EXPECT bar is reported, not scored.
+- Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-rename/`. Earlier roots and results are untouched.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
