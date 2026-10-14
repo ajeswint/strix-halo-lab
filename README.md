@@ -830,22 +830,23 @@ Wall times: A 185 s, B 124, C 305, D 303, E 424. They are within 0.2 s of 10c7ab
 
 ## memring rename fuzzer fix: keep the prompt's entry names (pre-run)
 
-Stated before any run (2026-10-14; the user chose fuzzer fix first, "observer judgment confirms review"). Written by Claude. Method: the test-called names come from the task **prompt**, not the tests, so test content never reaches the mutator. This is Grok's prompt-based method as relayed by the user; Grok's own text was not pasted into this session, so the rule below is Claude's reading of it and can be corrected before the run. Not a keep/drop, and not a guardian change. The question: with the API kept, is rename behaviour-preserving on v5? And does the source-first rename gap shrink to the attribute spellings?
+Stated before any run (2026-10-14; the user chose fuzzer fix first, "observer judgment confirms review"). Written by Claude. Method: the test-called names come from the task **prompt**, not the tests, so test content never reaches the mutator. Amended before any run, after Grok 4.7's attack on 6868b9e: the names are only those in the prompt's Write sentence, a rename with nothing to rename makes no canary, and the "10 or fewer" prediction is dropped. Not a keep/drop, and not a guardian change. The question: with the API kept, is rename behaviour-preserving on v5? And does the source-first rename gap shrink to the attribute spellings?
 - Change (this commit, `bench/loop/memring.py`):
-  - `prompt_names(prompt)` returns every backticked `` `name(`` in the task prompt. For v5 that is `resolve`, `table_zone_eval`, `smeared_ms`, `unsmeared_ms`, `petri_starts`, `gate_trace`, `weak_infer`, `group_type`, `branch_influence`, `live_phi_sites`, `format_sigfigs`, `snap_to_step`.
+  - `prompt_names(prompt)` returns the backticked `` `name(`` in the prompt's first Write sentence, up to the first period followed by whitespace. For v5 that is 11 names: `table_zone_eval`, `smeared_ms`, `unsmeared_ms`, `petri_starts`, `gate_trace`, `weak_infer`, `group_type`, `branch_influence`, `live_phi_sites`, `format_sigfigs`, `snap_to_step`. The first text took every `` `name(`` in the prompt, which also kept `resolve` from `resolve(w, fold)` in the v5_01 body. The tests do not call `resolve`, so that version left a helper unrenamed and made a NameError on it fail bar item 1.
+  - With `keep_names` set, a source whose defs are all kept makes no rename canary. It would be the source plus a newline, a duplicate by both hashes, and would count as a source-first trial with nothing renamed. `rename_skipped` counts these sources. Without the flag, rename is unchanged.
   - `Ring(keep_names=)`: rename leaves those names alone, as well as solve and main. The default is empty, so `agent.py --ring` and every earlier command are unchanged. The flag is off in `replay` unless `--keep-prompt-names` is given.
   - Records add `task_id`, `renamed` (how many names rename touched), and `name_error`: the name a NameError reports, with the `_Nx` suffix stripped.
-  - Checked before writing this, on the 10c7abb canaries: all 45 NameError names are in this set. That check read the tests and grades of the record run, which the mutator never sees.
-  - Selftests: `memring.py --selftest` (2 new checks), `agent.py --selftest --set v5` and `run.py --selftest` pass.
-  - Smoke on the first 20 rows of arm E (scratch, not a result). Without the flag, the bar and flush are byte-identical to the 309eb71 smoke. With it: 10 rename canaries regraded, 0 NameErrors, 2 type changes, 3 sources with nothing left to rename, rename bar met.
+  - Checked before writing this, on the 309eb71 record canaries: all 45 NameError names are in the 11-name set. This is a superset check: it shows the set covers the breaks, not that every name in it is called. That check read the tests and grades of the record run, which the mutator never sees.
+  - Selftests: `memring.py --selftest` (3 new checks), `agent.py --selftest --set v5` and `run.py --selftest` pass.
+  - Smoke on the first 20 rows of arm E (scratch, not a result, and no basis for a prediction). Without the flag, the bar and flush are identical to the 309eb71 smoke. With it, as amended: 9 rename canaries regraded, 0 NameErrors, 2 type changes, 1 source skipped with nothing to rename, 2 source-first trials, rename bar met.
 - Command, per arm: `python3 bench/loop/memring.py replay --root /data/ring-rename/A --set v5 --slot 1 --seed 0 --keep-prompt-names --out bench/loop/results/ring-rename-v5-A.json bench/loop/results/qwen-v5-sym-A-solo.jsonl`. B-E are the same with their root, slot, out and file, as in the fuzz pre-run. The exit code follows the rename bar.
 - Bar (per arm, fuzzer only):
   1. 0 regraded rename canaries (trial or BEHAVIOUR_CHANGED) with a NameError on a prompt-named entry.
-  2. rename has at least 1 source-first trial (not not_run).
+  2. rename has at least 1 source-first trial (not not_run). Every rename trial now renamed at least one name, because rows with nothing to rename are never inserted.
 - Predictions, reported and not part of the bar:
-  - Rename type changes over five arms fall from 46/48 to at most 10.
+  - `type_changed` on rename, as measured. There is no numeric prediction: once the entry name survives, the old NameError no longer hides the next exception.
   - Every source-first "rules ok" rename leak rewrote an attribute spelling. This is the unproven attribution: a leak without one would falsify it. No source-first trial with an attribute spelling leaves it untested.
-  - `renamed_none` is reported: a source with no other def gives a rename canary that only adds a newline, which is a reformat-class trial and not a rename.
+  - `skipped_nothing_to_rename`, per arm.
 - Not comparable to 10c7abb or 309eb71 counts. Rename canaries change content, the BEHAVIOUR_CHANGED count can change, and so the insertions and the shuffle move for every mutator. The other mutators' EXPECT bar is reported, not scored.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-rename/`. Earlier roots and results are untouched.
 

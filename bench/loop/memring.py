@@ -49,7 +49,9 @@ Record (measure-only, changes no decision, draws no randomness): every canary ge
 src_parses; regraded ones add src_exc and can_exc (exc_type of the source's and the canary's grade from this
 process); rename adds the spellings the regex rewrote (spellings()), how many names it renamed, and the name a
 NameError in the canary's grade reports (name_error). keep_names (replay --keep-prompt-names): per task, the names the task prompt asks for (prompt_names: backticked
-`name(`), which rename leaves alone along with solve and main, so a canary keeps the API the tests call.
+`name(` in the first Write sentence), which rename leaves alone along with solve and main, so a canary keeps the
+API the tests call. With keep_names set, a source with nothing left to rename makes no rename canary (it would be
+the source plus a newline, a duplicate by both hashes); Ring.rename_skipped counts them.
 replay --baseline J checks that every count
 of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
 
@@ -146,8 +148,10 @@ def parses(content):
 
 
 def prompt_names(prompt):
-    """Function names a task prompt asks for (`name(` in backticks): the entry points the tests call."""
-    return set(re.findall(r"`(\w+)\(", prompt))
+    """Entry points a task prompt asks for: the backticked `name(` in its first Write sentence (up to the first
+    period followed by whitespace). Names elsewhere in the prompt (v5_01's resolve(w, fold)) are not entries."""
+    m = re.search(r"\bWrite\b(.*?)(?:\.\s|\.$|$)", prompt, re.S)
+    return set(re.findall(r"`(\w+)\(", m.group(1))) if m else set()
 
 
 def name_error(err):
@@ -227,7 +231,7 @@ class Ring:
         """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries.
         keep_names: {task_id: names rename must not touch} (Record); default none beyond solve and main."""
         self.root, self.live_canaries, self.rng, self.fuzz = root, live_canaries, random.Random(seed), fuzz
-        self.regrade, self.keep_names = regrade, keep_names or {}
+        self.regrade, self.keep_names, self.rename_skipped = regrade, keep_names or {}, 0
         self.records, self._rec = [], {}   # Record (docstring); _rec: canary buffer id -> its record
         os.makedirs(root, exist_ok=True)
         kp = os.path.join(root, "seal.key")
@@ -331,6 +335,9 @@ class Ring:
 
     def _m_rename(self, r):
         names = sorted(set(re.findall(r"\bdef (\w+)", r["content"])) - {"solve", "main"} - self.keep_names.get(r["task_id"], set()))
+        if self.keep_names and not names:   # nothing to rename: no canary (docstring: keep_names)
+            self.rename_skipped += 1
+            return None
         c = r["content"]
         for i, n in enumerate(names):
             c = re.sub(rf"\b{n}\b", f"{n}_{i}x", c)
@@ -691,7 +698,7 @@ def replay(a):
         d = b["per_mutation"].get("rename", {})
         res["rename_bar"] = {"regraded": len(rn), "entry_name_errors": len(broke), "name_errors": sum(r["name_error"] is not None for r in rn),
                              "type_changed": sum(r["src_exc"] != r["can_exc"] for r in rn),
-                             "renamed_none": sum(r["renamed"] == 0 for r in rn),
+                             "skipped_nothing_to_rename": ring.rename_skipped,
                              "src_first": d.get("src_first", 0),
                              "met": len(broke) == 0 and d.get("src_first", 0) >= 1}
     if a.baseline:   # record-only identity check: every earlier count reproduces, every regraded record is filled
@@ -847,7 +854,8 @@ def selftest():
         check("record: regraded canaries carry both exc types and an outcome",
               rg and all(r["src_exc"] == r["can_exc"] == "AssertionError" and "outcome" in r for r in rg))
         check("record: rename carries its spellings", rn and all(r["spellings"] == ["def", "name"] for r in rn))
-    check("prompt_names and name_error", prompt_names("Write `f_one(xs)` and `g(a, b)`; `h` is a value.") == {"f_one", "g"}
+    check("prompt_names and name_error",
+          prompt_names("Write `f_one(xs)` and `g(a, b)` to 0.05 places; `h` is a value.\nUse `aux(w)` inside.") == {"f_one", "g"}
           and name_error("NameError: name 'helper_0x' is not defined") == "helper"
           and name_error("NameError: name 'helper' is not defined") == "helper" and name_error("AssertionError") is None)
     with tempfile.TemporaryDirectory() as d:   # keep_names: rename leaves the prompt's entry alone, renames the rest
@@ -855,6 +863,8 @@ def selftest():
         c = "def api(xs):\n    return helper(xs)\ndef helper(xs):\n    return len(xs)\n"
         out = ring._m_rename({"content": c, "task_id": "t"})["content"]
         check("keep_names: rename keeps the entry name", "def api(" in out and "helper_0x(xs)" in out and "def helper(" not in out)
+        check("keep_names: nothing left to rename makes no canary",
+              ring._m_rename({"content": "def api(xs):\n    return 1\n", "task_id": "t"}) is None and ring.rename_skipped == 1)
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
