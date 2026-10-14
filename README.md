@@ -930,6 +930,16 @@ Stated before any run (2026-10-14; Grok 4.7 accord on the slice, the hash surfac
 - Next, not this run: the exception-type rule again (`--exc-rule --predict`), with the prediction computed mechanically from this record before that run, and `unknown` still a failed match. That run applies the rule to the flood-fixture ring as well, and its pre-run says so.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-tail/` (absent now). Earlier roots and results are untouched.
 
+Result (run 2026-10-14 at db2d030, grader `grade-65b662df4ba4`, tree clean apart from the two untracked fix15 files; no model loaded; roots `/data/ring-tail/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-tail-v5-<arm>.json|.log`). **Record-ref bar MET on all five arms** (exit 0 each):
+1. `verdict_mismatch` is empty on every arm.
+2. 0 record mismatches against `ring-rename-v5-<arm>.json`: every outcome, reason, `src_after`, parse bit and spelling is unchanged, and so is every exception type that was readable before.
+3. Every real row is present under the same id. Err bytes changed on 6 real rows (A 4, D 1, E 1), and every one of them had no readable type before.
+
+Wall: A 185 s, B 124, C 314, D 303, E 427.
+- `unknown` moved to a type in 22 exception fields: A 18, D 2, E 2. These are the 11 unknown/unknown pairs of the reference, and all 22 now read AssertionError. **0 `unknown` fields remain** on any arm. So each of the 11 pairs was AssertionError on both sides, the same type. Under the rule they were drops of an unreadable tail, not type changes, as Grok 4.7 ruled.
+- The D flood canary (v5_01, unknown/unknown in 0099796) now has a readable type and is CAUGHT by the flood rule ("family flood in this flush").
+- Superseded (Grok 4.7 ruling, 2026-10-14): the tail pre-run's "Next" line said the next exc-rule run applies the rule to the flood-fixture ring. It does not. The fixture ring stays `exc_rule=False`, and a flood not_run or not-ok is a failed control that makes the exit code non-zero.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
