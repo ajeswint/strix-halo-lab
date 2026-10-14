@@ -28,6 +28,10 @@ run's JSONL) instead of the bare task; the stored code counts as already tried f
 stop, the stored error as the previous error for the repeat-error stop. Everything else is the loop
 above: grading, fresh seed, stops, budget. Sampling seeds are FIX_SEED_BASE + 10 x episode + turn.
 
+Ring (--ring ROOT --ring-slot N, measure-only): each finished task's coded turns are sealed from the grade this
+process just ran and admitted to memring's buffer (family from memring.FAMILIES, never from the model); one
+flush at the end of the run, summary["ring"]. Nothing is retrieved into prompts, so the model sees what it sees without it.
+
 Fresh seed: the model sees failures from the tests' own random.seed(N). The episode's
 final passing code is re-graded with that line replaced by random.seed(FRESH_SEED), a seed
 no turn saw, so hard-coding a fed-back case does not count. solved = fresh pass. Tasks
@@ -40,6 +44,7 @@ import argparse, concurrent.futures as cf, hashlib, json, os, re, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run  # noqa: E402  grade, extract, ask, load_set, GttPeak, sampling constants
+import memring  # noqa: E402
 
 FRESH_SEED = 104729
 FIX_SEED_BASE = 2000   # fix-mode sampling seeds; disjoint from run.py's 0-15 and the loop's 1000-1033
@@ -296,6 +301,14 @@ def selftest():
         check("make_plans retries an empty plan once at PLAN_SEED + 1, sums tokens",
               plan_fake.seeds == [PLAN_SEED, PLAN_SEED + 1] and out[0]["plan"] == "the plan"
               and out[0]["completion_tokens"] == 80 and load_plans(fp)[t["id"]]["tries"] == 2)
+    # 8. ring (measure-only): coded turns are admitted with the loop's own verdicts, no-code turns skipped
+    rows, s = solve_task(t, 4, 1, 10**9, fake([None, bad, t["ref"]]))
+    with tempfile.TemporaryDirectory() as d:
+        ring = memring.Ring(d)
+        got = ring.ingest(1, lambda tid: "fam", rows, [(r["passed"], r["err"]) for r in rows])
+        kinds = [r[0] for r in ring.buf.execute("SELECT kind FROM buffer ORDER BY id")]
+        check("ring: 2 coded turns admitted as fail then pass, the no-code turn skipped",
+              got == {"admitted": 2, "skipped_no_code": 1, "refused": {}} and kinds == ["fail", "pass"])
     print(f"selftest {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
 
@@ -318,7 +331,11 @@ def main():
     ap.add_argument("--fix-from", metavar="JSONL", help="fix mode: start each episode from the stored failure of each task in this loop jsonl")
     ap.add_argument("--make-plans", action="store_true", help="plan mode: write results/<label>.plans.jsonl, no loop")
     ap.add_argument("--plan-from", metavar="PLANS_JSONL", help="plan mode: append each task's plan to its prompt; plan tokens count against the budget")
+    ap.add_argument("--ring", metavar="ROOT", help="measure-only memring: admit every coded turn, flush once at the end")
+    ap.add_argument("--ring-slot", type=int, help="slot of the model writing (with --ring)")
     a = ap.parse_args()
+    if a.ring and (a.ring_slot is None or a.set not in memring.FAMILIES):
+        ap.error("--ring needs --ring-slot and a set with a family map in memring.FAMILIES")
     run.load_set(a.set)
     run.API = a.api
     if a.fix_from and not a.tasks:
@@ -353,6 +370,8 @@ def main():
         if missing:
             ap.error(f"{a.plan_from}: no plan for {sorted(missing)}")
     starts = {t["id"]: stored_failure(a.fix_from, t["id"]) for t in run.TASKS} if a.fix_from else {}
+    ring = memring.Ring(a.ring) if a.ring else None
+    ring_in = {"admitted": 0, "skipped_no_code": 0, "refused": {}}
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
     tasks_out = []
@@ -368,6 +387,13 @@ def main():
             for r in rows:
                 f.write(json.dumps(r) + "\n")
             f.flush()
+            if ring:   # passed/err are this process's run.grade results for exactly this code
+                got = ring.ingest(a.ring_slot, memring.FAMILIES[a.set].__getitem__, rows,
+                                  [(r["passed"], r["err"]) for r in rows])
+                ring_in["admitted"] += got["admitted"]
+                ring_in["skipped_no_code"] += got["skipped_no_code"]
+                for k, n in got["refused"].items():
+                    ring_in["refused"][k] = ring_in["refused"].get(k, 0) + n
             tasks_out.append(s)
             print(f"{s['task']:24} {'SOLVED' if s['solved'] else 'fail':6} turns={s['turns']} "
                   f"tok={s['completion_tokens']} stops={[x['stop'] for x in s['episodes']]}", flush=True)
@@ -384,6 +410,8 @@ def main():
         "wall_s": round(time.time() - t0, 1), "gtt_peak_gib": round(gtt_peak, 2),
         "per_task": sorted(tasks_out, key=lambda s: s["task"]),
     }
+    if ring:
+        summary["ring"] = {"root": a.ring, "slot": a.ring_slot, "ingest": ring_in, "flush": ring.flush()}
     if a.gtt_baseline is not None:
         summary["gtt_baseline_gib"] = a.gtt_baseline
         summary["gtt_model_gib"] = round(gtt_peak - a.gtt_baseline, 2)
