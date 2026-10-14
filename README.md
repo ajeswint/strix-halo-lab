@@ -850,6 +850,24 @@ Stated before any run (2026-10-14; the user chose fuzzer fix first, "observer ju
 - Not comparable to 10c7abb or 309eb71 counts. Rename canaries change content, the BEHAVIOUR_CHANGED count can change, and so the insertions and the shuffle move for every mutator. The other mutators' EXPECT bar is reported, not scored.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-rename/`. Earlier roots and results are untouched.
 
+Result (run 2026-10-14 at 63917fe, tree clean apart from the two untracked fix15 files; no model loaded, MemAvailable 110 GiB; roots `/data/ring-rename/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-rename-v5-<arm>.json|.log`; Grok 4.7 accord on 63917fe given while it ran). **Rename bar MET on all five arms** (exit 0 each). Wall: A 185 s, B 124, C 314, D 303, E 427.
+
+| arm | rename regraded | skipped (nothing to rename) | entry NameErrors | type changed | source-first trials | source-first leaks | EXPECT bar |
+|---|---|---|---|---|---|---|---|
+| A | 10 | 0 | 0 | 3 | 3 | 2 | NOT MET (rename) |
+| B | 7 | 3 | 0 | 1 | 2 | 0 | NOT MET (inject_comment_oblique) |
+| C | 7 | 3 | 0 | 0 | 2 | 0 | MET |
+| D | 8 | 2 | 0 | 1 | 4 | 0 | MET |
+| E | 7 | 3 | 0 | 1 | 4 | 1 | NOT MET (rename) |
+
+- The fuzzer fix did what it was for. Across the five arms: 0 entry NameErrors and 1 other NameError (B, `bisect`, which the source already raised: a missing import, not caused by rename). Type changes: 6 of 39 rename trials, down from 46 of 48 with the API renamed. The counts are not comparable run to run: the shuffle moved and the sources differ.
+- The 6 type changes: AssertionError -> TypeError 4, every one with a dunder spelling. A renamed `__init__` leaves the class constructor without its arguments, so the program still breaks. Also timeout -> SyntaxError 1 (def + name, cause not examined) and ValueError -> AttributeError 1 (attribute spelling). **rename is still not behaviour-preserving when it touches a dunder.** That is the second fuzzer defect the ruling named (the renamed-`__init__` specimen). It stays in, because the exception-type pre-run is what is meant to catch it.
+- **The unproven attribution held, and it is not proven.** Of 15 source-first rename trials, all 12 without an attribute spelling were caught as duplicates. All 3 leaks (A 2, E 1) rewrote an attribute spelling, and every one of them also rewrote a dunder. That is the same shape as 309eb71, and still n = 3. Under the exception-type rule, 2 of the 3 change type (A AssertionError -> TypeError, E ValueError -> AttributeError) and would become BEHAVIOUR_CHANGED. 1 keeps its type (A v5_06, AttributeError on both sides) and would stay a leak.
+- **inject_comment_oblique on B leaked again**: source-first, and the same kind of row as 309eb71 (v5_07, the source does not parse, IndentationError on both sides). It fits the fallback-hash gap. The hash path is still not recorded.
+- Only 1 rename trial over five arms had a passing source, and 0 were BEHAVIOUR_CHANGED. The pass-row regrade is barely exercised by rename on v5, because these arms' sampled sources are almost all fail rows.
+- displaced: A 15, B 12, C 13, D 13, E 14.
+- Next: the exception-type pre-run, scored at seed 0 against this run's records, with the fixed shuffle (Grok accord). Then `Attribute.attr` in `_Norm`. Each waits for the user's go.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
