@@ -940,6 +940,28 @@ Wall: A 185 s, B 124, C 314, D 303, E 427.
 - The D flood canary (v5_01, unknown/unknown in 0099796) now has a readable type and is CAUGHT by the flood rule ("family flood in this flush").
 - Superseded (Grok 4.7 ruling, 2026-10-14): the tail pre-run's "Next" line said the next exc-rule run applies the rule to the flood-fixture ring. It does not. The fixture ring stays `exc_rule=False`, and a flood not_run or not-ok is a failed control that makes the exit code non-zero.
 
+## memring exception-type rule on the readable tail (pre-run)
+
+Stated before any run (2026-10-14; the user: "proceed accordingly"; Grok 4.7 rulings on the flood ring and the exit code). Written by Claude. The same judge change as 0099796, now scored against the tail record (`ring-tail-v5-<arm>.json`, grader `grade-65b662df4ba4`), where no exception field is `unknown`. The question: with every type readable, does the rule drop only the shown type changes and leave every other decision where the record put it?
+- Change (this commit, `bench/loop/memring.py`):
+  - replay's flood-fixture ring never takes `exc_rule`. Flood is a count control.
+  - With `--predict`, a flood not_run or not-ok makes the exit code non-zero. It is a failed control, never a predicted drop.
+  - One printed line carries the prediction result, the flood state, and the other EXPECT misses. The other misses are the judge result and do not change the exit code.
+  - The rule itself is unchanged: `unknown` still differs from every type.
+  - Selftests pass.
+  - Smoke on the first 20 rows of E against the tail smoke (scratch): the prediction held with 2 drops. It exited 1 on flood, because a 20-row subset cannot supply the 19 fixtures. That is the new control firing as designed, not a result.
+- Command, per arm: `python3 bench/loop/memring.py replay --root /data/ring-exc2/A --set v5 --slot 1 --seed 0 --keep-prompt-names --exc-rule --predict bench/loop/results/ring-tail-v5-A.json --out bench/loop/results/ring-exc2-v5-A.json bench/loop/results/qwen-v5-sym-A-solo.jsonl`. B-E are the same with their root, slot, reference, out and file.
+- Bar, per arm: 0 prediction mismatches, and flood ok (not not_run). The prediction is computed mechanically from the tail record before the run:
+  - Drops: A 3, B 1, C 0, D 1, E 1, which is 6, all rename and all shown type changes:
+    - A: v5_05 AssertionError -> TypeError (source-after leak), v5_06 AssertionError -> TypeError (source-first leak), v5_08 timeout -> SyntaxError (source-after leak);
+    - B: v5_06 AssertionError -> TypeError (source-first duplicate);
+    - D: v5_05 AssertionError -> TypeError (source-first duplicate);
+    - E: v5_05 ValueError -> AttributeError (source-first leak).
+  - No other mutator drops, and nothing drops on an unreadable tail. Every survivor keeps its record's outcome, reason and `src_after`.
+  - rename source-first trials after the drop: A 2, B 1, C 2, D 3, E 3. One source-first rename leak remains: A v5_06, AttributeError on both sides.
+- Expected, and not part of the exit code: EXPECT misses A rename (the v5_06 leak) and B inject_comment_oblique (unparseable source, IndentationError on both sides). C, D and E have no EXPECT miss.
+- Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-exc2/` (absent now). Earlier roots and results are untouched.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.

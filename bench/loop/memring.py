@@ -57,7 +57,8 @@ source's (unknown differs from every type, unknown included) is BEHAVIOUR_CHANGE
 shuffled list at its place, _rules still decides it, a commit still updates seen and the flush counts (so a real row
 rejected as its duplicate is still displaced), but it never reaches a slot DB, is not leaked, and its break outcome
 is BEHAVIOUR_CHANGED, which bar() leaves out of n, leak and src_first. A boolean mismatch is still skipped before
-insert. replay --predict J holds every record to J's record of the same seed: same plan and grades, the predicted
+insert. The fixture ring of replay's flood flush never takes exc_rule; with --predict, a flood not_run or not-ok fails the
+exit code (a failed control), while the other EXPECT misses are printed and do not. replay --predict J holds every record to J's record of the same seed: same plan and grades, the predicted
 drops BEHAVIOUR_CHANGED with J's outcome as rules_outcome, every other record J's outcome, reason and src_after.
 replay --baseline J checks that every count
 of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
@@ -710,7 +711,8 @@ def replay(a):
     # flood: own root and flush, so its fixtures cannot quarantine the stored turns. FLOOD_TOTAL // 2 fixtures in
     # FLOOD_FAMILY commit (count == the max(2, share x total) line), the rest in FLOOD_OTHER, then one flood canary of
     # FLOOD_FAMILY decided last (id order): the first row over the line, predicted QUARANTINED by the flood rule.
-    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, exc_rule=a.exc_rule)
+    # the fixture ring never takes exc_rule: flood is a count control, and a type label must not remove its trial
+    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
     nx = int(flood_line(FLOOD_TOTAL))
     picked, seen_n = [], set()
     for t, v in zip(turns, verdicts):
@@ -791,9 +793,13 @@ def replay(a):
         if len(ref) != len(new):
             bad.append({"i": None, "why": [f"records {len(ref)} vs {len(new)}"]})
         rn = b["per_mutation"].get("rename", {})
+        fl = b["per_mutation"].get("flood", {})
+        flood_ok = "flood" not in b["not_run"] and bool(fl.get("ok"))   # a failed control, never a predicted drop
         res["predict_bar"] = {"reference": os.path.basename(a.predict), "records": len(new), "predicted_drops": drops,
                               "mismatches": bad, "rename_src_first": rn.get("src_first", 0),
-                              "rename_src_first_leak": rn.get("src_first_leak", 0), "met": not bad}
+                              "rename_src_first_leak": rn.get("src_first_leak", 0), "flood_ok": flood_ok,
+                              "expect_misses": sorted(m for m, x in b["per_mutation"].items() if not x["ok"] and m != "flood"),
+                              "met": not bad and flood_ok}
     if a.keep_prompt_names:   # fuzzer-fix bar: no rename canary breaks a prompt-named entry; rename still scored
         rn = [r for r in ring.records if r["mutation"] == "rename" and "src_exc" in r]
         broke = [r for r in rn if r["name_error"] in keep.get(r["task_id"], set())]
@@ -834,7 +840,10 @@ def replay(a):
     if a.record_ref:
         print("record-ref bar", "MET" if res["record_ref_bar"]["met"] else "NOT MET", json.dumps(res["record_ref_bar"])[:2000])
     if a.predict:
-        print("predict bar", "MET" if res["predict_bar"]["met"] else "NOT MET", json.dumps(res["predict_bar"])[:2000])
+        pb = res["predict_bar"]
+        print("predict bar", "MET" if pb["met"] else "NOT MET", "| prediction", "held" if not pb["mismatches"] else "MISSED",
+              "| flood", "ok" if pb["flood_ok"] else "NOT OK (failed control)", "| EXPECT misses (judge result):",
+              pb["expect_misses"], "|", json.dumps(pb)[:2000])
     if a.record_ref:
         return 0 if res["record_ref_bar"]["met"] else 1
     if a.predict:
