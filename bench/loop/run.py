@@ -273,6 +273,23 @@ def _sandbox(code, tests, timeout):
         shutil.rmtree(d, ignore_errors=True)
 
 
+EXC_LINE = re.compile(r"([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Iteration))\b")   # memring.exc_type's line test
+ERR_TAIL = 600
+
+
+def _tail(s):
+    """The last ERR_TAIL chars, unless the last line EXC_LINE matches at column 0 starts before them: then the
+    ERR_TAIL chars from that line's start, so the exception's type name is in the returned text."""
+    start, pos = None, 0
+    for line in s.splitlines(keepends=True):
+        if EXC_LINE.match(line):
+            start = pos
+        pos += len(line)
+    if start is None or start >= len(s) - ERR_TAIL:
+        return s[-ERR_TAIL:]
+    return s[start:start + ERR_TAIL]
+
+
 def grade(code, tests, timeout=60, static=True):
     if static:
         why = deny_check(code)
@@ -285,7 +302,7 @@ def grade(code, tests, timeout=60, static=True):
         return True, ""
     if rc == 0:
         err = err or "grader: the program exited 0 without finishing the oracle"
-    return False, (err or out)[-600:]
+    return False, _tail(err or out)
 
 
 def extract(content):
@@ -408,6 +425,13 @@ def selftest():
         ok &= status == "ok"
         print(f"{status:4} {t['id']:24} ref={'pass' if good else 'FAIL'} empty={'pass(!)' if empty else 'fail'}"
               + ("" if good else f"\n     {err.strip().splitlines()[-1] if err.strip() else err}"))
+    long_line = "Traceback (most recent call last):\n  File \"t.py\", line 1\nAssertionError: " + "x" * 900 + "\n"
+    after = "Traceback:\nValueError: bad\n" + "y" * 700
+    tails = [_tail("short\nNameError: f\n"), _tail(long_line), _tail(after), _tail("z" * 900)]
+    tail_ok = (tails[0] == "short\nNameError: f\n" and tails[1].startswith("AssertionError: ") and len(tails[1]) == ERR_TAIL
+               and tails[2].startswith("ValueError: bad") and len(tails[2]) == ERR_TAIL and tails[3] == "z" * ERR_TAIL)
+    print(f"{'ok' if tail_ok else 'FAIL':4} err tail keeps the last exception line's type name")
+    ok &= tail_ok
     ok &= probe_selftest(TASKS[0])
     print(f"{len(TASKS)} tasks, selftest {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1

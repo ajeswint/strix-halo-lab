@@ -67,7 +67,7 @@ models and ports, the family map per task (tasks carry no family field; callers 
 """
 import argparse, ast, hashlib, hmac, json, os, random, re, sqlite3, sys, tempfile, time, urllib.request
 
-GRADER_VER = "ab262ee"        # grader the verdicts come from; a grader change makes older seals stale
+GRADER_VER = "grade-65b662df4ba4"   # grader_surface() hash of run.grade and what it reads; a grader change makes older seals stale
 MAX_CONTENT = 32 * 1024       # bytes per row
 FAMILY_QUOTA = 50             # TBD: max committed rows per (slot, family, kind); the diversity brake
 FLUSH_FAMILY_SHARE = 0.5      # TBD: one family may be at most this share of a flush (min 2 rows) before the excess is quarantined
@@ -130,6 +130,35 @@ def sha(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 
+def grader_surface(path=None):
+    """(names, version) of the grader: the closure of run.py module-level names grade reads (ast Name nodes), sorted;
+    version = "grade-" + sha256 of their source segments in that order, 12 hex. Strings, getattr, imports, bwrap and
+    the system Python are not covered."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
+    src = open(path).read()
+    defs = {}
+    for n in ast.parse(src).body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defs[n.name] = n
+        elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Name):
+                    defs[t.id] = n
+    seen, todo = set(), ["grade"]
+    while todo:
+        k = todo.pop()
+        if k in seen or k not in defs:
+            continue
+        seen.add(k)
+        todo += [x.id for x in ast.walk(defs[k]) if isinstance(x, ast.Name)]
+    names = sorted(seen)
+    text = "\n".join(f"# {k}\n" + ast.get_source_segment(src, defs[k]) for k in names)
+    return names, "grade-" + hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+EXC_LINE = re.compile(r"([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Iteration))\b")   # == run.EXC_LINE (selftest)
+
+
 def exc_type(passed, err):
     """Exception type of a run.grade result: 'pass', 'timeout', 'grader' (static deny), the last unindented
     Name(Error|Exception|...) line of the err tail, or 'unknown' (the type line fell outside the 600-char tail)."""
@@ -140,7 +169,7 @@ def exc_type(passed, err):
     if err.startswith("grader:"):
         return "grader"
     for line in reversed(err.splitlines()):
-        m = re.match(r"([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Iteration))\b", line)
+        m = EXC_LINE.match(line)
         if m:
             return m.group(1)
     return "unknown"
@@ -712,6 +741,34 @@ def replay(a):
            "verdict_mismatch": mism, "ingest": ing, "flush": fl, "flood_flush": ffl, "flood_fixture_states": fx_states,
            "real_states": {r[0]: r[1] for r in ring.buf.execute("SELECT state, COUNT(*) FROM buffer WHERE canary = 0 GROUP BY state")},
            "bar": b, "records": ring.records, "keep_prompt_names": bool(a.keep_prompt_names), "exc_rule": bool(a.exc_rule)}
+    if a.record_ref:   # grader change, decisions fixed: every record as in J, exc types only where J read unknown
+        ref = json.load(open(a.record_ref))["records"]
+        bad, moved = [], {"unknown_to_type": 0, "still_unknown": 0}
+        for i, (o, n) in enumerate(zip(ref, ring.records)):
+            why = [k for k in ("mutation", "src_id", "outcome", "reason", "src_after", "src_parses", "spellings") if o.get(k) != n.get(k)]
+            for k in ("src_exc", "can_exc"):
+                if o.get(k) == "unknown":
+                    moved["still_unknown" if n.get(k) == "unknown" else "unknown_to_type"] += 1
+                elif o.get(k) != n.get(k):
+                    why.append(k)
+            if why:
+                bad.append({"i": i, "mutation": o["mutation"], "why": why})
+        if len(ref) != len(ring.records):
+            bad.append({"i": None, "why": [f"records {len(ref)} vs {len(ring.records)}"]})
+        errs = None
+        if a.ref_root:   # real rows' err bytes: changed only where the old err had no readable type
+            old = {r[0]: json.loads(r[1])["err"] for r in sqlite3.connect(os.path.join(a.ref_root, "buffer.db")).execute(
+                "SELECT id, verdict_json FROM buffer WHERE canary = 0")}
+            new = {r["id"]: json.loads(r["verdict_json"])["err"] for r in ring.buf.execute(
+                "SELECT id, verdict_json FROM buffer WHERE canary = 0")}
+            ch = [i for i in new if old.get(i) != new[i]]
+            errs = {"real_rows": len(new), "err_changed": len(ch),
+                    "changed_with_readable_old_type": sum(exc_type(False, old.get(i) or "") != "unknown" for i in ch),
+                    "same_ids": set(old) == set(new)}
+        res["record_ref_bar"] = {"reference": os.path.basename(a.record_ref), "records": len(ring.records), "mismatches": bad,
+                                 "exc_moved": moved, "real_err": errs, "verdict_mismatch": len(mism),
+                                 "met": not bad and not mism and (errs is None or (errs["same_ids"]
+                                                                                   and errs["changed_with_readable_old_type"] == 0))}
     if a.predict:   # exc_rule scored against the record of the same seed (docstring: exc_rule)
         ref = json.load(open(a.predict))["records"]
         new, bad, drops = ring.records, [], 0
@@ -774,8 +831,12 @@ def replay(a):
             json.dump(res, f, indent=1)
     if a.keep_prompt_names:
         print("rename bar", "MET" if res["rename_bar"]["met"] else "NOT MET", json.dumps(res["rename_bar"]))
+    if a.record_ref:
+        print("record-ref bar", "MET" if res["record_ref_bar"]["met"] else "NOT MET", json.dumps(res["record_ref_bar"])[:2000])
     if a.predict:
         print("predict bar", "MET" if res["predict_bar"]["met"] else "NOT MET", json.dumps(res["predict_bar"])[:2000])
+    if a.record_ref:
+        return 0 if res["record_ref_bar"]["met"] else 1
     if a.predict:
         return 0 if res["predict_bar"]["met"] else 1
     if a.baseline:
@@ -938,6 +999,11 @@ def selftest():
         b1 = r1.bar({m: e for m, e in EXPECT.items() if m != "flood"})
         check("exc_rule: bar() leaves BEHAVIOUR_CHANGED out of n", all(
             b1["per_mutation"].get(m, {"n": 0})["n"] == 0 for m in r1._mutations() if r1._mutations()[m][1]))
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run
+    names, ver = grader_surface()
+    check(f"GRADER_VER matches the grader surface ({ver}, {len(names)} names)", ver == GRADER_VER)
+    check("exc_type's line test is run.EXC_LINE", EXC_LINE.pattern == run.EXC_LINE.pattern)
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -964,6 +1030,8 @@ def main():
     ap.add_argument("--keep-prompt-names", action="store_true",
                     help="rename leaves the task prompt's backticked name( entry points alone (fuzzer fix)")
     ap.add_argument("--exc-rule", action="store_true", help="exception-type mismatch is BEHAVIOUR_CHANGED, kept in place")
+    ap.add_argument("--record-ref", help="replay JSON of the same seed before a grader change: exit 0 only if every decision holds")
+    ap.add_argument("--ref-root", help="with --record-ref: that replay's root, to compare the real rows' err bytes")
     ap.add_argument("--predict", help="replay JSON of the same seed without --exc-rule: exit 0 only if every record matches")
     ap.add_argument("--baseline", help="replay JSON at the same seed: exit 0 only if every count reproduces (Record)")
     a = ap.parse_args()
