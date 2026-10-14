@@ -370,7 +370,8 @@ def main():
         if missing:
             ap.error(f"{a.plan_from}: no plan for {sorted(missing)}")
     starts = {t["id"]: stored_failure(a.fix_from, t["id"]) for t in run.TASKS} if a.fix_from else {}
-    ring = memring.Ring(a.ring) if a.ring else None
+    tests_by_id = {t["id"]: t["tests"] for t in run.TASKS}
+    ring = memring.Ring(a.ring, regrade=lambda items: [run.grade(c, tests_by_id[tid]) for tid, c in items]) if a.ring else None
     ring_in = {"admitted": 0, "skipped_no_code": 0, "refused": {}}
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
