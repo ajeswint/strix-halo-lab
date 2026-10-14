@@ -962,6 +962,19 @@ Stated before any run (2026-10-14; the user: "proceed accordingly"; Grok 4.7 rul
 - Expected, and not part of the exit code: EXPECT misses A rename (the v5_06 leak) and B inject_comment_oblique (unparseable source, IndentationError on both sides). C, D and E have no EXPECT miss.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-exc2/` (absent now). Earlier roots and results are untouched.
 
+Result (run 2026-10-14 at ca23c45, grader `grade-65b662df4ba4`, tree clean apart from the two untracked fix15 files; no model loaded; roots `/data/ring-exc2/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-exc2-v5-<arm>.json|.log`). **Predict bar MET on all five arms** (exit 0 each):
+- 0 prediction mismatches. Drops exactly as predicted: A 3, B 1, C 0, D 1, E 1, 6 in all, every one a rename with a shown type change.
+- Flood ok on every arm.
+- Real-row states and displaced counts are identical to the tail record (displaced A 15, B 12, C 13, D 13, E 14). Leaked counts fell only by the dropped leaks: A 109 -> 106, E 105 -> 104.
+
+Wall: A 185 s, B 124, C 314, D 303, E 427.
+- rename source-first trials A 2, B 1, C 2, D 3, E 3. One source-first rename leak remains, A v5_06, AttributeError on both sides.
+- EXPECT misses, the judge result, as predicted: A rename, B inject_comment_oblique. C, D and E have none.
+- What this settles: with readable tails, the exception-type rule removes exactly the 6 rename canaries whose type changed, and moves no other decision. The 2 guardian gaps left on this data are 1 rename leak (A v5_06, an attribute and dunder rename that keeps its exception type) and 1 comment leak on unparseable code (B v5_07).
+  - The rename gap fits `_Norm` skipping `Attribute.attr`. That is still unproven: n = 1 after the rule.
+  - The comment gap fits the text-fallback hash. Also unproven: the hash path is not recorded.
+- Next (each needs the user's go): the `Attribute.attr` pre-run, scored against this record. Its pre-run has to name the renamed-`__init__` false duplicate (Grok 4.7). Comment stripping in the fallback stays rejected, so the B comment leak stays a documented gap unless a new method is proposed.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
