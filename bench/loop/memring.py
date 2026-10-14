@@ -45,6 +45,11 @@ matches the source's; otherwise it is logged BEHAVIOUR_CHANGED, neither CAUGHT n
 buffer. Without one (selftest), inside canaries carry the source verdict unregraded. Outside (forged) mutations are
 never regraded. flood is not in the fuzz plan: replay runs it in its own root and flush on fixture rows (see replay).
 
+Record (measure-only, changes no decision, draws no randomness): every canary gets a dict in Ring.records with
+src_parses; regraded ones add src_exc and can_exc (exc_type of the source's and the canary's grade from this
+process); rename adds the spellings the regex rewrote (spellings()). replay --baseline J checks that every count
+of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
+
 Placeholders (TBD, set by the user): FAMILY_QUOTA, FLUSH_FAMILY_SHARE, CANARY_RATE, PRUNE_*, the slot 3/4
 models and ports, the family map per task (tasks carry no family field; callers pass one).
 """
@@ -113,6 +118,52 @@ def sha(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 
+def exc_type(passed, err):
+    """Exception type of a run.grade result: 'pass', 'timeout', 'grader' (static deny), the last unindented
+    Name(Error|Exception|...) line of the err tail, or 'unknown' (the type line fell outside the 600-char tail)."""
+    if passed:
+        return "pass"
+    if err == "timeout":
+        return "timeout"
+    if err.startswith("grader:"):
+        return "grader"
+    for line in reversed(err.splitlines()):
+        m = re.match(r"([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Iteration))\b", line)
+        if m:
+            return m.group(1)
+    return "unknown"
+
+
+def parses(content):
+    try:
+        ast.parse(content)
+        return True
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+
+def spellings(content):
+    """Where the names _m_rename rewrites occur in the source: def, dunder (a dunder def), attribute (Attribute.attr),
+    name (Name.id), string (a str Constant containing the word); ['unparsed'] if the source does not parse."""
+    names = set(re.findall(r"\bdef (\w+)", content)) - {"solve", "main"}
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError, RecursionError):
+        return ["unparsed"]
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names:
+            out.add("dunder" if n.name.startswith("__") and n.name.endswith("__") else "def")
+        elif isinstance(n, ast.Attribute) and n.attr in names:
+            out.add("attribute")
+        elif isinstance(n, ast.Name) and n.id in names:
+            out.add("name")
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                and any(re.search(rf"\b{re.escape(x)}\b", n.value) for x in names):
+            out.add("string")
+    return sorted(out)
+
+
 class _Norm(ast.NodeTransformer):
     """Identifiers -> positional placeholders, docstrings dropped. Catches renames and reformatting, not dead code."""
     def __init__(self):
@@ -162,6 +213,7 @@ class Ring:
         """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries."""
         self.root, self.live_canaries, self.rng, self.fuzz = root, live_canaries, random.Random(seed), fuzz
         self.regrade = regrade
+        self.records, self._rec = [], {}   # Record (docstring); _rec: canary buffer id -> its record
         os.makedirs(root, exist_ok=True)
         kp = os.path.join(root, "seal.key")
         if not os.path.exists(kp):
@@ -335,6 +387,11 @@ class Ring:
                                  (flush_id, name, "ADVERSARY_ERROR", repr(e)[:300]))
                 continue
             if c is not None:
+                rec = {"mutation": name, "src_id": src["id"], "src_parses": parses(src["content"])}
+                if name == "rename":
+                    rec["spellings"] = spellings(src["content"])
+                c["_rec"] = rec
+                self.records.append(rec)
                 cands.append((name, src, c))
         inside = [(n, src, c) for n, src, c in cands if c["inside"]]
         grades = self.regrade([(c["task_id"], c["content"]) for _, _, c in inside]) if self.regrade else None
@@ -345,8 +402,11 @@ class Ring:
                                           json.loads(c["verdict_json"]), c["grader_ver"])
                 continue
             passed, err = grades[i]
-            if passed != json.loads(src["verdict_json"])["passed"]:
+            sv = json.loads(src["verdict_json"])
+            c["_rec"].update(src_exc=exc_type(sv["passed"], sv["err"]), can_exc=exc_type(passed, err))
+            if passed != sv["passed"]:
                 c["skip"] = True
+                c["_rec"]["outcome"] = "BEHAVIOUR_CHANGED"
                 self.buf.execute("INSERT INTO breaks (flush, mutation, outcome, reason) VALUES (?,?,?,?)",
                                  (flush_id, name, "BEHAVIOUR_CHANGED", f"source passed={not passed}, canary passed={passed}"))
                 continue
@@ -356,11 +416,12 @@ class Ring:
         for name, src, c in cands:
             if c.get("skip"):
                 continue
-            self.buf.execute(
+            cid = self.buf.execute(
                 "INSERT INTO buffer (slot, kind, task_id, family, hash, nhash, content, verdict_json, grader_ver, seal,"
                 " canary, mutation, src_id) VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?)",
                 (c["slot"], c["kind"], c["task_id"], c["family"], c["hash"], c["nhash"], c["content"],
-                 c["verdict_json"], c["grader_ver"], c["seal"], name, src["id"]))
+                 c["verdict_json"], c["grader_ver"], c["seal"], name, src["id"])).lastrowid
+            self._rec[cid] = c["_rec"]
             made += 1
         return made
 
@@ -437,9 +498,11 @@ class Ring:
                          r["grader_ver"], r["canary"], r["id"]))
                     committed += 1
             if r["canary"]:
+                out, after = "LEAK" if state == "LEAKED" else "CAUGHT", int(pos.get(r["src_id"], -1) > pos[r["id"]])
                 self.buf.execute("INSERT INTO breaks (flush, mutation, buffer_id, outcome, reason, src_after) VALUES (?,?,?,?,?,?)",
-                                 (fid, r["mutation"], r["id"], "LEAK" if state == "LEAKED" else "CAUGHT", why,
-                                  int(pos.get(r["src_id"], -1) > pos[r["id"]])))
+                                 (fid, r["mutation"], r["id"], out, why, after))
+                if r["id"] in self._rec:
+                    self._rec[r["id"]].update(outcome=out, reason=why, src_after=after)
             self.buf.execute("UPDATE buffer SET state = ?, reason = ?, flush = ? WHERE id = ?", (state, why, fid, r["id"]))
         real = sum(1 for r in rows if not r["canary"])
         self.buf.execute("UPDATE flushes SET real = ?, canaries = ?, committed = ?, leaked = ?, displaced = ? WHERE id = ?",
@@ -603,14 +666,35 @@ def replay(a):
            "fuzz_per_mutator": FUZZ_PER_MUTATOR, "turns": len(turns), "wall_s": round(time.time() - t0, 1),
            "verdict_mismatch": mism, "ingest": ing, "flush": fl, "flood_flush": ffl, "flood_fixture_states": fx_states,
            "real_states": {r[0]: r[1] for r in ring.buf.execute("SELECT state, COUNT(*) FROM buffer WHERE canary = 0 GROUP BY state")},
-           "bar": b}
+           "bar": b, "records": ring.records}
+    if a.baseline:   # record-only identity check: every earlier count reproduces, every regraded record is filled
+        base = json.load(open(a.baseline))
+        keys = ["turns", "verdict_mismatch", "ingest", "flush", "flood_flush", "flood_fixture_states", "real_states"]
+        diff = [k for k in keys if res[k] != base[k]]
+        bp, rp = base["bar"]["per_mutation"], b["per_mutation"]
+        diff += [f"per_mutation.{m}" for m in sorted(set(bp) | set(rp)) if bp.get(m) != rp.get(m)]
+        diff += ["bar.not_run"] * (base["bar"]["not_run"] != b["not_run"]) + ["bar.met"] * (base["bar"]["met"] != b["met"])
+        regraded = [r for r in ring.records if "src_exc" in r]
+        unfilled = [r for r in regraded if "outcome" not in r or r["src_exc"] is None or r["can_exc"] is None
+                    or (r["mutation"] == "rename" and not r.get("spellings"))]
+        named = [r for r in regraded if r["outcome"] == "BEHAVIOUR_CHANGED" or (EXPECT.get(r["mutation"]) == "order"
+                 and r["outcome"] == "LEAK" and not r["src_after"] and r["reason"] == "rules ok")]
+        res["record_bar"] = {"baseline": os.path.basename(a.baseline), "diff": diff, "regraded": len(regraded),
+                             "unfilled": len(unfilled), "named": named,
+                             "met": not diff and not unfilled and len(ring.records) > 0}
     print(ring.report())
     print(json.dumps({k: v for k, v in res.items() if k != "bar"}, indent=1))
     print("bar", "MET" if res["bar"]["met"] else "NOT MET", {m: d for m, d in sorted(res["bar"]["per_mutation"].items()) if not d["ok"]},
           "not run:", res["bar"]["not_run"])
+    if a.baseline:
+        rb = res["record_bar"]
+        print("record bar", "MET" if rb["met"] else "NOT MET", "diff:", rb["diff"], "regraded:", rb["regraded"],
+              "unfilled:", rb["unfilled"], "named:", json.dumps(rb["named"]))
     if a.out:
         with open(a.out, "w") as f:
             json.dump(res, f, indent=1)
+    if a.baseline:
+        return 0 if res["record_bar"]["met"] else 1
     return 0 if res["bar"]["met"] else 1
 
 
@@ -714,6 +798,24 @@ def selftest():
         states = {r[0]: r[1] for r in ring.buf.execute("SELECT state, COUNT(*) FROM buffer WHERE canary = 0 GROUP BY state")}
         check("flood: fixtures all commit, the canary is quarantined by the flood rule",
               states == {"COMMITTED": FLOOD_TOTAL - 1} and fb["met"] and fl["canaries"] == 1)
+    check("exc_type", [exc_type(True, ""), exc_type(False, "timeout"), exc_type(False, "grader: x"),
+                       exc_type(False, 'Traceback:\n  File "s.py", line 3\n    assert f(1)\nAssertionError: (1, 2)'),
+                       exc_type(False, "  x\nNameError: name 'f' is not defined"), exc_type(False, "'i1'], 5)")]
+          == ["pass", "timeout", "grader", "AssertionError", "NameError", "unknown"])
+    sp = "class A:\n    def __init__(s): s.go()\n    def go(s): return 'go'\ndef solve(x):\n    return A().go\n"
+    check("spellings", spellings(sp) == ["attribute", "def", "dunder", "string"] and spellings("def f(:\n") == ["unparsed"])
+    with tempfile.TemporaryDirectory() as d:   # Record: filled per regraded canary, decisions unchanged
+        ring = Ring(d, fuzz=True, seed=2, regrade=lambda items: [(False, "AssertionError")] * len(items))
+        v = {"passed": False, "err": "AssertionError"}
+        for i in range(6):
+            c = f"def solve(xs):\n    return helper(xs) + {i}\ndef helper(xs):\n    return len(xs)\n"
+            ring.admit(1, "fail", f"t{i}", "fam", c, v, ring.seal(1, "fail", f"t{i}", "fam", c, v))
+        ring.flush()
+        rg = [r for r in ring.records if "src_exc" in r]
+        rn = [r for r in rg if r["mutation"] == "rename"]
+        check("record: regraded canaries carry both exc types and an outcome",
+              rg and all(r["src_exc"] == r["can_exc"] == "AssertionError" and "outcome" in r for r in rg))
+        check("record: rename carries its spellings", rn and all(r["spellings"] == ["def", "name"] for r in rn))
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -737,6 +839,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--parallel", type=int, default=4, help="grader processes in flight (1 GiB address space each)")
     ap.add_argument("--out")
+    ap.add_argument("--baseline", help="replay JSON at the same seed: exit 0 only if every count reproduces (Record)")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
