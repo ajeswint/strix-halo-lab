@@ -1,0 +1,123 @@
+<mxfile host="drawio" version="32.4.1">
+  <diagram id="crawdad-v0" name="CRAwDAD debate tree v0">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="&lt;b&gt;CRAwDAD dual-agent debate as a decision tree (v0, 2026-10-15)&lt;/b&gt;&lt;br&gt;Vamosi &amp;amp; Forkert, arXiv 2511.22854 (AAMAS 2026). Drawn by Claude from the paper's text; the paper has no architecture figure (its Fig. 1 is a worked example). One question = one walk from root to a leaf." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="1300" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- root -->
+        <mxCell id="root" value="&lt;b&gt;CLadder question&lt;/b&gt;&lt;br&gt;random first speaker (coin)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="580" y="65" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ===== left subtree: Qwen3 first ===== -->
+        <mxCell id="L1" value="&lt;b&gt;R1  Qwen3-32B&lt;/b&gt;&lt;br&gt;full CausalCoT prompt, &quot;be confident&quot;&lt;br&gt;rationale + yes/no + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="230" y="180" width="220" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="L2" value="&lt;b&gt;R2  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;scrutinise; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="230" y="300" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="LF2" value="&lt;b&gt;FINAL at R2&lt;/b&gt;&lt;br&gt;consensus, 2 rounds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="420" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L3" value="&lt;b&gt;R3  Qwen3-32B&lt;/b&gt;&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="330" y="420" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="LF3" value="&lt;b&gt;FINAL at R3&lt;/b&gt;&lt;br&gt;Qwen3 revised to agree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="190" y="540" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="L4" value="&lt;b&gt;R4  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="420" y="540" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="LF4" value="&lt;b&gt;FINAL at R4&lt;/b&gt;&lt;br&gt;R1-Distill's answer stands,&lt;br&gt;even if they still disagree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="420" y="650" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eRL" value="Qwen3 first" style="endArrow=classic;html=1;" edge="1" parent="1" source="root" target="L1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL12" value="rationale + answer + confidence&lt;br&gt;(reasoning trace withheld)" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="L1" target="L2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL2F" value="agree" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="L2" target="LF2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL23" value="disagree: critique" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="L2" target="L3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL3F" value="revise" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="L3" target="LF3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL34" value="defend: rebuttal" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="L3" target="L4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eL4F" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="L4" target="LF4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== right subtree: R1-Distill first (mirror) ===== -->
+        <mxCell id="R1" value="&lt;b&gt;R1  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;full CausalCoT prompt, &quot;be confident&quot;&lt;br&gt;rationale + yes/no + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="930" y="180" width="220" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="R2" value="&lt;b&gt;R2  Qwen3-32B&lt;/b&gt;&lt;br&gt;scrutinise; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="930" y="300" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="RF2" value="&lt;b&gt;FINAL at R2&lt;/b&gt;&lt;br&gt;consensus, 2 rounds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="740" y="420" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="R3" value="&lt;b&gt;R3  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="420" width="190" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="RF3" value="&lt;b&gt;FINAL at R3&lt;/b&gt;&lt;br&gt;R1-Distill revised to agree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="890" y="540" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="R4" value="&lt;b&gt;R4  Qwen3-32B&lt;/b&gt;&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="540" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="RF4" value="&lt;b&gt;FINAL at R4&lt;/b&gt;&lt;br&gt;Qwen3's answer stands,&lt;br&gt;even if they still disagree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="650" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eRR" value="R1-Distill first" style="endArrow=classic;html=1;" edge="1" parent="1" source="root" target="R1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR12" value="rationale + answer + confidence&lt;br&gt;(reasoning trace withheld)" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="R1" target="R2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR2F" value="agree" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="R2" target="RF2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR23" value="disagree: critique" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="R2" target="R3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR3F" value="revise" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="R3" target="RF3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR34" value="defend: rebuttal" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="R3" target="R4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eR4F" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="R4" target="RF4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== side rails ===== -->
+        <mxCell id="extract" value="&lt;b&gt;Extractor: Granite 3.3 2B&lt;/b&gt;&lt;br&gt;reads every reply (blue and orange nodes), returns yes/no + confidence. Not a judge." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="750" width="400" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="grade" value="&lt;b&gt;Grade: CLadder answer key&lt;/b&gt; on the leaf's answer. No judge model. Ours would be the unit tests on a fresh seed." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="470" y="750" width="400" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="stats" value="&lt;b&gt;Leaf shares (paper Fig. 6, pooled over first speaker):&lt;/b&gt; FINAL at R2 ~93% / 82% / 75% for Rung 1 / 2 / 3. Harder questions go deeper. Persuasion follows opponent confidence (Fig. 4); defenders do not lower confidence (Fig. 5). Overall: Qwen3 84.16 -&amp;gt; 89.41%, R1-Distill 78.03 -&amp;gt; 87.45%. 380 h for 10,112 questions on Ollama." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="900" y="740" width="440" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="blue = Qwen3-32B &amp;nbsp; orange = DeepSeek-R1-Distill-Qwen-32B &amp;nbsp; green = leaf (debate ends) &amp;nbsp; depth cap = 4 rounds" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="900" height="25" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
