@@ -18,8 +18,8 @@ import glob, json, math, os, sys, time, urllib.request
 
 API = os.environ.get("FIRSTLOAD_API", "http://127.0.0.1:8081")   # override: stub test only
 DIM = {"rag1": 1024, "rag2": 768, "rag2cpu": 768}
-# Query/document prefixes: Qwen3-Embedding card (Instruct/Query); EmbeddingGemma v1 card ("task: ... | query:").
-# TBD: the -2 GGUF carries no prompt metadata; check its card. The GPU-vs-cpu check does not depend on it.
+# Query/document prefixes: Qwen3-Embedding card (Instruct/Query); google/embeddinggemma-2 card, code retrieval
+# (README Models). Only the ranking check depends on them; the GPU-vs-cpu cosine does not.
 PREFIX = {"rag1": ("Instruct: Given a question, retrieve code that answers it\nQuery: ", ""),
           "rag2": ("task: code retrieval | query: ", "title: none | text: ")}
 PREFIX["rag2cpu"] = PREFIX["rag2"]

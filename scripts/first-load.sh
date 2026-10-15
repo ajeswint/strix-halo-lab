@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First loads of the CRAwDAD pair and the RAG servers, one at a time through llmctl. Quick and dirty smoke
 # test, not a benchmark. GPU: run only on the user's go (each load needs READY; llmctl prints the preflight).
-# Usage: scripts/first-load.sh [OUTDIR] [STEP ...]   OUTDIR default /data/bench/first-load;
+# Usage: scripts/first-load.sh [STEP ...]   output dir: FIRSTLOAD_OUT, default /data/bench/first-load;
 #        STEP from rag1 rag2 rag2cpu rerank qwen32 r1d32 (default: all, cheap first). rag2cpu needs rag2's vectors.
 # Each step: invite (defaults: vk, ctx 32768 LLMs / 8192 RAG, np 1) -> llmctl status (the session note holds the
 # GTT delta over the pre-invite baseline, for llmctl gtt_need) -> probe under llmctl run -> bye.
@@ -10,7 +10,7 @@
 # Results: OUTDIR/first-load.jsonl (one line per probe, incl. server build_info) and OUTDIR/status.log.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-OUT=${1:-/data/bench/first-load}; shift || true
+OUT=${FIRSTLOAD_OUT:-/data/bench/first-load}
 STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(rag1 rag2 rag2cpu rerank qwen32 r1d32)
 CTL=${LLMCTL:-$here/llmctl.py}   # LLMCTL / FIRSTLOAD_API: stub test only (no GPU)
 mkdir -p "$OUT"
