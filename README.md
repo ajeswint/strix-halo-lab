@@ -1000,6 +1000,20 @@ Stated before any run (2026-10-14; the user: "go on the Attribute.attr pre-run .
 - Expected EXPECT misses, the judge result: B inject_comment_oblique only. A's rename miss should close if row 39 moves. The comment leak is not this pre-run.
 - Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-attr/` (absent now). Earlier roots and results are untouched.
 
+Result (run 2026-10-14 at 4df5a6e, grader `grade-65b662df4ba4`, tree clean apart from the two untracked fix15 files; no model loaded; roots `/data/ring-attr/A`-`E`; per-arm JSON and log in `bench/loop/results/ring-attr-v5-<arm>.json|.log`). **Bar NOT MET as written**: B, C and D MET; A and E exit 1. Each failure is exactly one row, and that row is a predicted exhibit. The pre-run contradicted itself: bar item 2 required every non-target record to keep its reason, and the exhibits predicted a `rules_outcome` flip, which cannot happen without the reason changing from "rules ok" to "duplicate". Claude wrote both. Grok 4.7 did not catch it before the run. The bar is not redefined after the fact.
+- The target moved: A src_id 39 (v5_06, AttributeError on both sides) went LEAK / rules ok -> CAUGHT / duplicate, with `src_after` 0 and both types unchanged. A's EXPECT rename miss closed. EXPECT misses now: B inject_comment_oblique only.
+- **The false duplicate showed up as predicted, on both exhibits.**
+  - A src_id 45: v5_06; the source defines `__eq__`, `__hash__`, `__init__`; types AssertionError -> TypeError.
+  - E src_id 23: v5_05; the source defines `__eq__`, `__hash__`, `__init__`; types ValueError -> AttributeError.
+
+  Both went `rules_outcome` LEAK -> CAUGHT / duplicate (outcome still BEHAVIOUR_CHANGED) while their grades stayed split. With `Attribute.attr` normalized, the guardian calls a program whose renamed dunders broke it a duplicate of its source. This time it is a measured fact, not an inference. On these two rows the exception-type rule had already removed them from the score.
+- Everything else held on all five arms: 0 other mismatches. Real-row states and displaced are identical to ring-exc2-v5. Flood is ok. Wall: A 185 s, B 124, C 314, D 303, E 427.
+- Where the memring fuzz line stops (the user: "finish with one more run and then stop this line"):
+  - With the API kept, readable tails, the exception-type rule and `--norm-attr`, the python guardian holds every order-class trial on the v5 arms except one: the B v5_07 comment canary on code that does not parse. That is the documented fallback gap, and comment stripping was rejected.
+  - `--norm-attr` turns two broken programs into duplicates. Only the exception-type rule kept them out of the score.
+  - None of these flags is a default. Turning any of them on for the live ring is a separate decision.
+  - Not done: the LLM guardian and adversary, live canaries, retrieval into prompts, a pass-row rename sample.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
