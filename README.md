@@ -975,6 +975,31 @@ Wall: A 185 s, B 124, C 314, D 303, E 427.
   - The comment gap fits the text-fallback hash. Also unproven: the hash path is not recorded.
 - Next (each needs the user's go): the `Attribute.attr` pre-run, scored against this record. Its pre-run has to name the renamed-`__init__` false duplicate (Grok 4.7). Comment stripping in the fallback stays rejected, so the B comment leak stays a documented gap unless a new method is proposed.
 
+## memring guardian: Attribute.attr in `_Norm`, one-row bar (pre-run, last run of this line)
+
+Stated before any run (2026-10-14; the user: "go on the Attribute.attr pre-run ... finish with one more run and then stop this line"; Grok 4.7 set the bar). Written by Claude. This is the first change to the guardian's rules on this line. It is measure-only (opt-in flag) and not a keep/drop. It is the last run of the memring fuzz line: after its result, the line stops.
+- Change (this commit, `bench/loop/memring.py`):
+  - `_Norm(attr=True)` maps `Attribute.attr` through the same spelling map as Name, arg and def names.
+  - `nhash(content, attr)`. `Ring(norm_attr=)` uses it for every row and canary, in the main ring and the flood-fixture ring. `replay --norm-attr` turns it on. Off by default: a 20-row smoke with it off reproduces the exception-type smoke's records, bar and flush exactly.
+  - Known cost, named in advance (Grok 4.7): a renamed dunder now hashes as the same program, though `Obj()` no longer calls the renamed `__init__`. The guardian cannot see that.
+  - `replay --attr-ref J`, whose exit code follows the bar below. It also prints the exhibits, which are outside the exit code.
+  - New selftest: an attribute-site rename is a duplicate only with `attr`. `memring.py`, `run.py` and `agent.py` selftests pass.
+  - Checked offline on `/data/ring-exc2`, before the run: with `attr`, the real-row duplicate grouping is identical on all five arms, so no real rows merge. No type-matching rename canary decided before its source has an attribute spelling, so no new displacement is predicted.
+- Command, per arm: `python3 bench/loop/memring.py replay --root /data/ring-attr/A --set v5 --slot 1 --seed 0 --keep-prompt-names --exc-rule --norm-attr --attr-ref bench/loop/results/ring-exc2-v5-A.json --out bench/loop/results/ring-attr-v5-A.json bench/loop/results/qwen-v5-sym-A-solo.jsonl`. B-E are the same with their root, slot, reference, out and file.
+- Bar (Grok 4.7), per arm, all must hold:
+  1. The target rows move from LEAK / rules ok to CAUGHT / duplicate, with `src_after` and both exception types unchanged. The target rows are the source-first, type-matching rename leaks with an attribute spelling in `ring-exc2-v5-<arm>.json`. That is exactly one row in all: A, src_id 39, v5_06, AttributeError on both sides. The other arms have no target.
+  2. Every other record keeps its outcome, reason, `src_after` and types.
+  3. Real-row states and displaced are the same as ring-exc2-v5.
+  4. Flood ok.
+
+  One row cannot carry a rate. The result is "one row moved" or not.
+- Exhibits, printed and not in the exit code. These are predictions, written now:
+  - A src_id 45 (v5_06; its source defines `__eq__`, `__hash__`, `__init__`; AssertionError -> TypeError, already BEHAVIOUR_CHANGED). Predicted: `rules_outcome` moves LEAK -> CAUGHT / duplicate, while the types stay AssertionError and TypeError. If it does, the guardian has called a program a duplicate after its grades had already split. That is the false duplicate named above.
+  - E src_id 23 (v5_05, attribute spelling, ValueError -> AttributeError, BEHAVIOUR_CHANGED, `rules_outcome` LEAK). Predicted: the same flip.
+  - B src_id 63 and D src_id 25 (no attribute spelling) are already CAUGHT / duplicate. They stay.
+- Expected EXPECT misses, the judge result: B inject_comment_oblique only. A's rename miss should close if row 39 moves. The comment leak is not this pre-run.
+- Memory plan: no model, no GPU, no preflight. 4 grader processes at 1 GiB `RLIMIT_AS` each. Fresh roots under `/data/ring-attr/` (absent now). Earlier roots and results are untouched.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.

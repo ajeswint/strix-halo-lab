@@ -220,9 +220,17 @@ def spellings(content, keep=frozenset()):
 
 
 class _Norm(ast.NodeTransformer):
-    """Identifiers -> positional placeholders, docstrings dropped. Catches renames and reformatting, not dead code."""
-    def __init__(self):
-        self.names = {}
+    """Identifiers -> positional placeholders, docstrings dropped. Catches renames and reformatting, not dead code.
+    attr=True (Ring(norm_attr=True)) also maps Attribute.attr through the same spelling map, so a method renamed at
+    its def and at every self.x / obj.x site hashes as the same program; a renamed dunder does too (not detected)."""
+    def __init__(self, attr=False):
+        self.names, self.attr = {}, attr
+
+    def visit_Attribute(self, node):
+        self.generic_visit(node)
+        if self.attr:
+            node.attr = self._n(node.attr)
+        return node
 
     def _n(self, name):
         return self.names.setdefault(name, f"v{len(self.names)}")
@@ -255,9 +263,9 @@ class _Norm(ast.NodeTransformer):
         return self._body(node)
 
 
-def nhash(content):
+def nhash(content, attr=False):
     try:
-        tree = _Norm().visit(ast.parse(content))
+        tree = _Norm(attr).visit(ast.parse(content))
         return sha(ast.dump(tree, annotate_fields=False))
     except (SyntaxError, ValueError, RecursionError):
         return sha(" ".join(content.split()))
@@ -265,13 +273,13 @@ def nhash(content):
 
 class Ring:
     def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None, keep_names=None,
-                 exc_rule=False):
+                 exc_rule=False, norm_attr=False):
         """regrade: [(task_id, content)] -> [(passed, err)] from run.grade, for inside canaries.
         keep_names: {task_id: names rename must not touch} (Record); default none beyond solve and main."""
         self.root, self.live_canaries, self.rng, self.fuzz = root, live_canaries, random.Random(seed), fuzz
         self.regrade, self.keep_names, self.rename_skipped = regrade, keep_names or {}, 0
         self.records, self._rec = [], {}   # Record (docstring); _rec: canary buffer id -> its record
-        self.exc_rule, self._bc_kept = exc_rule, set()   # exc_rule (docstring); canary ids kept in place as BEHAVIOUR_CHANGED
+        self.exc_rule, self._bc_kept, self.norm_attr = exc_rule, set(), norm_attr   # exc_rule (docstring); canary ids kept in place as BEHAVIOUR_CHANGED
         os.makedirs(root, exist_ok=True)
         kp = os.path.join(root, "seal.key")
         if not os.path.exists(kp):
@@ -321,7 +329,7 @@ class Ring:
         cur = self.buf.execute(
             "INSERT INTO buffer (slot, kind, task_id, family, hash, nhash, content, verdict_json, grader_ver, seal)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (slot, kind, task_id, family, sha(content), nhash(content), content, json.dumps(verdict, sort_keys=True), GRADER_VER, seal))
+            (slot, kind, task_id, family, sha(content), nhash(content, self.norm_attr), content, json.dumps(verdict, sort_keys=True), GRADER_VER, seal))
         return cur.lastrowid, None
 
     # ---- guardian adversary --------------------------------------------------------------------------------
@@ -367,7 +375,7 @@ class Ring:
             c = fn(dict(src))
         if c is None:
             return None
-        c["hash"], c["nhash"], c["inside"] = sha(c["content"]), nhash(c["content"]), inside
+        c["hash"], c["nhash"], c["inside"] = sha(c["content"]), nhash(c["content"], self.norm_attr), inside
         if inside:
             c["seal"] = self._mac(c["slot"], c["kind"], c["task_id"], c["family"], c["hash"], json.loads(c["verdict_json"]), c["grader_ver"])
         return c
@@ -442,7 +450,7 @@ class Ring:
             try:
                 c = self._m_flood(src) if name == "flood" else self.mutate(name, src)
                 if name == "flood":
-                    c["hash"], c["nhash"], c["inside"] = sha(c["content"]), nhash(c["content"]), True
+                    c["hash"], c["nhash"], c["inside"] = sha(c["content"]), nhash(c["content"], self.norm_attr), True
             except Exception as e:  # an adversary that crashes is logged, not fatal
                 self.buf.execute("INSERT INTO breaks (flush, mutation, outcome, reason) VALUES (?,?,?,?)",
                                  (flush_id, name, "ADVERSARY_ERROR", repr(e)[:300]))
@@ -704,7 +712,7 @@ def replay(a):
                              else (False, "no code block"), turns))
     mism = [(t["task"], t["episode"], t["turn"]) for t, (p, _) in zip(turns, verdicts) if t["code"] is not None and p != t["passed"]]
     keep = {t["id"]: prompt_names(t["prompt"]) for t in run.TASKS} if a.keep_prompt_names else None
-    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, exc_rule=a.exc_rule)
+    ring = Ring(a.root, fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, exc_rule=a.exc_rule, norm_attr=a.norm_attr)
     ing = ring.ingest(a.slot, fam.__getitem__, turns, verdicts)
     fl = ring.flush()
     b = ring.bar({m: e for m, e in EXPECT.items() if m != "flood"})
@@ -712,7 +720,7 @@ def replay(a):
     # FLOOD_FAMILY commit (count == the max(2, share x total) line), the rest in FLOOD_OTHER, then one flood canary of
     # FLOOD_FAMILY decided last (id order): the first row over the line, predicted QUARANTINED by the flood rule.
     # the fixture ring never takes exc_rule: flood is a count control, and a type label must not remove its trial
-    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep)
+    fring = Ring(os.path.join(a.root, "flood"), fuzz=True, seed=a.seed, regrade=regrade, keep_names=keep, norm_attr=a.norm_attr)
     nx = int(flood_line(FLOOD_TOTAL))
     picked, seen_n = [], set()
     for t, v in zip(turns, verdicts):
@@ -771,6 +779,35 @@ def replay(a):
                                  "exc_moved": moved, "real_err": errs, "verdict_mismatch": len(mism),
                                  "met": not bad and not mism and (errs is None or (errs["same_ids"]
                                                                                    and errs["changed_with_readable_old_type"] == 0))}
+    if a.attr_ref:   # norm_attr scored against the record of the same seed: only the attribute renames may move
+        refd = json.load(open(a.attr_ref))
+        ref, bad, moved, exhibits = refd["records"], [], [], []
+        src_of = {r["id"]: r["content"] for r in ring.buf.execute("SELECT id, content FROM buffer WHERE canary = 0")}
+        for i, (o, n) in enumerate(zip(ref, ring.records)):
+            target = (o["mutation"] == "rename" and "src_exc" in o and o.get("outcome") == "LEAK" and not o["src_after"]
+                      and o["src_exc"] == o["can_exc"] and "attribute" in (o.get("spellings") or []))
+            why = [k for k in ("mutation", "src_id", "src_after", "src_exc", "can_exc") if o.get(k) != n.get(k)]
+            if target:
+                moved.append({"i": i, "src_id": o["src_id"], "task_id": o.get("task_id"), "outcome": n.get("outcome"), "reason": n.get("reason")})
+                if (n.get("outcome"), (n.get("reason") or "")[:9]) != ("CAUGHT", "duplicate"):
+                    why.append("target not CAUGHT as duplicate")
+            elif (o.get("outcome"), o.get("reason")) != (n.get("outcome"), n.get("reason")):
+                why.append("outcome/reason")
+            if o.get("rules_outcome") != n.get("rules_outcome") or "attribute" in (o.get("spellings") or []) and o.get("outcome") == "BEHAVIOUR_CHANGED":
+                exhibits.append({"i": i, "src_id": o["src_id"], "task_id": o.get("task_id"), "types": [n.get("src_exc"), n.get("can_exc")],
+                                 "rules_outcome": [o.get("rules_outcome"), n.get("rules_outcome")], "reason": n.get("reason"),
+                                 "dunders": sorted(set(re.findall(r"\bdef (__\w+__)", src_of.get(o["src_id"], ""))))})
+            if why:
+                bad.append({"i": i, "mutation": o["mutation"], "why": why})
+        if len(ref) != len(ring.records):
+            bad.append({"i": None, "why": [f"records {len(ref)} vs {len(ring.records)}"]})
+        fl = b["per_mutation"].get("flood", {})
+        flood_ok = "flood" not in b["not_run"] and bool(fl.get("ok"))
+        same_real = res["real_states"] == refd["real_states"] and res["flush"]["displaced"] == refd["flush"]["displaced"]
+        res["attr_bar"] = {"reference": os.path.basename(a.attr_ref), "moved": moved, "mismatches": bad, "exhibits": exhibits,
+                           "same_real_and_displaced": same_real, "flood_ok": flood_ok,
+                           "expect_misses": sorted(m for m, x in b["per_mutation"].items() if not x["ok"] and m != "flood"),
+                           "met": not bad and same_real and flood_ok}
     if a.predict:   # exc_rule scored against the record of the same seed (docstring: exc_rule)
         ref = json.load(open(a.predict))["records"]
         new, bad, drops = ring.records, [], 0
@@ -837,6 +874,11 @@ def replay(a):
             json.dump(res, f, indent=1)
     if a.keep_prompt_names:
         print("rename bar", "MET" if res["rename_bar"]["met"] else "NOT MET", json.dumps(res["rename_bar"]))
+    if a.attr_ref:
+        ab = res["attr_bar"]
+        print("attr bar", "MET" if ab["met"] else "NOT MET", "| moved", json.dumps(ab["moved"]), "| flood", "ok" if ab["flood_ok"] else "NOT OK",
+              "| real/displaced", "same" if ab["same_real_and_displaced"] else "CHANGED", "| exhibits (not in the exit code)",
+              json.dumps(ab["exhibits"]), "| EXPECT misses", ab["expect_misses"], "| mismatches", json.dumps(ab["mismatches"])[:1500])
     if a.record_ref:
         print("record-ref bar", "MET" if res["record_ref_bar"]["met"] else "NOT MET", json.dumps(res["record_ref_bar"])[:2000])
     if a.predict:
@@ -844,6 +886,8 @@ def replay(a):
         print("predict bar", "MET" if pb["met"] else "NOT MET", "| prediction", "held" if not pb["mismatches"] else "MISSED",
               "| flood", "ok" if pb["flood_ok"] else "NOT OK (failed control)", "| EXPECT misses (judge result):",
               pb["expect_misses"], "|", json.dumps(pb)[:2000])
+    if a.attr_ref:
+        return 0 if res["attr_bar"]["met"] else 1
     if a.record_ref:
         return 0 if res["record_ref_bar"]["met"] else 1
     if a.predict:
@@ -1008,6 +1052,9 @@ def selftest():
         b1 = r1.bar({m: e for m, e in EXPECT.items() if m != "flood"})
         check("exc_rule: bar() leaves BEHAVIOUR_CHANGED out of n", all(
             b1["per_mutation"].get(m, {"n": 0})["n"] == 0 for m in r1._mutations() if r1._mutations()[m][1]))
+    a1 = "class A:\n    def go(s): return 1\ndef solve(x):\n    return A().go()\n"
+    a2 = "class A:\n    def go_0x(s): return 1\ndef solve(x):\n    return A().go_0x()\n"
+    check("norm_attr: an attribute-site rename is a duplicate only with attr", nhash(a1) != nhash(a2) and nhash(a1, True) == nhash(a2, True))
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import run
     names, ver = grader_surface()
@@ -1039,6 +1086,8 @@ def main():
     ap.add_argument("--keep-prompt-names", action="store_true",
                     help="rename leaves the task prompt's backticked name( entry points alone (fuzzer fix)")
     ap.add_argument("--exc-rule", action="store_true", help="exception-type mismatch is BEHAVIOUR_CHANGED, kept in place")
+    ap.add_argument("--norm-attr", action="store_true", help="the guardian's nhash also normalizes Attribute.attr")
+    ap.add_argument("--attr-ref", help="replay JSON of the same seed without --norm-attr: exit 0 only if just the attribute renames move")
     ap.add_argument("--record-ref", help="replay JSON of the same seed before a grader change: exit 0 only if every decision holds")
     ap.add_argument("--ref-root", help="with --record-ref: that replay's root, to compare the real rows' err bytes")
     ap.add_argument("--predict", help="replay JSON of the same seed without --exc-rule: exit 0 only if every record matches")
