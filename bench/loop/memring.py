@@ -721,23 +721,25 @@ def llm_guard(a):
         out = list(pool.map(judge, rows))
     for o in out:
         o.pop("content")
-    blocked = lambda o: o["verdict"] in ("quarantine", "other")   # what _llm_veto does: anything not COMMIT vetoes
-    def rate(sel):
+    def rate(sel):   # quarantine = the bar's numerator; veto = what _llm_veto blocks live (quarantine + other)
         xs = [o for o in out if sel(o) and o["verdict"] != "error"]
-        return {"n": len(xs), "blocked": sum(map(blocked, xs)), "rate": round(sum(map(blocked, xs)) / len(xs), 3) if xs else None}
-    leak, real = rate(lambda o: o["cls"] == "leak"), rate(lambda o: o["cls"] in ("real", "ref"))
+        q = sum(o["verdict"] == "quarantine" for o in xs)
+        v = sum(o["verdict"] in ("quarantine", "other") for o in xs)
+        return {"n": len(xs), "quarantine": q, "rate": round(q / len(xs), 3) if xs else None,
+                "veto": v, "veto_rate": round(v / len(xs), 3) if xs else None}
+    leak, real, ref = rate(lambda o: o["cls"] == "leak"), rate(lambda o: o["cls"] in ("real", "ref")), rate(lambda o: o["cls"] == "ref")
     errs = sum(o["verdict"] == "error" for o in out)
     summ = {"roots": a.roots, "model": a.model, "prompt_sha": sha(veto_prompt({"kind": "{kind}", "family": "{family}", "content": "{content}"}))[:12],
             "rows": len(out), "errors": errs, "other": sum(o["verdict"] == "other" for o in out), "wall_s": round(time.time() - t0, 1),
             "leak_catch": leak, "false_positive": real, "order_leaks": rate(lambda o: o["cls"] == "order"),
-            "real_pass_fp": rate(lambda o: o["cls"] == "real" and o["kind"] == "pass"), "ref_fp": rate(lambda o: o["cls"] == "ref"),
+            "real_pass_fp": rate(lambda o: o["cls"] == "real" and o["kind"] == "pass"), "ref_fp": ref,
             "per_mutation": {m: rate(lambda o, m=m: o["mutation"] == m) for m in sorted({o["mutation"] for o in out if o["mutation"]})},
             "per_arm": {x: {"leak": rate(lambda o, x=x: o["arm"] == x and o["cls"] == "leak"),
                             "fp": rate(lambda o, x=x: o["arm"] == x and o["cls"] == "real")} for x in sorted({o["arm"] for o in out})},
             "hash_guardian": "committed every row here: catch 0, false positives 0, by construction"}
-    summ["bar"] = {"catch_min": 0.5, "fp_max": 0.05, "errors_max": round(0.02 * len(out)),
+    summ["bar"] = {"catch_min": 0.5, "fp_max": 0.05, "ref_quarantine_max": 1, "errors_max": round(0.02 * len(out)),
                    "met": leak["rate"] is not None and leak["rate"] >= 0.5 and real["rate"] is not None and real["rate"] <= 0.05
-                          and errs <= round(0.02 * len(out))}
+                          and ref["quarantine"] <= 1 and errs <= round(0.02 * len(out))}
     print(json.dumps({k: v for k, v in summ.items() if k != "per_mutation"}, indent=1))
     print("llm-guard bar", "MET" if summ["bar"]["met"] else "NOT MET")
     with open(a.out, "w") as f:
