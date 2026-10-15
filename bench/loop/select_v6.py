@@ -2,7 +2,8 @@
 
 check LABEL   results/LABEL.summary.json against results/LABEL.regrade.txt (agent.py --regrade output;
               lines starting "llmctl:" are skipped). Solved per task must equal regrade fresh > 0.
-select LABEL  check, then pick stage 2 inputs by rule: unsolved tasks with a coded row. Writes
+select LABEL  check, then pick stage 2 inputs by rule: unsolved tasks whose last coded row failed the
+              visible tests (agent.stored_failure refuses any other). Writes
               results/fix-v6-stored.jsonl (those tasks' rows) and results/fix-v6-tasks.txt (comma list).
 
 Exit 0 ok; 2 invalid (regrade != summary, missing or unreadable input); 3 thin (U < --min-u, nothing written).
@@ -49,10 +50,17 @@ def main():
     if a.mode == "check":
         return 0
     rows = [json.loads(l) for l in open(os.path.join(a.results, a.label + ".jsonl"))]
-    coded = {r["task"] for r in rows if r["code"] is not None}
+    last = {}                                # last coded row per task: what agent.stored_failure starts from
+    for r in rows:
+        if r["code"] is not None:
+            last[r["task"]] = r
     unsolved = [t["task"] for t in summ["per_task"] if not t["solved"]]
-    usable = [t for t in unsolved if t in coded]
-    print("unsolved", len(unsolved), "usable", len(usable), "not usable", sorted(set(unsolved) - set(usable)))
+    # usable = stored_failure will accept it: a coded row exists and the last one failed the visible tests
+    # (a visible pass that failed the fresh seed is unsolved but refused by fix mode)
+    usable = [t for t in unsolved if t in last and not last[t]["passed"]]
+    print("unsolved", len(unsolved), "usable", len(usable),
+          "no coded turn", sorted(t for t in unsolved if t not in last),
+          "last coded turn passed visible", sorted(t for t in unsolved if t in last and last[t]["passed"]))
     print("usable ids", ",".join(usable))
     if len(usable) < a.min_u:
         print(f"THIN: U = {len(usable)} < {a.min_u}; stage 2 and the control do not run")
