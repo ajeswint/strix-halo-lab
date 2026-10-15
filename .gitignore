@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
+# fix-stage inputs written by bench/loop/select_fix.py (and the v4/v5 fix15 runs); untracked by design
+bench/loop/results/fix*-stored.jsonl
+bench/loop/results/fix*-tasks.txt

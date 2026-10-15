@@ -9,6 +9,7 @@
 - Do not propose: Docker (podman is installed), Postgres (SQLite decided), Unsloth in the torch env, `download.pytorch.org` ROCm wheels, IOMMU off, GTT above 108 GiB.
 - When installing into `/data/envs/torch` with the AMD wheel index, always add `--index-strategy unsafe-best-match` and the constraints file `envs/torch-constraints.txt`.
 - Own errors plainly and correct forward.
+- Review roles (who writes, who attacks, who judges): `docs/review-roles.md`.
 - Stay in this repo's scope (the Roadmap in README.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
 - Install the entire stack for a step first, then test. Never test one component while other installs are pending or running.
 - Model servers start and stop only through `scripts/llmctl.py` (sessions; `llm-serve` skill). Long clients (agent.py, run.py) run as `scripts/llmctl.py run -- ...` inside an ACTIVE session: that is the memory cap (2026-10-07: a 95 GiB python3 OOM-killed Cursor). Ending DeepSeek is the user's, at a terminal.
