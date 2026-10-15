@@ -7,7 +7,8 @@
                                               fuzz replay: regrade every stored coded turn, seal, admit, one flush
                                               with the fuzzer on; per-mutation table vs EXPECT; no server
 
-Design: docs/diagrams/qwen-laguna-v2.drawio. agent.py --ring writes to it (measure-only: nothing is retrieved).
+Design: docs/diagrams/qwen-laguna-v2.drawio; slot roles now follow the CRAwDAD pair (SLOTS below,
+docs/diagrams/crawdad-qd-v2.drawio, README Models). agent.py --ring writes to it (measure-only: nothing is retrieved).
 
 Write gate (admit): the only entry to the buffer. Admits pass / fail / attack rows whose verdict was sealed
 by seal() right after the grader ran. The seal is an HMAC over (slot, kind, task_id, family, content hash, verdict, grader)
@@ -19,11 +20,11 @@ canary the guardian let through, LEAKED. Nothing in the buffer is ever retrieved
 
 Guardian: decides every PENDING row on a flush. Python rules always run (seal, dup by exact and normalized
 hash, kind conflict, family quota, flood share, injection text, size, grader version). An optional LLM
-guardian (slot 3) runs after them and can only veto: it can turn COMMIT into QUARANTINE, never the reverse.
+guardian (SHELVED 2026-10-15 at 4d5cdb1: FP 11.3% > 5%; it was slot 3, which is now R1-Distill's solver slot) runs after them and can only veto: it can turn COMMIT into QUARANTINE, never the reverse.
 The guardian does not see the canary flag.
 
 Guardian adversary: on each flush it injects canaries into the buffer, mutated from real PENDING rows (python
-mutators, plus an optional LLM adversary on slot 4). Inside mutations preserve behaviour and are re-sealed (a model
+mutators; an LLM adversary was planned on slot 4 and is SHELVED, never built). Inside mutations preserve behaviour and are re-sealed (a model
 emitting passing near-copies); outside mutations are forged without the key. A canary the guardian commits is a break, logged in
 breaks. By default leaked canaries are not written to the slot DBs (measured only); --live-canaries writes
 them, tagged canary=1, to see what the leak does downstream. Failure is expected: deadcode and some injection
@@ -63,8 +64,7 @@ drops BEHAVIOUR_CHANGED with J's outcome as rules_outcome, every other record J'
 replay --baseline J checks that every count
 of an earlier replay at the same seed reproduces and that every regraded record is filled; exit 0 only then.
 
-Placeholders (TBD, set by the user): FAMILY_QUOTA, FLUSH_FAMILY_SHARE, CANARY_RATE, PRUNE_*, the slot 3/4
-models and ports, the family map per task (tasks carry no family field; callers pass one).
+Placeholders (TBD, set by the user): FAMILY_QUOTA, FLUSH_FAMILY_SHARE, CANARY_RATE, PRUNE_*, the family map per task (tasks carry no family field; callers pass one).
 """
 import argparse, ast, hashlib, hmac, json, os, random, re, sqlite3, sys, tempfile, time, urllib.request
 
@@ -75,9 +75,15 @@ FLUSH_FAMILY_SHARE = 0.5      # TBD: one family may be at most this share of a f
 CANARY_RATE = 0.25            # TBD: canaries injected per real PENDING row on each flush
 PRUNE_MIN_RETRIEVALS = 5      # TBD
 PRUNE_THRESHOLD = 0.2         # TBD: mean solved-rate of the tasks a row was retrieved for
-KINDS = ("pass", "fail", "attack")
-LLM_GUARDIAN = None           # TBD: {"api": "http://127.0.0.1:8083", "model": "..."} (slot 3)
-LLM_ADVERSARY = None          # TBD: {"api": "http://127.0.0.1:8084", "model": "..."} (slot 4)
+KINDS = ("pass", "fail", "attack")   # TBD: a "critique" kind with a text dup rule for slots 2 and 4 (not built)
+# Slot roles (user, 2026-10-15): two models x two debate roles. Each model reads only its own two slots,
+# embedded with its own RAG; tests seal every verdict, agreement never does. Data only: nothing reads it yet.
+SLOTS = {1: {"model": "qwen3-32b", "role": "solver", "rag": "rag1"},
+         2: {"model": "qwen3-32b", "role": "critic", "rag": "rag1"},
+         3: {"model": "r1-distill-qwen-32b", "role": "solver", "rag": "rag2"},
+         4: {"model": "r1-distill-qwen-32b", "role": "critic", "rag": "rag2"}}
+LLM_GUARDIAN = None           # SHELVED (4d5cdb1); kept so the llm-guard measurement replays
+LLM_ADVERSARY = None          # SHELVED, never built
 FUZZ_PER_MUTATOR = 10         # TBD: sources per mutator per flush in fuzz mode; 10 so an order mutator has a
                               # source-first trial (P(none) = 2^-10 per mutator per arm; 5 gave ~40% over 15)
 

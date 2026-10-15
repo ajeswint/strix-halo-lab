@@ -44,7 +44,9 @@ export GUARD_CMD
 python3 - <<'PY'
 import os, re, shlex, sys
 
-# 16 GiB: above idle (~0.5 GiB), below the smallest installed model (Laguna, 19.1 GiB).
+# 16 GiB: above idle (~0.5 GiB), below the smallest installed LLM (Qwen3-32B, 18.4 GiB file). The RAG models
+# (<= 4 GiB) sit below it, so a resident RAG server alone does not arm the guard; preflight still refuses a
+# second load beside it (no llama-* process allowed), and llm-serve.sh refuses the cpu backend for LLMs.
 GTT_CUTOFF = 16 * 2**30
 gtt = int(os.environ.get("GUARD_GTT_USED", "0") or 0)
 if gtt <= GTT_CUTOFF:

@@ -1,6 +1,6 @@
 ---
 name: llm-serve
-description: Start, stop, check or read logs of any model server through scripts/llmctl.py sessions (Qwen3.6-35B-A3B or Laguna XS 2.1 on 127.0.0.1:8081, DeepSeek on :8080), and run a client under its memory cap. Use whenever a task needs a model behind the OpenAI-compatible API, and to unload it afterwards.
+description: Start, stop, check or read logs of any model server through scripts/llmctl.py sessions (Qwen3.6-35B-A3B, Laguna XS 2.1, the CRAwDAD pair Qwen3-32B / R1-Distill-Qwen-32B, or a RAG embedder/reranker on 127.0.0.1:8081; DeepSeek V4 Flash on :8080), and run a client under its memory cap. Use whenever a task needs a model behind the OpenAI-compatible API, and to unload it afterwards.
 ---
 
 # Model servers through llmctl
@@ -16,7 +16,7 @@ scripts/llmctl.py run --mem 8G --as 16G -- python3 bench/loop/agent.py --set v4 
 scripts/llmctl.py bye
 ```
 
-- `invite <qwen|laguna|deepseek>`: preflight (printed) -> start -> bounded `/health` wait -> ACTIVE. Options for the small models: `--backend vk|hip --ctx N --np N` (defaults vk, 32768, 1). Any failure ends FAILED with the reason stored and the unit stopped.
+- `invite <qwen|laguna|qwen32|r1d32|rag1|rag2|rerank|deepseek>`: preflight (printed) -> start -> bounded `/health` wait -> ACTIVE. Options for the :8081 models: `--backend vk|hip|cpu --ctx N --np N` (defaults vk, ctx 32768 for LLMs and 8192 for rag1/rag2/rerank, 1 slot; `cpu` only for the RAG models). Any failure ends FAILED with the reason stored and the unit stopped.
 - `bye` ends the ACTIVE session and checks GTT fell under 16 GiB. With no session it ends a resident registered unit (UNOWNED); processes outside a registered unit are reported, not killed.
 - `swap <endpoint>` = `bye` then `invite`, recorded as one transition.
 - `run -- <cmd>` is only allowed inside an ACTIVE session. It wraps the client in a user scope with `MemoryMax` (default 8G), `MemorySwapMax=0` and `RLIMIT_AS` (default 16G, an HTTP client's budget; a GPU client needs `--as` raised) and reports `memory.peak`. A cap kill exits 137 with "memory cap" and leaves the session ACTIVE. Every long client (agent.py, bench/loop/run.py) goes through it: 2026-10-07 a 95 GiB python3 OOM-killed Cursor.
@@ -64,13 +64,13 @@ scripts/llm-serve.sh logs 100
 scripts/llm-serve.sh stop
 ```
 
-Args: `start <qwen|laguna> [hip|vk] [ctx] [parallel]`. Defaults: `vk`, ctx 32768, 1 slot. `-c` is total and is split across slots: 65536 with 4 slots = 16k each. Fixed flags match llama-deepseek.service: `-ngl 999 -fa on -lm none --cache-reuse 256`. Jinja chat templates are on by default in this build.
+Args: `start <qwen|laguna|qwen32|r1d32|rag1|rag2|rerank> [hip|vk|cpu] [ctx] [parallel]`. Defaults: `vk`, ctx 32768 (RAG models 8192), 1 slot. RAG models start with `--embedding` (rag1, rag2) or `--reranking` (rerank) and batch = ubatch = ctx, because an embedding input must fit one ubatch. `cpu` (`--device none -ngl 0`, RAG models only, refused for LLMs because RAM is invisible to gpu-guard) is the f32 reference for EmbeddingGemma 2, whose activations overflow float16. `-c` is total and is split across slots: 65536 with 4 slots = 16k each. Fixed flags match llama-deepseek.service: `-ngl 999 -fa on -lm none --cache-reuse 256`. Jinja chat templates are on by default in this build.
 
-API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35b-a3b`, `laguna-xs-2.1`. DeepSeek is separate: system unit `llama-deepseek` on :8080, alias `deepseek-v4-flash`. Starting it needs the user's yes.
+API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35b-a3b`, `laguna-xs-2.1`, `qwen3-32b`, `r1-distill-qwen-32b`, `qwen3-embedding-0.6b` (`/v1/embeddings`), `embeddinggemma-2` (`/v1/embeddings`), `qwen3-reranker-4b` (`/v1/rerank`). Not loaded yet as of 2026-10-15: the five new ones (llmctl `gtt_need` for them is an estimate until the first load replaces it). DeepSeek is separate: system unit `llama-deepseek` on :8080, alias `deepseek-v4-flash`. Starting it needs the user's yes.
 
 ## Rules
 
-- One model at a time. Qwen and Laguna cannot both be resident (gpu-guard cutoff, user's decision). Switching = `llmctl swap`.
+- One model at a time. Qwen and Laguna cannot both be resident (gpu-guard cutoff, user's decision); neither can the two 32B models or a model and a RAG server (preflight refuses any second llama-* process). Switching = `llmctl swap`.
 - End what you invited when the task is done (`llmctl bye`). A forgotten Qwen holds ~28 GiB of GTT at ctx 65536 np 4 (+22.4 over baseline) and blocks every other load.
 - Backend default `vk` comes from the depth-0 table only (Vulkan tg +16% for Qwen, pp equal). At long prompts HIP may win. Measure before changing the default; see the `measure` skill.
 - Load time: the small-model start waits up to 180 s for `/health`; DeepSeek's wait is 600 s, a first value (measured 21 s on 2026-10-07 with cache state unchecked; cold-cache unmeasured). If it times out, read `logs` before retrying. Do not loop.

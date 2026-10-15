@@ -166,6 +166,11 @@ t 2 'cd ~/projects/strix-halo-lab && ./scripts/llm-serve.sh start qwen'
 t 0 'scripts/llm-serve.sh stop'
 t 0 'scripts/llm-serve.sh status'
 t 0 'scripts/llm-serve.sh logs 100'
+# CRAwDAD pair + RAG names (2026-10-15): same rule, any model name
+tg 0 "$IDLE" 'scripts/llm-serve.sh start qwen32'
+t 2 'scripts/llm-serve.sh start r1d32 hip'
+t 2 'scripts/llm-serve.sh start rag2 cpu'
+t 2 'scripts/llmctl.py invite rerank'
 t 0 'scripts/preflight.sh /data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'
 # scripts/llmctl.py (added 2026-10-07): status is read-only; invite, swap, bye, run are denied while armed
 tg 0 "$IDLE" 'scripts/llmctl.py invite qwen'

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """llmctl: one controller for every model lifecycle, as sessions.
 
-Usage: scripts/llmctl.py invite qwen|laguna [--backend vk|hip] [--ctx N] [--np N]
+Usage: scripts/llmctl.py invite qwen|laguna|qwen32|r1d32|rag1|rag2|rerank [--backend vk|hip|cpu] [--ctx N] [--np N]
        scripts/llmctl.py invite deepseek
        scripts/llmctl.py bye
        scripts/llmctl.py swap <endpoint> [invite options]
@@ -66,6 +66,7 @@ class Endpoint:
     health_wait: int = 180        # bounded seconds for /health after the start command returns
     test_only: bool = False
     preflight: tuple = ()         # test-only override of the preflight argv
+    ctx: int = 32768              # default --ctx when invite does not give one (llm-serve.sh uses the same defaults)
 
 
 # gtt_need is a delta (absolute GTT carries the ~5.8 GiB non-llama client). Measured 2026-10-07 (invite, sampler max):
@@ -75,6 +76,18 @@ class Endpoint:
 ENDPOINTS = {e.name: e for e in (
     Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22.4, serve="qwen"),
     Endpoint("laguna", "user", "llm-8081", 8081, "/data/models/Laguna-XS-2.1-Q4_K_M.gguf", 20.7, serve="laguna"),
+    # CRAwDAD pair + RAGs (2026-10-15). gtt_need here is an ESTIMATE, not measured: file + f16 KV at the default
+    # ctx + ~1.5 GiB buffers. Both 32B: 64 layers x 8 KV heads x 128 = 0.25 MiB/token, 8 GiB at 32768. RAG at ctx
+    # 8192: embedder 0.11 MiB/token, reranker 0.14. Replace each with the measured delta at its first load.
+    Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 27.9, serve="qwen32"),
+    Endpoint("r1d32", "user", "llm-8081", 8081, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 28.0,
+             serve="r1d32"),
+    Endpoint("rag1", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Embedding-0.6B-Q8_0.gguf", 2.0,
+             serve="rag1", ctx=8192),
+    Endpoint("rag2", "user", "llm-8081", 8081, "/data/models/rag/embeddinggemma-2-Q8_0.gguf", 1.0,
+             serve="rag2", ctx=8192),
+    Endpoint("rerank", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Reranker-4B.Q8_0.gguf", 6.6,
+             serve="rerank", ctx=8192),
     # health_wait is a first value: the load took 21 s (2026-10-07, page cache state not checked, probably warm); a cold-cache load is unmeasured.
     Endpoint("deepseek", "system", "llama-deepseek", 8080,
              "/data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf", 85.5,
@@ -255,7 +268,8 @@ def start_argv(ep, opts):
         return ["systemd-run", "--user", "-q", f"--unit={ep.unit}", "--collect", "--property=Restart=no",
                 "python3", "-I", "-c", TEST_SERVER, str(ep.port)]
     if ep.serve:
-        return [str(HERE / "llm-serve.sh"), "start", ep.serve, opts["backend"], str(opts["ctx"]), str(opts["np"])]
+        ctx = opts["ctx"] if opts["ctx"] is not None else ep.ctx
+        return [str(HERE / "llm-serve.sh"), "start", ep.serve, opts["backend"], str(ctx), str(opts["np"])]
     return ["sudo", "-n", SYSTEMCTL, "start", ep.unit]
 
 
@@ -287,15 +301,15 @@ def stop_and_verify(db, sid, ep):
 
 
 def parse_opts(args):
-    opts = {"backend": "vk", "ctx": 32768, "np": 1}
+    opts = {"backend": "vk", "ctx": None, "np": 1}     # ctx None = the endpoint's default (Endpoint.ctx)
     i = 0
     while i < len(args):
         a = args[i]
         if a in ("--backend", "--ctx", "--np") and i + 1 < len(args):
             v = args[i + 1]
             if a == "--backend":
-                if v not in ("hip", "vk"):
-                    raise ValueError("backend must be hip or vk")
+                if v not in ("hip", "vk", "cpu"):
+                    raise ValueError("backend must be hip, vk or cpu")
                 opts["backend"] = v
             else:
                 opts[a[2:]] = int(v)
@@ -550,7 +564,7 @@ def main(argv):
         if cmd == "run":
             return do_run(db, rest)
         if not rest:
-            say(f"usage: {cmd} <endpoint> [--backend vk|hip] [--ctx N] [--np N]")
+            say(f"usage: {cmd} <endpoint> [--backend vk|hip|cpu] [--ctx N] [--np N]")
             return 2
         opts = parse_opts(rest[1:])
         return do_invite(db, rest[0], opts) if cmd == "invite" else do_swap(db, rest[0], opts)

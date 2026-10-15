@@ -28,4 +28,4 @@ Sources: arXiv 2511.22854 (12 pp, appendix A-D read in full) and github.com/finn
 - Keep: the coin, max 4 replies, the critic is not forced to find a flaw, the defend-or-be-persuaded prompt, full labelled history, trace withheld, stop on agreement, grade only at the leaf.
 - Replace: yes/no with `solution.py` plus a verdict line (`accept` / `reject` of the opponent's code). Agreement = the critic accepts. The extractor is the agent.py code-block parser, with no model. A parse failure is a failed turn, never a random answer.
 - Deviate on purpose: context sized to the reasoning budget, not 2048; top_k stated; sampling seeds per reply, as in our runs.
-- Stale in crawdad-qd-v2 (kept as the user's tree for now): its model labels and per-turn timings are Qwen3.6-35B-A3B / DeepSeek V4 Flash. The shape still holds for Qwen3-32B / R1-Distill-Qwen-32B. Their timings are unmeasured (about 6 tok/s ceiling each at ~117 GB/s).
+- crawdad-qd-v2 updated 2026-10-15 to Qwen3-32B / R1-Distill-Qwen-32B, with RAG and slot labels; turn times unmeasured (about 6 tok/s ceiling each at ~117 GB/s).

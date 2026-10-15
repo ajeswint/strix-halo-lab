@@ -1,11 +1,11 @@
 <mxfile host="drawio" version="32.4.1">
   <diagram id="crawdad-qd-v2" name="Qwen + DeepSeek on the debate tree v2">
-    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="960" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="title" value="&lt;b&gt;Our Qwen + DeepSeek stack on the CRAwDAD tree, mapped one-to-one (v2, 2026-10-15)&lt;/b&gt;&lt;br&gt;Same shape as crawdad-v0: coin, 4 rounds max, leaves at R2 / R3 / R4, grade only at the leaf. Our models in the two seats, our grader as the answer key. Node costs are measured per-turn figures from v6 (21a57c2). Sequential hardware: a model swap sits on every edge between colours." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
+        <mxCell id="title" value="&lt;b&gt;Our Qwen + DeepSeek stack on the CRAwDAD tree, mapped one-to-one (v2, 2026-10-15)&lt;/b&gt;&lt;br&gt;Same shape as crawdad-v0: coin, 4 rounds max, leaves at R2 / R3 / R4, grade only at the leaf. Our models in the two seats, our grader as the answer key. Models updated 2026-10-15 to the paper&#39;s own pair (DeepSeek V4 Flash abandoned for this direction). Turn times for this pair are unmeasured. Under the one-model rule a swap sits on every edge between colours." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
           <mxGeometry x="40" y="10" width="1300" height="45" as="geometry" />
         </mxCell>
 
@@ -15,22 +15,22 @@
         </mxCell>
 
         <!-- ===== left subtree: Qwen first ===== -->
-        <mxCell id="L1" value="&lt;b&gt;R1  Qwen3.6-35B-A3B&lt;/b&gt;&lt;br&gt;~97 s / turn&lt;br&gt;task prompt&lt;br&gt;rationale + solution.py + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+        <mxCell id="L1" value="&lt;b&gt;R1  Qwen3-32B&lt;/b&gt;&lt;br&gt;turn time unmeasured&lt;br&gt;task prompt&lt;br&gt;rationale + solution.py + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="230" y="180" width="220" height="65" as="geometry" />
         </mxCell>
-        <mxCell id="L2" value="&lt;b&gt;R2  DeepSeek V4 Flash&lt;/b&gt;&lt;br&gt;~610 s / turn&lt;br&gt;review the code; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+        <mxCell id="L2" value="&lt;b&gt;R2  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;turn time unmeasured&lt;br&gt;review the code; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="230" y="300" width="220" height="55" as="geometry" />
         </mxCell>
         <mxCell id="LF2" value="&lt;b&gt;FINAL at R2&lt;/b&gt;&lt;br&gt;consensus, 2 rounds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="40" y="420" width="160" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="L3" value="&lt;b&gt;R3  Qwen3.6-35B-A3B&lt;/b&gt; ~97 s&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+        <mxCell id="L3" value="&lt;b&gt;R3  Qwen3-32B&lt;/b&gt;&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="330" y="420" width="190" height="50" as="geometry" />
         </mxCell>
         <mxCell id="LF3" value="&lt;b&gt;FINAL at R3&lt;/b&gt;&lt;br&gt;Qwen revised to agree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="190" y="540" width="170" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="L4" value="&lt;b&gt;R4  DeepSeek V4 Flash&lt;/b&gt; ~610 s&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+        <mxCell id="L4" value="&lt;b&gt;R4  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="420" y="540" width="200" height="50" as="geometry" />
         </mxCell>
         <mxCell id="LF4" value="&lt;b&gt;FINAL at R4&lt;/b&gt;&lt;br&gt;DeepSeek's code stands,&lt;br&gt;even if they still disagree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
@@ -60,22 +60,22 @@
         </mxCell>
 
         <!-- ===== right subtree: DeepSeek first (mirror) ===== -->
-        <mxCell id="R1" value="&lt;b&gt;R1  DeepSeek V4 Flash&lt;/b&gt;&lt;br&gt;~610 s / turn&lt;br&gt;task prompt&lt;br&gt;rationale + solution.py + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+        <mxCell id="R1" value="&lt;b&gt;R1  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;turn time unmeasured&lt;br&gt;task prompt&lt;br&gt;rationale + solution.py + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="930" y="180" width="220" height="65" as="geometry" />
         </mxCell>
-        <mxCell id="R2" value="&lt;b&gt;R2  Qwen3.6-35B-A3B&lt;/b&gt;&lt;br&gt;~97 s / turn&lt;br&gt;review the code; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+        <mxCell id="R2" value="&lt;b&gt;R2  Qwen3-32B&lt;/b&gt;&lt;br&gt;turn time unmeasured&lt;br&gt;review the code; not forced to find a flaw" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="930" y="300" width="220" height="55" as="geometry" />
         </mxCell>
         <mxCell id="RF2" value="&lt;b&gt;FINAL at R2&lt;/b&gt;&lt;br&gt;consensus, 2 rounds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="740" y="420" width="160" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="R3" value="&lt;b&gt;R3  DeepSeek V4 Flash&lt;/b&gt; ~610 s&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+        <mxCell id="R3" value="&lt;b&gt;R3  R1-Distill-Qwen-32B&lt;/b&gt;&lt;br&gt;defend or revise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="1030" y="420" width="190" height="50" as="geometry" />
         </mxCell>
         <mxCell id="RF3" value="&lt;b&gt;FINAL at R3&lt;/b&gt;&lt;br&gt;DeepSeek revised to agree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="890" y="540" width="170" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="R4" value="&lt;b&gt;R4  Qwen3.6-35B-A3B&lt;/b&gt; ~97 s&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+        <mxCell id="R4" value="&lt;b&gt;R4  Qwen3-32B&lt;/b&gt;&lt;br&gt;last word" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="1120" y="540" width="200" height="50" as="geometry" />
         </mxCell>
         <mxCell id="RF4" value="&lt;b&gt;FINAL at R4&lt;/b&gt;&lt;br&gt;Qwen's code stands,&lt;br&gt;even if they still disagree" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
@@ -111,11 +111,11 @@
         <mxCell id="grade" value="&lt;b&gt;Grade: hidden unit tests, fresh seed 104729&lt;/b&gt; (bwrap grader) on the leaf's code. No judge model." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=6;" vertex="1" parent="1">
           <mxGeometry x="470" y="750" width="400" height="55" as="geometry" />
         </mxCell>
-        <mxCell id="stats" value="&lt;b&gt;Walk cost (measured per-turn rates, one turn per round):&lt;/b&gt; leaf at R2 ~12 min; R3 ~13.5 min; R4 ~23.5 min, either branch, plus one swap per colour change (load time not measured). Qwen ~97 s is wall per turn at 4 slots in flight; DeepSeek ~610 s at 1 slot. Memory: one model resident at a time (DeepSeek 85.7 + Qwen 22.4 GiB &amp;gt; 100.7 free)." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=6;" vertex="1" parent="1">
-          <mxGeometry x="900" y="740" width="440" height="85" as="geometry" />
+        <mxCell id="stats" value="&lt;b&gt;Walk cost (UNMEASURED, estimate):&lt;/b&gt; both models are dense 32B Q4_K_M (18.4 / 18.5 GiB). Generation is bandwidth bound: ~117 GB/s effective / ~19.7 GB read per token = ~6 tok/s ceiling each, so a 4,000-token reply is ~11 min. A leaf at R2 / R3 / R4 costs 2 / 3 / 4 replies. Memory: the pair plus both RAGs fits on paper (~71 GiB at ctx 32k each, ~87 at 64k, of 108; not measured co-resident), but gpu-guard (16 GiB cutoff) and llmctl (one session) keep one model resident, so each colour change is a swap. Measured at first load: GTT delta, load time, tg." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="900" y="740" width="440" height="175" as="geometry" />
         </mxCell>
-        <mxCell id="legend" value="blue = Qwen3.6-35B-A3B UD-Q4_K_XL &amp;nbsp; orange = DeepSeek V4 Flash 0731 UD-IQ2_M &amp;nbsp; green = leaf (debate ends) &amp;nbsp; depth cap = 4 rounds" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="40" y="830" width="900" height="25" as="geometry" />
+        <mxCell id="legend" value="blue = Qwen3-32B Q4_K_M (RAG 1 Qwen3-Embedding-0.6B, slots 1 solver / 2 critic) &amp;nbsp; orange = DeepSeek-R1-Distill-Qwen-32B Q4_K_M (RAG 2 EmbeddingGemma 2, slots 3 solver / 4 critic) &amp;nbsp; shared reranker Qwen3-Reranker-4B &amp;nbsp; green = leaf (debate ends) &amp;nbsp; depth cap = 4 rounds" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="850" height="50" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
