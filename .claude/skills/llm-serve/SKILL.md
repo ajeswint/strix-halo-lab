@@ -27,21 +27,25 @@ scripts/llmctl.py bye
 
 ## Loop + DeepSeek fix stage (optional, off by default)
 
-KEPT 2026-10-15 (README "v6 pipeline" sections: Qwen loop 24/30, DeepSeek fixer 6/6 vs Qwen fix-mode control 2/6, 0.40 GPU h per added solve; one run per arm). Use it when a loop run leaves failures worth DeepSeek's GPU time. It is never part of a measurement arm unless that arm's pre-run says so. Two sessions, each one background Bash chain (gpu-guard denies `run`, `bye` and `python3` while a model is resident, so nothing can be added mid-session). `SET` must already be in `run.SETS`; the example uses v4, which exists (its loop arms are already stored, so a real run picks a new set and a new label). `agent.py` overwrites an existing label's files, so each chain starts with `[ ! -e ... ]`: a stored label stops it before any load.
+KEPT 2026-10-15 (README "v6 pipeline" sections: Qwen loop 24/30, DeepSeek fixer 6/6 vs Qwen fix-mode control 2/6, 0.40 GPU h per added solve; one run per arm). Use it when a loop run leaves failures worth DeepSeek's GPU time. It is never part of a measurement arm unless that arm's pre-run says so. Two sessions, each one background Bash chain (gpu-guard denies `run`, `bye` and `python3` while a model is resident, so nothing can be added mid-session). Each chain opens with a `select_fix.py` gate that runs before any invite and refuses with exit 4:
+- `fresh SET LABEL` (session 1): `SET` is registered in `run.SETS`, no stored `results/*.jsonl` row is a task of `SET` (a stored arm is a finished measurement; rerunning one is a new pre-run, not this procedure), and the label is new (`agent.py` overwrites an existing label's files).
+- `ready S1 LABEL` (session 2): session 1's fix files exist and are non-empty (its `select` exited 0), and the DeepSeek label is new.
 
-Session 1, Qwen loop, then the selector; `bye` runs whatever the outcome:
+The blocks below use v7. No v7 exists today (v0-v5 are finished measurements, v6 is spent), so both refuse at the gate before any load. A real run first registers a new set (`bench/loop/tasks_vN.py` plus its `SETS` line, as v6 was) and changes `SET`.
+
+Session 1, Qwen loop, then the selector. `bye` sits inside the group that runs only after a successful `invite`, so a gate refusal or a refused invite never ends someone else's session:
 
 ```
-SET=v4; L=qwen-$SET-agent-k4e4-vk-np4; [ ! -e bench/loop/results/$L.jsonl ] && scripts/llmctl.py invite qwen --ctx 65536 --np 4 && scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET -k 4 -e 4 --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py select $L --tag $SET; scripts/llmctl.py bye
+SET=v7; L=qwen-$SET-agent-k4e4-vk-np4; python3 bench/loop/select_fix.py fresh $SET $L && scripts/llmctl.py invite qwen --ctx 65536 --np 4 && { scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET -k 4 -e 4 --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py select $L --tag $L; scripts/llmctl.py bye; }
 ```
 
-- `select_fix.py` exit 0: `fix-$SET-tasks.txt` and `fix-$SET-stored.jsonl` written (unsolved tasks whose last coded turn failed the visible tests). Exit 3: nothing to fix, stop. Exit 2: the regrade disagrees with the summary, stop and report. The chain's own exit code is `bye`'s, so read the selector's line in the log.
+- `select` exit 0: `fix-$L-tasks.txt` and `fix-$L-stored.jsonl` written (unsolved tasks whose last coded turn failed the visible tests; the files are named after the session 1 label, so they belong to that arm only). Exit 3: nothing to fix, stop. Exit 2: the regrade disagrees with the summary, stop and report. The chain's exit code is `bye`'s, so read the gate's and the selector's lines in the log.
 - Before session 2: the user's yes for the DeepSeek load (every time), and READY at the invite preflight. Free GTT binds: DeepSeek needs 100.7 GiB, so READY only at GTT used <= 7,857,319,520 B (2026-10-15 idle reads 7.2-7.4 GiB). Ask the user to close Chrome and other GPU clients first. NOT READY: stop and report; never lower the margin.
 
-Session 2, DeepSeek fix mode on the selected tasks; no `bye` (the user's, at a terminal):
+Session 2, DeepSeek fix mode on the selected tasks. `ready` runs before the invite, so a session 1 that wrote no fix files never loads DeepSeek. No `bye` (the user's, at a terminal):
 
 ```
-SET=v4; L=deepseek-$SET-fix-k4e2-hip; [ ! -e bench/loop/results/$L.jsonl ] && scripts/llmctl.py invite deepseek && scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET --tasks "$(cat bench/loop/results/fix-$SET-tasks.txt)" --fix-from bench/loop/results/fix-$SET-stored.jsonl -k 4 -e 2 --task-budget 98304 --parallel 1 --api http://127.0.0.1:8080 --model deepseek-v4-flash --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py check $L
+SET=v7; S1=qwen-$SET-agent-k4e4-vk-np4; L=deepseek-$SET-fix-k4e2-hip; python3 bench/loop/select_fix.py ready $S1 $L && scripts/llmctl.py invite deepseek && scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET --tasks "$(cat bench/loop/results/fix-$S1-tasks.txt)" --fix-from bench/loop/results/fix-$S1-stored.jsonl -k 4 -e 2 --task-budget 98304 --parallel 1 --api http://127.0.0.1:8080 --model deepseek-v4-flash --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py check $L
 ```
 
 - Cost from v6: ~0.4 h per selected task on DeepSeek, up to ~1.5 h (8 turns x ~692 s); the GPU and ~85 GiB GTT are held throughout; no Chrome, Unreal or builds while it is up. The fix-from and task-list files stay untracked.
