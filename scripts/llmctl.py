@@ -76,17 +76,17 @@ class Endpoint:
 ENDPOINTS = {e.name: e for e in (
     Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22.4, serve="qwen"),
     Endpoint("laguna", "user", "llm-8081", 8081, "/data/models/Laguna-XS-2.1-Q4_K_M.gguf", 20.7, serve="laguna"),
-    # CRAwDAD pair + RAGs (2026-10-15). gtt_need here is an ESTIMATE, not measured: file + f16 KV at the default
-    # ctx + ~1.5 GiB buffers. Both 32B: 64 layers x 8 KV heads x 128 = 0.25 MiB/token, 8 GiB at 32768. RAG at ctx
-    # 8192: embedder 0.11 MiB/token, reranker 0.14. Replace each with the measured delta at its first load.
-    Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 27.9, serve="qwen32"),
-    Endpoint("r1d32", "user", "llm-8081", 8081, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 28.0,
+    # CRAwDAD pair + RAGs: measured 2026-10-15 by scripts/first-load.sh (invite note at /health, vk, default ctx,
+    # np 1, baseline 7.3 GiB, llama.cpp v0.7.0): qwen32 +26.7, r1d32 +26.8 (ctx 32768), rag1 +2.3, rag2 +1.8,
+    # rerank +7.3 (ctx 8192). The estimates were 27.9 / 28.0 / 2.0 / 1.0 / 6.6. rag2 --backend cpu adds +0.0 (RAM).
+    Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 26.7, serve="qwen32"),
+    Endpoint("r1d32", "user", "llm-8081", 8081, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 26.8,
              serve="r1d32"),
-    Endpoint("rag1", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Embedding-0.6B-Q8_0.gguf", 2.0,
+    Endpoint("rag1", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Embedding-0.6B-Q8_0.gguf", 2.3,
              serve="rag1", ctx=8192),
-    Endpoint("rag2", "user", "llm-8081", 8081, "/data/models/rag/embeddinggemma-2-Q8_0.gguf", 1.0,
+    Endpoint("rag2", "user", "llm-8081", 8081, "/data/models/rag/embeddinggemma-2-Q8_0.gguf", 1.8,
              serve="rag2", ctx=8192),
-    Endpoint("rerank", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Reranker-4B.Q8_0.gguf", 6.6,
+    Endpoint("rerank", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Reranker-4B.Q8_0.gguf", 7.3,
              serve="rerank", ctx=8192),
     # health_wait is a first value: the load took 21 s (2026-10-07, page cache state not checked, probably warm); a cold-cache load is unmeasured.
     Endpoint("deepseek", "system", "llama-deepseek", 8080,

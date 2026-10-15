@@ -66,7 +66,7 @@ scripts/llm-serve.sh stop
 
 Args: `start <qwen|laguna|qwen32|r1d32|rag1|rag2|rerank> [hip|vk|cpu] [ctx] [parallel]`. Defaults: `vk`, ctx 32768 (RAG models 8192), 1 slot. RAG models start with `--embedding` (rag1, rag2) or `--reranking` (rerank) and batch = ubatch = ctx, because an embedding input must fit one ubatch. `cpu` (`--device none -ngl 0`, RAG models only, refused for LLMs because RAM is invisible to gpu-guard) is the f32 reference for EmbeddingGemma 2, whose activations overflow float16. `-c` is total and is split across slots: 65536 with 4 slots = 16k each. Fixed flags match llama-deepseek.service: `-ngl 999 -fa on -lm none --cache-reuse 256`. Jinja chat templates are on by default in this build.
 
-API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35b-a3b`, `laguna-xs-2.1`, `qwen3-32b`, `r1-distill-qwen-32b`, `qwen3-embedding-0.6b` (`/v1/embeddings`), `embeddinggemma-2` (`/v1/embeddings`), `qwen3-reranker-4b` (`/v1/rerank`). Not loaded yet as of 2026-10-15: the five new ones (llmctl `gtt_need` for them is an estimate until the first load replaces it). DeepSeek is separate: system unit `llama-deepseek` on :8080, alias `deepseek-v4-flash`. Starting it needs the user's yes.
+API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35b-a3b`, `laguna-xs-2.1`, `qwen3-32b`, `r1-distill-qwen-32b`, `qwen3-embedding-0.6b` (`/v1/embeddings`), `embeddinggemma-2` (`/v1/embeddings`), `qwen3-reranker-4b` (`/v1/rerank`). The five new ones first loaded 2026-10-15 (`scripts/first-load.sh`, model-add skill); their llmctl `gtt_need` is the measured delta. DeepSeek is separate: system unit `llama-deepseek` on :8080, alias `deepseek-v4-flash`. Starting it needs the user's yes.
 
 ## Rules
 
