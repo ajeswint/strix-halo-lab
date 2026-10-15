@@ -1,0 +1,107 @@
+{
+ "roots": [
+  "/data/ring-exc2/A",
+  "/data/ring-exc2/B"
+ ],
+ "model": "qwen3.6-35b-a3b",
+ "prompt_sha": "e52cd552b974",
+ "rows": 386,
+ "errors": 0,
+ "other": 0,
+ "wall_s": 4740.9,
+ "leak_catch": {
+  "n": 180,
+  "quarantine": 161,
+  "rate": 0.894,
+  "veto": 161,
+  "veto_rate": 0.894
+ },
+ "false_positive": {
+  "n": 177,
+  "quarantine": 20,
+  "rate": 0.113,
+  "veto": 20,
+  "veto_rate": 0.113
+ },
+ "order_leaks": {
+  "n": 29,
+  "quarantine": 7,
+  "rate": 0.241,
+  "veto": 7,
+  "veto_rate": 0.241
+ },
+ "real_pass_fp": {
+  "n": 1,
+  "quarantine": 0,
+  "rate": 0.0,
+  "veto": 0,
+  "veto_rate": 0.0
+ },
+ "ref_fp": {
+  "n": 10,
+  "quarantine": 0,
+  "rate": 0.0,
+  "veto": 0,
+  "veto_rate": 0.0
+ },
+ "per_arm": {
+  "A": {
+   "leak": {
+    "n": 90,
+    "quarantine": 81,
+    "rate": 0.9,
+    "veto": 81,
+    "veto_rate": 0.9
+   },
+   "fp": {
+    "n": 69,
+    "quarantine": 1,
+    "rate": 0.014,
+    "veto": 1,
+    "veto_rate": 0.014
+   }
+  },
+  "B": {
+   "leak": {
+    "n": 90,
+    "quarantine": 80,
+    "rate": 0.889,
+    "veto": 80,
+    "veto_rate": 0.889
+   },
+   "fp": {
+    "n": 98,
+    "quarantine": 19,
+    "rate": 0.194,
+    "veto": 19,
+    "veto_rate": 0.194
+   }
+  },
+  "ref": {
+   "leak": {
+    "n": 0,
+    "quarantine": 0,
+    "rate": null,
+    "veto": 0,
+    "veto_rate": null
+   },
+   "fp": {
+    "n": 0,
+    "quarantine": 0,
+    "rate": null,
+    "veto": 0,
+    "veto_rate": null
+   }
+  }
+ },
+ "hash_guardian": "committed every row here: catch 0, false positives 0, by construction",
+ "bar": {
+  "catch_min": 0.5,
+  "fp_max": 0.05,
+  "ref_quarantine_max": 1,
+  "errors_max": 8,
+  "met": false
+ }
+}
+llm-guard bar NOT MET
+llmctl: run python3 rc=1 memory.peak=46 MiB cap=8192 MiB as=16384 MiB
