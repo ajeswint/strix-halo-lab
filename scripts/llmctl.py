@@ -79,6 +79,7 @@ ENDPOINTS = {e.name: e for e in (
     # CRAwDAD pair + RAGs: measured 2026-10-15 by scripts/first-load.sh (invite note at /health, vk, default ctx,
     # np 1, baseline 7.3 GiB, llama.cpp v0.7.0): qwen32 +26.7, r1d32 +26.8 (ctx 32768), rag1 +2.3, rag2 +1.8,
     # rerank +7.3 (ctx 8192). The estimates were 27.9 / 28.0 / 2.0 / 1.0 / 6.6. rag2 --backend cpu adds +0.0 (RAM).
+    # One sample at /health, not a sampler max; GTT after the probe's requests was within 0.07 GiB of it.
     Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 26.7, serve="qwen32"),
     Endpoint("r1d32", "user", "llm-8081", 8081, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 26.8,
              serve="r1d32"),
