@@ -37,5 +37,7 @@ curl -s "https://huggingface.co/api/models/bartowski/Laguna-XS-2.1-GGUF/tree/mai
 ## First load = smoke test
 Use the `preflight` skill, then `llm-serve` start, then one completion. Report load time, GTT used, pp/tg from one short request, and whether the chat template rendered (no raw special tokens in the output). Then the `bench` skill with a new label if it will be used seriously.
 
+For the CRAwDAD pair and the RAG servers this is scripted (quick and dirty, GPU, the user's go first): `scripts/first-load.sh` runs invite -> status -> `scripts/first-load-probe.py` under `llmctl run` -> bye for rag1, rag2, rag2cpu, rerank, qwen32, r1d32, cheap first, as ONE Bash command (gpu-guard denies llmctl verbs mid-run). Results go to `/data/bench/first-load/first-load.jsonl` and `status.log`. The invite note's GTT delta replaces the `gtt_need` estimate in llmctl.py. rag2cpu compares EmbeddingGemma 2 vectors against the GPU run and fails below cos 0.99. Stub-tested only (fake llmctl via `LLMCTL`, fake server via `FIRSTLOAD_API`), 2026-10-15.
+
 ## Retiring
 Deleting a model file is destructive: ask first. Remove it from README, llm-serve, the guard comment, and the `files()` entry in `models/fetch.sh` if one was added, in the same commit.
