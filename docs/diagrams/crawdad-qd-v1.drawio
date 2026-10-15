@@ -1,0 +1,92 @@
+<mxfile host="drawio" version="32.4.1">
+  <diagram id="crawdad-qd-v1" name="Qwen + DeepSeek on the debate tree v1">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="&lt;b&gt;Our Qwen + DeepSeek stack mapped onto the CRAwDAD tree (v1 draft, 2026-10-15)&lt;/b&gt;&lt;br&gt;Solid = measured (v6 pipeline, 21a57c2). Dashed = what-if branches W1-W7, none measured. Main change from the paper: the unit tests are an oracle at every node, so a pass ends the walk; the paper had only agreement until the answer key at the leaf." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="1400" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- main tree -->
+        <mxCell id="root" value="&lt;b&gt;Task&lt;/b&gt;&lt;br&gt;spec + visible tests" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="360" y="75" width="200" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="&lt;b&gt;R1  Qwen3.6-35B-A3B loop&lt;/b&gt;&lt;br&gt;K4E4, test failure fed back each turn&lt;br&gt;~97 s wall per turn at 4 slots, 3.70 h / 30 tasks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="340" y="185" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" value="tests&lt;br&gt;(fresh seed)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="285" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" value="&lt;b&gt;LEAF: pass at R1&lt;/b&gt;&lt;br&gt;24 / 30 (v6)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="120" y="290" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="swap" value="&lt;b&gt;swap&lt;/b&gt;: bye qwen, invite deepseek&lt;br&gt;once per batch (breadth-first)" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;size=0.1;" vertex="1" parent="1">
+          <mxGeometry x="355" y="375" width="210" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="&lt;b&gt;R2  DeepSeek V4 Flash IQ2_M fix&lt;/b&gt;&lt;br&gt;K4E2 from Qwen's last code + error&lt;br&gt;~610 s per turn, 2.38 h / 6 tasks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="340" y="455" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="tests&lt;br&gt;(fresh seed)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="410" y="555" width="100" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" value="&lt;b&gt;LEAF: pass at R2&lt;/b&gt;&lt;br&gt;6 / 6 (v6); pipeline 30 / 30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="120" y="560" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="&lt;b&gt;R3, R4: not built&lt;/b&gt;&lt;br&gt;v6 never reached here (0 left).&lt;br&gt;Paper: defend / revise, last word.&lt;br&gt;Ours: TBD (see W1, W7)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="645" width="240" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" value="&lt;b&gt;LEAF: unsolved&lt;/b&gt;&lt;br&gt;0 in v6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="375" y="755" width="170" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e01" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="root" target="n1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e1t" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="n1" target="t1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="et1f" value="pass" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="t1" target="f1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="et1s" value="fail: coded, visibly failing" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="t1" target="swap"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="es2" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="swap" target="n2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2t" value="" style="endArrow=classic;html=1;" edge="1" parent="1" source="n2" target="t2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="et2f" value="pass" style="endArrow=classic;html=1;fontSize=10;" edge="1" parent="1" source="t2" target="f2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="et23" value="fail" style="endArrow=classic;html=1;fontSize=10;dashed=1;" edge="1" parent="1" source="t2" target="n3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3f" value="" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="n3" target="f3"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- what-ifs -->
+        <mxCell id="w1" value="&lt;b&gt;W1  DeepSeek critiques, Qwen revises&lt;/b&gt; (the paper's R2/R3)&lt;br&gt;DeepSeek returns a short critique, not code; Qwen rewrites. Shorter DeepSeek output, but its thinking still dominates. Unknown: does a critique transfer as well as a direct fix?" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="455" width="380" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="w2" value="&lt;b&gt;W2  DeepSeek speaks first&lt;/b&gt;&lt;br&gt;DeepSeek reads the spec / plans, Qwen codes. Precedent: plan -&amp;gt; code with Laguna was null (c6b9fdc). DeepSeek is stronger, but every task pays a DeepSeek node." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="70" width="380" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="w3" value="&lt;b&gt;W3  DeepSeek audits a pass&lt;/b&gt; (the paper's &quot;agree&quot; branch)&lt;br&gt;In real coding there is no hidden fresh-seed oracle: visible tests can pass on wrong code. DeepSeek reviews passing code for what the tests miss. The case where agreement, not tests, ends the walk." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="380" width="290" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="w4" value="&lt;b&gt;W4  Confidence gate&lt;/b&gt;&lt;br&gt;Escalate only when Qwen reports low confidence. Paper: confidence mostly 0.9-1.0 and defenders never lower it, so a weak signal. Tests are the stronger gate here." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="270" width="380" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="w5" value="&lt;b&gt;W5  Co-resident (DeepSeek IQ1_S + Qwen IQ4_XS)&lt;/b&gt;&lt;br&gt;No swap: walk each task depth-first, low latency per task. Costs: DeepSeek's fix rate re-earned at 1-bit, shared ~117 GB/s, guard changes. ~96.5 / 108 GiB." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="370" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="w6" value="&lt;b&gt;W6  DSpark on DeepSeek nodes&lt;/b&gt;&lt;br&gt;Built-in draft head, supported by our llama.cpp b11379, not enabled. Claimed 1.83x (one source). +10.1 GiB sidecar. Turn ~610 s -&amp;gt; ~330 s if it holds." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="470" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="w7" value="&lt;b&gt;W7  Last word goes to a frontier model&lt;/b&gt;&lt;br&gt;Depth cap: what neither local model solves escalates to a cloud model, not a local R4. Local tree does volume; cloud only for the residue." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="650" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ew1" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w1" target="n2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew2" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w2" target="root"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew3" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w3" target="f1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew4" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w4" target="t1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew5" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w5" target="w1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew5s" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w5" target="swap"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew6" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w6" target="n2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ew7" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="w7" target="n3"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="legend" value="blue = Qwen node &amp;nbsp; orange = DeepSeek node &amp;nbsp; green diamond = unit tests &amp;nbsp; green box = leaf &amp;nbsp; yellow dashed = what-if (unmeasured) &amp;nbsp; grey hexagon = model swap (sequential hardware)" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="1200" height="25" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
