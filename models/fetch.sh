@@ -7,7 +7,8 @@ import json, urllib.request
 def files(repo, pref):
     t = json.load(urllib.request.urlopen(f"https://huggingface.co/api/models/{repo}/tree/main?recursive=true"))
     return [(repo, f["path"], f["size"]) for f in t if f["path"].startswith(pref) and f["path"].endswith(".gguf")]
-for repo, p, size in files("unsloth/Qwen3.6-35B-A3B-GGUF", "Qwen3.6-35B-A3B-UD-Q4_K_XL") + files("unsloth/DeepSeek-V4-Flash-0731-GGUF", "UD-IQ2_M/"):
+for repo, p, size in files("unsloth/Qwen3.6-35B-A3B-GGUF", "Qwen3.6-35B-A3B-UD-Q4_K_XL") + files("unsloth/DeepSeek-V4-Flash-0731-GGUF", "UD-IQ2_M/") \
+        + files("Qwen/Qwen3-32B-GGUF", "Qwen3-32B-Q4_K_M") + files("unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF", "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M"):
     print(f"https://huggingface.co/{repo}/resolve/main/{p}\t{p}\t{size}")
 EOF
 rc=0

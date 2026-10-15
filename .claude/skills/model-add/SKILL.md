@@ -8,7 +8,7 @@ description: Add a new GGUF model to /data/models with full validation (sha256 a
 ## Decide first
 - Why this model: which roadmap item, and what it should beat. Check the licence on the model card and cite the URL.
 - Fit: file size + 16 GiB must be under ~107 GiB free GTT, alone. Anything over ~20 GiB means it cannot share the box with Qwen or Laguna.
-- Quant: prefer unsloth UD or bartowski quants that match the existing ones. Check the arch is supported by the built llama.cpp (`/data/src/llama.cpp` HEAD 836d57176). A new arch may need a rebuild, which is a separate step.
+- Quant: prefer unsloth UD or bartowski quants that match the existing ones. Check the arch is supported by the built llama.cpp (`/data/src/llama.cpp` HEAD 620d2225c, v0.7.0; old 836d57176 kept as build-*-836d57176). A new arch may need a rebuild, which is a separate step.
 
 ## Download
 
@@ -25,6 +25,8 @@ curl -s "https://huggingface.co/api/models/bartowski/Laguna-XS-2.1-GGUF/tree/mai
    `PYTHONPATH=/data/src/llama.cpp/gguf-py python3 -c "import gguf,sys; r=gguf.GGUFReader(sys.argv[1]); print(r.fields['general.architecture'].contents(), len(r.tensors))" /data/models/Laguna-XS-2.1-Q4_K_M.gguf`
    Split models: shard 1 may hold metadata only; check every shard.
 4. The arch string appears in `build-hip` and `build-vk` libllama: `strings /data/src/llama.cpp/build-hip/bin/libllama.so | grep -c laguna`.
+   A 0 is not proof of absence: the linker tail-merges short strings (`qwen2` lives only inside a longer string). On 0, check the arch table and the model class instead: `grep -n '"qwen2"' /data/src/llama.cpp/src/llama-arch.cpp` and `strings /data/src/llama.cpp/build-hip/bin/libllama.so | grep -c '_ZN17llama_model_qwen2D'`.
+5. Rerankers: the GGUF must carry `cls.output.weight` and rank pooling (`<arch>.pooling_type` 4). Most community Qwen3-Reranker GGUFs lack the head and score garbage (llama.cpp #16407). Check with gguf-py: `'cls.output.weight' in {t.name for t in r.tensors}`.
 
 ## Register
 - README Software state, Models row: repo, quant, size, sha256 prefix, date verified, purpose.

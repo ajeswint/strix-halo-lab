@@ -12,6 +12,9 @@
 # The cutoff is GTT, not service state, because DeepSeek also loads outside the service
 # (bench/fanpeg-suite.sh, bench.sh), and a resident small model must block DeepSeek too.
 # Sizes: idle ~0.5 GiB; Qwen 20.8, Laguna 19.1, DeepSeek 86 GiB peak; GTT total 108 GiB.
+# Files 2026-10-15 (not loaded yet, GTT unmeasured): Qwen3-32B 18.4, R1-Distill-Qwen-32B 18.5 GiB
+# (each arms the guard alone, so the CRAwDAD pair cannot be co-resident under this cutoff);
+# RAG Qwen3-Embedding-0.6B 0.6, Qwen3-Reranker-4B 4.0, embeddinggemma-2 0.3 GiB (below the cutoff).
 # Qwen and Laguna cannot be resident together under this cutoff; revisit when a real run
 # needs both.
 # Exit 2 blocks the call; any other exit allows it.
