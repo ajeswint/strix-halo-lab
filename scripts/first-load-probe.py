@@ -8,7 +8,8 @@ OUTDIR/first-load.jsonl and prints it. Exit 0 = every check passed, 1 = a check 
 Checks, by kind:
 - llm: one chat completion (code prompt, ~1.2k-token context, max_tokens 1024): pp and tg from the
   server's timings, template leak (raw special tokens in content or reasoning), reasoning split.
-- embed: 4 inputs (2 queries, 2 code docs): dimension, all finite, each query nearest its own doc.
+- embed: 4 inputs (2 queries, 2 code docs) + 2 long docs (~1.5k and ~6k tokens, fit in one 8192 ubatch):
+  dimension, all finite, each query nearest its own doc (first 4 only).
   Vectors saved to OUTDIR/NAME.vectors.json. With --ref (the cpu run against the GPU run's vectors):
   per-input cosine GPU vs cpu, min must be >= 0.99 (EmbeddingGemma 2 overflows float16).
 - rerank: one query against 3 docs: the relevant doc must score highest.
@@ -75,8 +76,11 @@ def llm(alias, rec):
 def embed(name, alias, outdir, ref, rec):
     q, d = PREFIX[name]
     inputs = [q + "How do I compute the n-th Fibonacci number?", q + "How do I load a CSV file as dicts?",
-              d + FIB, d + CSV]
+              d + FIB, d + CSV,
+              d + "".join(f"# part {i}\n{FIB}{CSV}{SORT}" for i in range(15)),     # long: f16 overflow
+              d + "".join(f"# part {i}\n{FIB}{CSV}{SORT}" for i in range(60))]     # risk may grow with length
     r = http("/v1/embeddings", {"model": alias, "input": inputs})
+    rec["prompt_tokens"] = (r.get("usage") or {}).get("prompt_tokens")
     vecs = [x["embedding"] for x in sorted(r["data"], key=lambda x: x["index"])]
     finite = all(math.isfinite(v) for vec in vecs for v in vec)
     sims = [[round(cos(vecs[i], vecs[j]), 4) for j in (2, 3)] for i in (0, 1)]

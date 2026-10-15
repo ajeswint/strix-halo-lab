@@ -7,13 +7,16 @@
 #        rag1 (Qwen3-Embedding-0.6B, Qwen's RAG), rag2 (EmbeddingGemma 2, R1-Distill's RAG),
 #        rerank (Qwen3-Reranker-4B, shared): /v1/embeddings resp. /v1/rerank, ctx default 8192,
 #        batch = ubatch = ctx (an embedding input must fit one ubatch), no KV reuse.
-# cpu = build-vk with --device none -ngl 0: the f32 reference for EmbeddingGemma 2 (its activations
+# cpu = build-vk with --device none -ngl 0 -fa off: the reference for EmbeddingGemma 2 (its activations
 # overflow float16; the GPU backends may compute in f16, so its first load compares GPU vs cpu vectors).
+# -fa off because with no KV cache flash attention casts K and V to f16 (src/llama-graph.cpp, v0.7.0). Not pure
+# f32: Q8_0 matmuls quantize activations to q8_0 blocks with an f16 scale (overflows only above ~8.3e6).
+# LLM_SERVE_LV=N adds -lv N; 4 prints libllama INFO (offloaded layers, buffer sizes), hidden at the default 3.
 # DeepSeek V4 Flash is not served here: it has its own system unit on :8080 (llama-deepseek).
 # start runs scripts/preflight.sh first and refuses if it is NOT READY.
 # Defaults: vk (Vulkan tg beats HIP by 16% for Qwen at depth 0, pp equal; README Benchmarks),
 # ctx 32768 total (RAG models 8192), 1 slot. -c is shared across slots: ctx 65536 parallel 4 = 16k per slot.
-# Same conditions as llama-deepseek.service otherwise: -ngl 999 -fa on -lm none.
+# Same conditions as llama-deepseek.service otherwise: -ngl 999 -fa on -lm none (cpu: -ngl 0 -fa off).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 UNIT=llm-8081; PORT=8081; LL=/data/src/llama.cpp
@@ -33,10 +36,11 @@ start)
     esac
     [ "$KIND" = llm ] && DEFCTX=32768 || DEFCTX=8192
     BE=${3:-vk}; CTX=${4:-$DEFCTX}; NP=${5:-1}
-    case $BE in hip|vk) BIN=$BE; DEV=(-ngl 999) ;; cpu) BIN=vk; DEV=(--device none -ngl 0) ;;
+    case $BE in hip|vk) BIN=$BE; DEV=(-ngl 999); FA=on ;; cpu) BIN=vk; DEV=(--device none -ngl 0); FA=off ;;
         *) echo "backend must be hip, vk or cpu" >&2; exit 2 ;; esac
     # A cpu model sits in RAM, not GTT, so gpu-guard and the 16 GiB cutoff cannot see it: RAG models only.
     if [ "$BE" = cpu ] && [ "$KIND" = llm ]; then echo "cpu backend is for rag1|rag2|rerank only" >&2; exit 2; fi
+    LV=(); [ -n "${LLM_SERVE_LV:-}" ] && LV=(-lv "$LLM_SERVE_LV")
     case $KIND in
         llm)    EXTRA=(--cache-reuse 256) ;;
         embed)  EXTRA=(--embedding -b "$CTX" -ub "$CTX") ;;
@@ -49,7 +53,7 @@ start)
     systemd-run --user --unit="$UNIT" --collect --property=Restart=no \
         --setenv=ROCBLAS_USE_HIPBLASLT=1 \
         "$LL/build-$BIN/bin/llama-server" -m "$M" --alias "$ALIAS" \
-        "${DEV[@]}" -fa on -lm none -c "$CTX" -np "$NP" "${EXTRA[@]}" \
+        "${DEV[@]}" -fa "$FA" -lm none -c "$CTX" -np "$NP" "${EXTRA[@]}" "${LV[@]}" \
         --no-webui --host 127.0.0.1 --port "$PORT"
     # Bounded wait for the model to load (Qwen ~21 GiB from NVMe); not a watchdog.
     for _ in $(seq 1 180); do

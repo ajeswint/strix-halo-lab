@@ -7,7 +7,8 @@
 # GTT delta over the pre-invite baseline, for llmctl gtt_need) -> probe under llmctl run -> bye.
 # A failed invite or bye stops the run; a failed probe is recorded and the run goes on. Exit 1 if anything failed.
 # Run as ONE Bash command: gpu-guard denies llmctl verbs from agent Bash while a 32B model is resident.
-# Results: OUTDIR/first-load.jsonl (one line per probe, incl. server build_info) and OUTDIR/status.log.
+# Results: OUTDIR/first-load.jsonl (one line per probe, incl. server build_info) and OUTDIR/status.log
+# (session notes + the server's placement lines; set LLM_SERVE_LV=4 or llama.cpp v0.7.0 does not print them).
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 OUT=${FIRSTLOAD_OUT:-/data/bench/first-load}
@@ -27,6 +28,9 @@ for s in "${STEPS[@]}"; do
     "$CTL" invite "$ep" "${opts[@]}" || { echo "invite $ep failed; stopping"; exit 1; }
     { echo "== $s load_s=$(( $(date +%s) - t0 ))"; "$CTL" status; } | tee -a "$OUT/status.log"
     "$CTL" run --mem 2G --as 4G -- python3 -I "$here/first-load-probe.py" "$s" "$OUT" "${ref[@]}" || rc=1
+    # Placement lines from the server log (printed only at LLM_SERVE_LV=4; llm-serve.sh)
+    journalctl --user -u llm-8081 --since "@$t0" --no-pager -o cat 2>/dev/null \
+        | grep -E "Started llm-8081|offloaded|model buffer size|flash_attn" | sed "s/^/[$s] /" | tee -a "$OUT/status.log"
     "$CTL" bye || { echo "bye failed; stopping"; exit 1; }
 done
 echo "first-load done rc=$rc; results $OUT/first-load.jsonl"
