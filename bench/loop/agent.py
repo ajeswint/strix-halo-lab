@@ -320,7 +320,7 @@ def main():
     ap.add_argument("--set", default="v1", choices=sorted(run.SETS))
     ap.add_argument("--tasks", help="comma-separated task ids; default all")
     ap.add_argument("--label")
-    ap.add_argument("--model", default="qwen3.6-35b-a3b")
+    ap.add_argument("--model", help="default: the one model the server serves; a different name is refused")
     ap.add_argument("-k", type=int, default=4, help="max turns per episode")
     ap.add_argument("-e", type=int, default=4, help="max episodes per task")
     ap.add_argument("--task-budget", type=int, default=16 * run.MAX_TOKENS,
@@ -355,6 +355,8 @@ def main():
     if not a.label:
         ap.error("--label required")
 
+    a.model = run.served_model(a.model)
+    server = run.server_info()
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     base = os.path.join(HERE, "results", a.label)
     ask = server_ask(a.model)
@@ -400,7 +402,7 @@ def main():
                   f"tok={s['completion_tokens']} stops={[x['stop'] for x in s['episodes']]}", flush=True)
     gtt_peak = gtt.stop() / (1 << 30)
     summary = {
-        "label": a.label, "set": a.set, "model": a.model, "tasks": len(run.TASKS), "k": a.k, "e": a.e,
+        "label": a.label, "set": a.set, "model": a.model, "server": server, "tasks": len(run.TASKS), "k": a.k, "e": a.e,
         "task_budget": a.task_budget, "fresh_seed": FRESH_SEED, "sampling": run.SAMPLING,
         "api": a.api, "fix_from": os.path.basename(a.fix_from) if a.fix_from else None,
         "plan_from": os.path.basename(a.plan_from) if a.plan_from else None,

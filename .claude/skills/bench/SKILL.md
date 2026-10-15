@@ -18,7 +18,7 @@ python3 /data/bench/report.py | grep -E 'label|t3-fan-qwen|t4-qwen-recheck'
 
 ## Labels
 
-`t<N>-<what>`, where N follows the last series in `results.jsonl` (t3 = fan-pegged, current baseline). Never reuse a label. A changed condition (extra args, different build, power profile) is a new label, never an overwrite.
+`t<N>-<what>`, where N follows the last series in `results.jsonl` (t3 = fan-pegged, current baseline). Never reuse a label. A changed condition (extra args, different build, power profile) is a new label, never an overwrite. t3 and every README table were measured on llama.cpp 836d57176 (`build_commit` in each row). Since 2026-10-15 the live build is v0.7.0 (620d2225c), so a delta against them mixes builds: re-baseline the model on the new build first, or run the kept `build-*-836d57176` with `LD_LIBRARY_PATH` set to its own `bin/` (bench.sh uses the live builds only).
 
 Baseline to compare against: `t3-fan-qwen` and `t3-fan-dsv4-*` (README Benchmarks table).
 

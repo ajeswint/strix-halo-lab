@@ -698,6 +698,8 @@ def llm_guard(a):
     import run
     run.load_set(a.set)
     fam = FAMILIES[a.set]
+    a.model = run.served_model(a.model, a.api)
+    server = run.server_info(a.api)
     cfg = {"api": a.api, "model": a.model}
     rows = []
     for root in a.roots:
@@ -735,7 +737,7 @@ def llm_guard(a):
                 "veto": v, "veto_rate": round(v / len(xs), 3) if xs else None}
     leak, real, ref = rate(lambda o: o["cls"] == "leak"), rate(lambda o: o["cls"] in ("real", "ref")), rate(lambda o: o["cls"] == "ref")
     errs = sum(o["verdict"] == "error" for o in out)
-    summ = {"roots": a.roots, "model": a.model, "prompt_sha": sha(veto_prompt({"kind": "{kind}", "family": "{family}", "content": "{content}"}))[:12],
+    summ = {"roots": a.roots, "model": a.model, "server": server, "prompt_sha": sha(veto_prompt({"kind": "{kind}", "family": "{family}", "content": "{content}"}))[:12],
             "rows": len(out), "errors": errs, "other": sum(o["verdict"] == "other" for o in out), "wall_s": round(time.time() - t0, 1),
             "leak_catch": leak, "false_positive": real, "order_leaks": rate(lambda o: o["cls"] == "order"),
             "real_pass_fp": rate(lambda o: o["cls"] == "real" and o["kind"] == "pass"), "ref_fp": ref,
@@ -1158,7 +1160,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--roots", nargs="+", help="llm-guard: replay roots whose committed rows are judged")
     ap.add_argument("--api", default="http://127.0.0.1:8081")
-    ap.add_argument("--model", default="qwen3.6-35b-a3b")
+    ap.add_argument("--model", help="llm-guard: default the one model the server serves; a different name is refused")
     ap.add_argument("--keep-prompt-names", action="store_true",
                     help="rename leaves the task prompt's backticked name( entry points alone (fuzzer fix)")
     ap.add_argument("--exc-rule", action="store_true", help="exception-type mismatch is BEHAVIOUR_CHANGED, kept in place")

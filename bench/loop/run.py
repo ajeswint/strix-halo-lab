@@ -310,6 +310,28 @@ def extract(content):
     return blocks[-1] if blocks else None
 
 
+def served_model(requested=None, api=None):
+    """The one model the server serves (GET /v1/models; llama-server reports its --alias). A --model that differs
+    is refused, so a results summary can only name the model that was actually loaded (2026-10-15: the old
+    fixed default qwen3.6-35b-a3b would have mislabelled a run on another model)."""
+    api = api or API
+    with urllib.request.urlopen(f"{api}/v1/models", timeout=10) as r:
+        ids = [m["id"] for m in json.load(r)["data"]]
+    if len(ids) != 1:
+        raise SystemExit(f"expected exactly one served model at {api}, got {ids}")
+    if requested and requested != ids[0]:
+        raise SystemExit(f"--model {requested} but {api} serves {ids[0]}")
+    return ids[0]
+
+
+def server_info(api=None):
+    """llama-server build and model file (GET /props), recorded in every summary: results from llama.cpp 836d57176
+    and v0.7.0 (rebuilt 2026-10-15) must stay distinguishable. None for a field the server does not report."""
+    with urllib.request.urlopen(f"{api or API}/props", timeout=10) as r:
+        p = json.load(r)
+    return {k: p.get(k) for k in ("build_info", "model_path", "model_alias")}
+
+
 def ask(model, prompt, seed, suffix=SUFFIX):
     body = {"model": model, "messages": [{"role": "user", "content": prompt + suffix}],
             "max_tokens": MAX_TOKENS, "reasoning_budget_tokens": REASONING_BUDGET,
@@ -442,7 +464,7 @@ def main():
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--set", default="v0", choices=sorted(SETS))
     ap.add_argument("--label")
-    ap.add_argument("--model", default="qwen3.6-35b-a3b")
+    ap.add_argument("--model", help="default: the one model the server serves; a different name is refused")
     ap.add_argument("-n", type=int, default=4)
     ap.add_argument("--seed-start", type=int, default=0, help="seeds are seed-start .. seed-start+n-1")
     ap.add_argument("--tasks", help="comma-separated task ids; default all tasks in the set")
@@ -460,6 +482,8 @@ def main():
         return selftest()
     if not a.label:
         ap.error("--label required")
+    a.model = served_model(a.model)
+    server = server_info()
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     out = os.path.join(HERE, "results", f"{a.label}.jsonl")
     seeds = range(a.seed_start, a.seed_start + a.n)
@@ -493,7 +517,7 @@ def main():
     per_seed = [sum(r["passed"] for r in rows if r["seed"] == s) / len(TASKS) for s in seeds]
     norm = lambda c: re.sub(r"\s+", "", c or "")
     summary = {
-        "label": a.label, "set": a.set, "model": a.model, "tasks": len(TASKS), "n": a.n, "seeds": [seeds[0], seeds[-1]], "sampling": SAMPLING,
+        "label": a.label, "set": a.set, "model": a.model, "server": server, "tasks": len(TASKS), "n": a.n, "seeds": [seeds[0], seeds[-1]], "sampling": SAMPLING,
         "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS, "parallel": a.parallel,
         "pass_at_1": round(sum(r["passed"] for r in rows) / len(rows), 4),
         "pass_at_1_per_seed": [round(x, 4) for x in per_seed],
