@@ -1013,6 +1013,36 @@ Result (run 2026-10-14 at 4df5a6e, grader `grade-65b662df4ba4`, tree clean apart
   - `--norm-attr` turns two broken programs into duplicates. Only the exception-type rule kept them out of the score.
   - None of these flags is a default. Turning any of them on for the live ring is a separate decision.
   - Not done: the LLM guardian and adversary, live canaries, retrieval into prompts, a pass-row rename sample.
+- Accepted gap (the user, 2026-10-14, closing the line): a comment-only canary on code that does not parse leaks through the text fallback hash (B v5_07). Comment stripping in the fallback stays rejected. No further fuzzer or `_Norm` work on this line.
+
+## memring LLM guardian, slot 3, measure-only (pre-run)
+
+Stated before any run (2026-10-14). The user chose model, prompt, rounds and bars from Claude's options; the plan came in a relayed review ("observer confirms review"). Written by Claude. Measure-only: it gates nothing and touches no ring. It reads committed rows out of the `/data/ring-exc2/` roots and asks the model about each one. The question: does an LLM veto on slot 3 catch what the python guardian lets through, without blocking real code?
+- Model: Qwen3.6-35B-A3B (`/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`), loaded through `scripts/llmctl.py invite qwen --ctx 65536 --np 4` (+22.4 GiB GTT measured, 16k per slot), Vulkan, on :8081. One model, nothing else on the GPU. Preflight runs inside `invite`, right before the load.
+  - Qwen wrote the code in arms A, D and E. Laguna wrote B and C. So the per-arm split shows whether the guardian judges its own model's code differently.
+- Prompt, frozen at this commit: `memring.veto_prompt()`, the existing `_llm_veto` text moved into a function, byte-identical (the diff shows the same three lines). It was written before any of these results. The prompt sha256 (template with `{kind}`, `{family}`, `{content}`) is `e52cd552b974`. Sampling: `memring.llm()` unchanged (temperature 0.6, `max_tokens` 4096, `reasoning_budget_tokens` 2048). No seed: llama.cpp with 4 slots is not deterministic anyway.
+  - Verdict: a reply that starts with COMMIT commits. Anything else blocks, including QUARANTINE, other text and empty replies, which is what `_llm_veto` does. `other` is counted separately.
+  - A request error is counted and never retried.
+- Rows, per round, all from the rows the python guardian **committed** in `/data/ring-exc2/<arm>` (keep-prompt-names + exc-rule, grader `grade-65b662df4ba4`):
+  - catch set: leaked canaries of the leak-class mutators (EXPECT `leak`: 5 deadcode variants, inject_oblique, inject_synonym, inject_split, inject_homoglyph), 90 per arm;
+  - false-positive set: committed real rows (model code with real grader verdicts, almost all fail rows) plus the 10 v5 reference solutions (known-clean pass rows, judged again in each round);
+  - reported only: leaked order-class canaries (source-after near-copies; a guardian that sees one row cannot tell they are duplicates).
+  - Round 1 (A + B): 180 catch rows, 167 real + 10 ref, and 29 order rows, 386 in all. Round 2 (C + D + E): 270 catch rows, 231 real + 10 ref, and 39 order rows.
+- Comparator: the python hash guardian on the same rows. It committed every one of them, so its catch is 0 and its false positives are 0, by construction. The LLM is only ever an added veto.
+- Bars, per round (the user's choice), all must hold:
+  1. Catch ≥ 50% of the catch set.
+  2. False positives ≤ 5% of the false-positive set.
+  3. Errors ≤ 2% of rows.
+  Also reported: per-mutator catch, per-arm catch and FP, FP on pass rows (real and ref), `other` replies, wall time.
+- Stopping rule (agreed now): two rounds, the same model and prompt, no changes in between.
+  - Round 1 misses any bar: the guardian is shelved. No round 2, no prompt tuning, no model swap.
+  - Round 2 misses: shelved.
+  - Both met: the LLM guardian is a candidate. Wiring it into a live ring is a separate decision, with its own pre-run.
+- Command, round 1 (one background command started while the GPU is idle, because gpu-guard denies `run` and `bye` once Qwen is resident; `bye` runs even if the client fails):
+  `scripts/llmctl.py invite qwen --ctx 65536 --np 4 && scripts/llmctl.py run -- python3 bench/loop/memring.py llm-guard --set v5 --roots /data/ring-exc2/A /data/ring-exc2/B --out bench/loop/results/llm-guard-r1.json; scripts/llmctl.py bye`
+  Round 2 is the same with `--roots /data/ring-exc2/C /data/ring-exc2/D /data/ring-exc2/E --out bench/loop/results/llm-guard-r2.json`, run only if round 1 meets every bar, and only on the user's yes.
+- Smoke (no model, not a result): `llm-guard` against a stub HTTP server on a 20-row scratch root. The pipeline, verdict parsing, summary and bar ran end to end. `memring.py` and `agent.py` selftests pass.
+- Memory plan: Qwen +22.4 GiB GTT (about 29.7 GiB total from the 7.3 GiB baseline). The client is an HTTP loop under `llmctl run` (8 GiB `MemoryMax`, 16 GiB `RLIMIT_AS`). Grok Bot and Chrome stay resident on host RAM. No grader runs. Wall estimate, not measured: about 1 h for round 1 (386 rows, prompts up to ~6k tokens, 4 slots).
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
