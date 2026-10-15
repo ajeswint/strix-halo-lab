@@ -4,3 +4,5 @@ __pycache__/
 # fix-stage inputs written by bench/loop/select_fix.py (and the v4/v5 fix15 runs); untracked by design
 bench/loop/results/fix*-stored.jsonl
 bench/loop/results/fix*-tasks.txt
+# external review transcripts (Gemini PDF exports); local only
+docs/*.pdf
