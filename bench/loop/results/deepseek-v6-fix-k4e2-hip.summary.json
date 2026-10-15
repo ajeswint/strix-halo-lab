@@ -1,0 +1,151 @@
+{
+ "label": "deepseek-v6-fix-k4e2-hip",
+ "set": "v6",
+ "model": "deepseek-v4-flash",
+ "tasks": 6,
+ "k": 4,
+ "e": 2,
+ "task_budget": 98304,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8080",
+ "fix_from": "fix-v6-stored.jsonl",
+ "plan_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 1,
+ "solved": 6,
+ "visible_pass": 6,
+ "completion_tokens_total": 129833,
+ "turns_total": 14,
+ "wall_s": 8546.4,
+ "gtt_peak_gib": 92.92,
+ "per_task": [
+  {
+   "task": "v6_08_url_normalize",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 19845,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 19845,
+   "no_fresh": false
+  },
+  {
+   "task": "v6_13_simplest_fraction",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 37527
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 28099,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 7,
+   "completion_tokens": 65626,
+   "no_fresh": false
+  },
+  {
+   "task": "v6_21_staircase_log",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 16929,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 16929,
+   "no_fresh": false
+  },
+  {
+   "task": "v6_25_mlfq_finish_times",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9214,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9214,
+   "no_fresh": false
+  },
+  {
+   "task": "v6_28_rank_mini_league",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9120,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9120,
+   "no_fresh": false
+  },
+  {
+   "task": "v6_30_replay_editor_log",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9099,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9099,
+   "no_fresh": false
+  }
+ ],
+ "gtt_baseline_gib": 7.2,
+ "gtt_model_gib": 85.72
+}

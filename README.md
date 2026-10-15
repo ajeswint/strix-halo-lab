@@ -693,6 +693,23 @@ Q   qwen-v6-fix-k4e2-vk          2/6 solved (fresh seed; regrade matches)    20 
 - Files: `bench/loop/results/qwen-v6-agent-k4e4-vk-np4.{jsonl,summary.json,regrade.txt}`, `qwen-v6-fix-k4e2-vk.{jsonl,summary.json,regrade.txt}`. `fix-v6-stored.jsonl` and `fix-v6-tasks.txt` stay untracked.
 - Next: session 2 (DeepSeek), gate as written: this commit pushed, U >= 6 (6), every selector check exit 0 (yes), the user's yes (given), and READY at the `invite deepseek` preflight (GTT used <= 7,857,319,520 B; 7,736,877,056 B now, 115 MiB under).
 
+## v6 pipeline, session 2 result and verdict (S2, at 03ac168): KEEP
+
+Session 2 run as written after b618af0 was pushed; one chain, llmctl session 16, 2026-10-15 07:50:23-10:13:15 UTC (8,572 s, 2.38 h invite to end of check). Invite preflight READY: GTT used 7.2 GiB, MemAvailable 109.2 GiB, need 100.7 against 100.8 free; ACTIVE at GTT 92.5 GiB.
+
+```
+S2  deepseek-v6-fix-k4e2-hip   6/6 solved (fresh seed; regrade matches)   14 turns, 129,833 tok, 8,546 s (2.37 h), 0 cap hits, gtt_model 85.72 (peak 92.92), memory.peak 51 MiB
+```
+
+- Per task: v6_08 url_normalize ep 0 turn 2; v6_13 simplest_fraction ep 0 ran 4 turns (max_turns), solved ep 1 turn 3; v6_21 staircase_log ep 0 turn 2; v6_25 mlfq_finish_times, v6_28 rank_mini_league, v6_30 replay_editor_log ep 0 turn 1. Deny-list trips 0, `MemoryError` 0, rc 0 throughout. MemAvailable 21 GiB with DeepSeek resident after the run.
+- Validity: all selector calls exited 0 (S1 select, Q check, S2 check), no rc 137, commands unchanged -> valid.
+- Bar A: U = 6 >= 6, S2 = 6 >= 3, S2 >= U / 2 = 3 -> met. Bar B: S2 = 6 >= Q + 3 = 5 -> met. Verdict: KEEP, as stated in the pre-run: the DeepSeek fix stage becomes an optional batch step after the loop, off by default.
+- Pipeline: S1 24 + S2 6 = 30/30 on 30 unaimed, sealed tasks; Qwen alone with the same extra effort (S1 + Q) 26/30. Four tasks (v6_13, v6_21, v6_25, v6_28) were solved only by DeepSeek.
+- Price: 2.38 h of the whole GPU for 6 added solves = 0.40 h per added solve (replication: ~0.98 h); Q cost 0.64 h for 2 (0.32 h per solve, but only on the easier two, both of which DeepSeek also solved). No cost bar, as stated.
+- Reading: one run per arm on 30 tasks, U = 6: a lead, not a rate. This is the third DeepSeek-over-Qwen-control result in a row (v3 5/5 vs 3/5, fix15 10/15 vs 1/15, v6 6/6 vs 2/6) and the first on failures nobody chose. The stopping rule ends this line: v6 is spent, no rerun, no tuning. Wiring the optional stage into the loop tooling (a documented chain, not a default) is a separate change for the user's yes.
+- Files: `bench/loop/results/deepseek-v6-fix-k4e2-hip.{jsonl,summary.json,regrade.txt}`.
+- DeepSeek is still resident (session 16 ACTIVE); the user ends it at a terminal with `scripts/llmctl.py bye`.
+
 ## Grader cgroup scope: per-grade MemoryMax and TasksMax (pre-run)
 
 Stated before the implementation (measure skill step 6; this commit changes only the README; `bench/loop/run.py` is untouched, no GPU, no server). Follows an external proposal to move grading into Docker/podman containers, which was checked against the code and not adopted: the grader already runs under `bwrap --unshare-all` (no network, read-only `/usr`, scratch dir only, oracle over stdin after import), a container's filesystem or read-only mount would put the oracle where the solution can open it (the leak the hardening closed), the oracle and the solution still share one Python process so the nonce and the deny-list stay, there is no Python image (a pulled interpreter would not be the host's 3.14.4 and the 870 stored rows would stop being comparable), and Docker is excluded. What remains of it is a real gap: `RLIMIT_AS` caps one process, nothing caps the process or thread count, so a candidate that forks N children gets N x 1 GiB and nothing stops the fork flood except the 60 s timeout; the only memory backstop is the `llmctl run` scope around the whole client, which protects the host by killing the whole run.
