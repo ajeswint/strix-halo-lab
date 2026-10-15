@@ -674,6 +674,25 @@ scripts/llmctl.py invite deepseek && scripts/llmctl.py run -- python3 bench/loop
 - What it buys besides the bars: the unselected stage 1 failure rate on 30 fresh tasks (between 8/30 on v4 and the aimed 8/10 on v5), the share of failures with no coded turn, the first fixer-vs-control comparison on failures nobody chose, and a `--parallel 4` `memory.peak` reading under the 1 GiB grader cap.
 - One run per arm on one set: a lead on how the pipeline behaves on unseen tasks, not a rate.
 
+## v6 pipeline, session 1 result (S1 + Q, at 03ac168)
+
+Run as written in 03ac168 after Grok's accord and the user's go; one chain, llmctl session 15, 2026-10-15 03:27-07:47 UTC. Invite preflight READY (GTT used 7.3 GiB, MemAvailable 109.3 GiB, 36.8 needed against 100.7 free); `bye`: GTT after stop 7.2 GiB (7,736,877,056 B read right after).
+
+```
+S1  qwen-v6-agent-k4e4-vk-np4   24/30 solved (fresh seed; regrade matches)   138 turns, 1,372,801 tok, 13,324 s (3.70 h), 12 cap hits, gtt_model 22.61 (peak 29.81), memory.peak 1,021 MiB
+selector                        unsolved 6, usable U = 6, no coded turn 0, last coded turn passed visible 0 -> exit 0 (not THIN)
+Q   qwen-v6-fix-k4e2-vk          2/6 solved (fresh seed; regrade matches)    20 turns,   196,451 tok,  2,301 s (0.64 h),  1 cap hit,  gtt_model 22.48 (peak 29.68), memory.peak 55 MiB
+```
+
+- U = 6: v6_08 url_normalize, v6_13 simplest_fraction, v6_21 staircase_log, v6_25 mlfq_finish_times, v6_28 rank_mini_league, v6_30 replay_editor_log. Every S1 failure had a coded, visibly failing last turn.
+- Q solved v6_08 url_normalize (episode 0, 1 turn) and v6_30 replay_editor_log (episode 0, 2 turns). Unsolved by Q: v6_13, v6_21, v6_25, v6_28 (7 episodes ended on a repeated error, 1 on repeated code).
+- S1 stops: pass 24, repeat_error 20, max_turns 8, repeat_code 1. Deny-list trips 0 in both arms; 2 `MemoryError` turns in S1 (grader cap working), none in Q. No memory-cap kill; all rc 0.
+- Validity: both selector calls exited 0, no rc 137, commands unchanged -> valid so far.
+- Bars, mechanically from here (S2 = DeepSeek solved of 6): bar A needs S2 >= 3 (U / 2 = 3); bar B needs S2 >= Q + 3 = 5. So S2 5 or 6 -> KEEP; S2 3 or 4 -> EFFORT; S2 <= 2 -> NOT MET. Stated before session 2 is invited.
+- Reading so far: unaimed S1 failure rate 6/30 (20%), between v4's 8/30 and the aimed v5's 8/10. Wall 3.70 h vs the 5.6 h estimate. `memory.peak` 1,021 MiB at `--parallel 4` with the 1 GiB grader cap (the scope's peak, agent.py plus graders).
+- Files: `bench/loop/results/qwen-v6-agent-k4e4-vk-np4.{jsonl,summary.json,regrade.txt}`, `qwen-v6-fix-k4e2-vk.{jsonl,summary.json,regrade.txt}`. `fix-v6-stored.jsonl` and `fix-v6-tasks.txt` stay untracked.
+- Next: session 2 (DeepSeek), gate as written: this commit pushed, U >= 6 (6), every selector check exit 0 (yes), the user's yes (given), and READY at the `invite deepseek` preflight (GTT used <= 7,857,319,520 B; 7,736,877,056 B now, 115 MiB under).
+
 ## Grader cgroup scope: per-grade MemoryMax and TasksMax (pre-run)
 
 Stated before the implementation (measure skill step 6; this commit changes only the README; `bench/loop/run.py` is untouched, no GPU, no server). Follows an external proposal to move grading into Docker/podman containers, which was checked against the code and not adopted: the grader already runs under `bwrap --unshare-all` (no network, read-only `/usr`, scratch dir only, oracle over stdin after import), a container's filesystem or read-only mount would put the oracle where the solution can open it (the leak the hardening closed), the oracle and the solution still share one Python process so the nonce and the deny-list stay, there is no Python image (a pulled interpreter would not be the host's 3.14.4 and the 870 stored rows would stop being comparable), and Docker is excluded. What remains of it is a real gap: `RLIMIT_AS` caps one process, nothing caps the process or thread count, so a candidate that forks N children gets N x 1 GiB and nothing stops the fork flood except the 60 s timeout; the only memory backstop is the `llmctl run` scope around the whole client, which protects the host by killing the whole run.

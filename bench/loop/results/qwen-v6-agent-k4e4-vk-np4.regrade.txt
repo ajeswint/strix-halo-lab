@@ -1,0 +1,183 @@
+{
+ "v6_01_wire_records": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_02_bencode_canonical": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_03_crc_rocksoft": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_04_crockford_check": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_05_strict_csv": {
+  "samples": 4,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_06_ipv6_canonical": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_07_udp_ipv4_inspect": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_08_url_normalize": {
+  "samples": 16,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_09_sqfree_progression": {
+  "samples": 5,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_10_proper_bracelets": {
+  "samples": 4,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_11_nonzero_digit_sum_kth": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_12_achilles_count": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_13_simplest_fraction": {
+  "samples": 13,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_14_clamped_lattice": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_15_square_roots_mod": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_16_derangement_unrank": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_17_lexmin_route": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_18_hull_peel_layers": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_19_weight_runs": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_20_circ_exact_count": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_21_staircase_log": {
+  "samples": 15,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_22_segment_pair_kinds": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_23_bridge_free_labels": {
+  "samples": 4,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_24_regvm_eight": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_25_mlfq_finish_times": {
+  "samples": 11,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_26_best_fit_heap": {
+  "samples": 5,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_27_wrap_cubic_lines": {
+  "samples": 12,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_28_rank_mini_league": {
+  "samples": 8,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_29_sweep_ring_state": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_30_replay_editor_log": {
+  "samples": 12,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ }
+}
+llmctl: run python3 rc=0 memory.peak=104 MiB cap=8192 MiB as=16384 MiB

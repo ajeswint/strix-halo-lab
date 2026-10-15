@@ -1,0 +1,39 @@
+{
+ "v6_08_url_normalize": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v6_13_simplest_fraction": {
+  "samples": 3,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_21_staircase_log": {
+  "samples": 7,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_25_mlfq_finish_times": {
+  "samples": 5,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_28_rank_mini_league": {
+  "samples": 2,
+  "visible": 0,
+  "fresh": 0,
+  "no_fresh": false
+ },
+ "v6_30_replay_editor_log": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ }
+}
+llmctl: run python3 rc=0 memory.peak=39 MiB cap=8192 MiB as=16384 MiB
