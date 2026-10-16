@@ -1,4 +1,6 @@
-profile cursor_sandbox /usr/share/cursor/resources/app/resources/helpers/cursorsandbox {
+# The in-sandbox forwarder connects to the network proxy's socket from its own
+# mount namespace, which AppArmor reports as a disconnected path.
+profile cursor_sandbox /usr/share/cursor/resources/app/resources/helpers/cursorsandbox flags=(attach_disconnected) {
   capability dac_override,
   file,
   /** ix,
@@ -12,6 +14,9 @@ profile cursor_sandbox /usr/share/cursor/resources/app/resources/helpers/cursors
   network unix,
   network inet stream,
   network inet6 stream,
+  # The network proxy runs under this profile and resolves hostnames over UDP.
+  network inet dgram,
+  network inet6 dgram,
   network netlink raw,
 
   # Allow unconfined host processes (e.g. root running `kill`) to signal sandboxed processes.
@@ -27,7 +32,7 @@ profile cursor_sandbox /usr/share/cursor/resources/app/resources/helpers/cursors
   /usr/share/cursor/resources/app/resources/helpers/cursorsandbox mr,
 }
 
-profile cursor_sandbox_remote /home/*/.cursor-server/bin/*/*/resources/helpers/cursorsandbox {
+profile cursor_sandbox_remote /home/*/.cursor-server/bin/*/*/resources/helpers/cursorsandbox flags=(attach_disconnected) {
   file,
   /** ix,
 
@@ -40,6 +45,8 @@ profile cursor_sandbox_remote /home/*/.cursor-server/bin/*/*/resources/helpers/c
   network unix,
   network inet stream,
   network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
   network netlink raw,
   signal (receive) peer=unconfined,
 
@@ -53,7 +60,7 @@ profile cursor_sandbox_remote /home/*/.cursor-server/bin/*/*/resources/helpers/c
   /home/*/.cursor-server/bin/*/*/resources/helpers/cursorsandbox mr,
 }
 
-profile cursor_sandbox_agent_cli /home/*/.local/share/cursor-agent/versions/*/cursorsandbox {
+profile cursor_sandbox_agent_cli /home/*/.local/share/cursor-agent/versions/*/cursorsandbox flags=(attach_disconnected) {
   file,
   /** ix,
 
@@ -66,6 +73,8 @@ profile cursor_sandbox_agent_cli /home/*/.local/share/cursor-agent/versions/*/cu
   network unix,
   network inet stream,
   network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
   network netlink raw,
   signal (receive) peer=unconfined,
 
