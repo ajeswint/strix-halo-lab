@@ -31,12 +31,12 @@ KEPT 2026-10-15 (README "v6 pipeline" sections: Qwen loop 24/30, DeepSeek fixer 
 - `fresh SET LABEL` (session 1): `SET` is registered in `run.SETS`, no stored `results/*.jsonl` row is a task of `SET` (a stored arm is a finished measurement; rerunning one is a new pre-run, not this procedure), and the label is new (`agent.py` overwrites an existing label's files).
 - `ready S1 LABEL` (session 2): session 1's fix files exist and are non-empty (its `select` exited 0), and the DeepSeek label is new.
 
-The blocks below use v7. No v7 exists today (v0-v5 are finished measurements, v6 is spent), so both refuse at the gate before any load. A real run first registers a new set (`bench/loop/tasks_vN.py` plus its `SETS` line, as v6 was) and changes `SET`.
+The blocks below use v8. No v8 exists today (v0-v5 are finished measurements, v6 is spent, v7 is held out for the CRAwDAD debate below), so both refuse at the gate before any load. A real run first registers a new set (`bench/loop/tasks_vN.py` plus its `SETS` line, as v6 was) and changes `SET`.
 
 Session 1, Qwen loop, then the selector. `bye` sits inside the group that runs only after a successful `invite`, so a gate refusal or a refused invite never ends someone else's session:
 
 ```
-SET=v7; L=qwen-$SET-agent-k4e4-vk-np4; python3 bench/loop/select_fix.py fresh $SET $L && scripts/llmctl.py invite qwen --ctx 65536 --np 4 && { scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET -k 4 -e 4 --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py select $L --tag $L; scripts/llmctl.py bye; }
+SET=v8; L=qwen-$SET-agent-k4e4-vk-np4; python3 bench/loop/select_fix.py fresh $SET $L && scripts/llmctl.py invite qwen --ctx 65536 --np 4 && { scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET -k 4 -e 4 --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py select $L --tag $L; scripts/llmctl.py bye; }
 ```
 
 - `select` exit 0: `fix-$L-tasks.txt` and `fix-$L-stored.jsonl` written (unsolved tasks whose last coded turn failed the visible tests; the files are named after the session 1 label, so they belong to that arm only). Exit 3: nothing to fix, stop. Exit 2: the regrade disagrees with the summary, stop and report. The chain's exit code is `bye`'s, so read the gate's and the selector's lines in the log.
@@ -45,11 +45,35 @@ SET=v7; L=qwen-$SET-agent-k4e4-vk-np4; python3 bench/loop/select_fix.py fresh $S
 Session 2, DeepSeek fix mode on the selected tasks. `ready` runs before the invite, so a session 1 that wrote no fix files never loads DeepSeek. No `bye` (the user's, at a terminal):
 
 ```
-SET=v7; S1=qwen-$SET-agent-k4e4-vk-np4; L=deepseek-$SET-fix-k4e2-hip; python3 bench/loop/select_fix.py ready $S1 $L && scripts/llmctl.py invite deepseek && scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET --tasks "$(cat bench/loop/results/fix-$S1-tasks.txt)" --fix-from bench/loop/results/fix-$S1-stored.jsonl -k 4 -e 2 --task-budget 98304 --parallel 1 --api http://127.0.0.1:8080 --model deepseek-v4-flash --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py check $L
+SET=v8; S1=qwen-$SET-agent-k4e4-vk-np4; L=deepseek-$SET-fix-k4e2-hip; python3 bench/loop/select_fix.py ready $S1 $L && scripts/llmctl.py invite deepseek && scripts/llmctl.py run -- python3 bench/loop/agent.py --set $SET --tasks "$(cat bench/loop/results/fix-$S1-tasks.txt)" --fix-from bench/loop/results/fix-$S1-stored.jsonl -k 4 -e 2 --task-budget 98304 --parallel 1 --api http://127.0.0.1:8080 --model deepseek-v4-flash --label $L && scripts/llmctl.py run -- python3 bench/loop/agent.py --regrade bench/loop/results/$L.jsonl --set $SET > bench/loop/results/$L.regrade.txt && python3 bench/loop/select_fix.py check $L
 ```
 
 - Cost from v6: ~0.4 h per selected task on DeepSeek, up to ~1.5 h (8 turns x ~692 s); the GPU and ~85 GiB GTT are held throughout; no Chrome, Unreal or builds while it is up. The fix-from and task-list files stay untracked.
 - A task solved here is solved by the pipeline, not by Qwen: report S1 and S2 separately.
+
+## CRAwDAD debate (bench/loop/debate.py)
+
+Built 2026-10-15, stub-tested only (`python3 bench/loop/debate.py --selftest`, no server). No GPU session runs before a README pre-run for it is committed, Grok gives accord and the user says go; each session is a GPU stage. Protocol, deviations from the paper and the file layout are in the `debate.py` docstring. Seats are llmctl endpoints `qwen32` and `r1d32` at the defaults (vk, ctx 32768, 1 slot); `step` refuses a slot under 26,624 tokens (`SLOT_MIN`), a served model that is not a seat, another llama.cpp build or model file than the run started with, and changed prompts or constants (protocol hash).
+
+A set takes five sessions, alternating seats. Each is one background chain (gpu-guard denies `run`, `bye` and `python3` while a model is resident); `bye` sits in the group after a successful invite. The first step fixes the run in `results/<label>.debate.meta.json` (set, tasks, balanced coin); a probe passes `--tasks` on the first step only. Session 1 (Qwen first; `status` names the seat when a run already exists):
+
+```
+scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop/debate.py step --label crawdad-v7 --set v7; scripts/llmctl.py bye; }
+```
+
+Between sessions, no server: `python3 bench/loop/debate.py status --label crawdad-v7` prints each task's state and `next session: invite <seat>`. Sessions 2-5, the seat it names, without `--set`:
+
+```
+scripts/llmctl.py invite r1d32 && { scripts/llmctl.py run -- python3 bench/loop/debate.py step --label crawdad-v7; scripts/llmctl.py bye; }
+```
+
+```
+scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop/debate.py step --label crawdad-v7; scripts/llmctl.py bye; }
+```
+
+- A step that dies (server gone, HTTP error) keeps every reply already written; the same command resumes and never asks a reply twice.
+- After `status` prints `done`: `python3 bench/loop/debate.py report --label crawdad-v7 --regrade` (CPU only) writes `results/crawdad-v7.debate.summary.json` and exits 2 if any stored grade does not reproduce.
+- Cost is unmeasured: a reply is at most 6,144 tokens (2,048 thinking); at the one-request 11.1 t/s of the first load that is ~9 min at worst per reply, slower at depth.
 
 ## The primitive underneath
 
