@@ -156,11 +156,13 @@ def request_body(model, prompt, seed):
 
 
 def parse_response(resp, gen_s):
-    """The fields a row keeps from a chat completion. reasoning_content is reduced to its length."""
+    """The fields a row keeps from a chat completion. reasoning_content is reduced to its length and budget_hit
+    (llama.cpp appends BUDGET_MESSAGE to the trace when it forces the end tag)."""
     ch = resp["choices"][0]
     tm = resp.get("timings") or {}
+    rc = ch["message"].get("reasoning_content") or ""
     return {"content": ch["message"].get("content") or "",
-            "reasoning_chars": len(ch["message"].get("reasoning_content") or ""),
+            "reasoning_chars": len(rc), "budget_hit": BUDGET_MESSAGE in rc[-400:],
             "finish": ch.get("finish_reason"), "usage": resp.get("usage", {}), "gen_s": gen_s,
             "prompt_n": tm.get("prompt_n"), "tg_tps": tm.get("predicted_per_second")}
 
@@ -298,7 +300,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 raise
             code, verdict, conf = parse(r["content"])
             row = {"task": tid, "seat": seat, "model": alias, "round": rnd, "role": role, "seed": SEED_BASE + rnd,
-                   "content": r["content"], "reasoning_chars": r["reasoning_chars"], "finish": r["finish"],
+                   "content": r["content"], "reasoning_chars": r["reasoning_chars"], "budget_hit": r.get("budget_hit"),
+                   "finish": r["finish"],
                    "completion_tokens": r["usage"].get("completion_tokens"),
                    "prompt_tokens": r["usage"].get("prompt_tokens"), "prompt_n": r.get("prompt_n"),
                    "tg_tps": r.get("tg_tps"), "gen_s": r["gen_s"], "code": code, "verdict": verdict,
@@ -447,7 +450,9 @@ def selftest():
             "usage": {"completion_tokens": 7}, "timings": {"prompt_n": 5, "predicted_per_second": 11.1}}
     pr = parse_response(resp, 1.0)
     check("parse_response keeps the trace's length only", "TRACE-MARKER" not in json.dumps(pr)
-          and pr["reasoning_chars"] == 130 and pr["tg_tps"] == 11.1)
+          and pr["reasoning_chars"] == 130 and pr["tg_tps"] == 11.1 and pr["budget_hit"] is False)
+    resp["choices"][0]["message"]["reasoning_content"] = "TRACE " * 500 + BUDGET_MESSAGE + "\n"
+    check("parse_response: budget_hit when the trace ends with the budget message", parse_response(resp, 1.0)["budget_hit"])
     b = request_body("m", "p", 4002)
     check("request: budget 2048 + message inside max_tokens 6144, seed, sampling",
           b["reasoning_budget_tokens"] == 2048 and b["reasoning_budget_message"] == BUDGET_MESSAGE

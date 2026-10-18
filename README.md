@@ -1148,6 +1148,23 @@ Run 2026-10-15 (user's yes for round 1 only), llmctl session 14: preflight READY
 - Tested: `debate.py --selftest`, 34 checks against scripted seats and the real bwrap grader on six v1 tasks, passing on 6 of 6 runs: parsing, every leaf type, history labels and order, the thinking trace and the second seat's solo never in a debate prompt, the request body, the guards, resume after a mid-step failure, five sessions from either seat. Not tested, needs a server: thinking tags in the two templates, the budget in effect, verdict-line compliance, turn times, tg at depth.
 - `bench/loop/check_tasks.py`: v6's task checks as a script (v6 passes 30/30; a part file with three planted defects fails on each). The `llm-serve` skill's DeepSeek fix-stage example moved from v7 to v8, because registering v7 would let its gate pass.
 
+## CRAwDAD debate runner: GPU smoke on 2 spent v1 tasks (pre-run)
+
+Stated before any GPU use (2026-10-18; the user said draft and execute, and waived the Grok round for this one). Not a measurement and not a keep/drop: it answers only what the stub selftest cannot, before v7 is written and before a real CRAwDAD pre-run sets a bar. v1 is spent, so nothing sealed is used.
+- Question: does `debate.py` work end to end against the two real servers? That covers four things: the 2,048-token reasoning budget is in effect for each seat, replies end in code rather than running out of tokens, the verdict lines parse, and stored grades reproduce. Second question: what does a turn cost (gen_s, tg at the prompt depths reached)?
+- Tasks: `v1_20_determinant` (both models solved it in loop-v1) and `v1_24_add_duration` (neither did in 8 attempts, so disagreement and rounds R3/R4 are likely). The balanced coin gives each seat the first word on one. Label `crawdad-smoke-v1`.
+- Code as of this commit: protocol `137acf32c95d`, unchanged. Rows gain `budget_hit`, true when the thinking trace ends with `BUDGET_MESSAGE`. llama.cpp v0.7.0 injects that message only when the template exposes thinking tags and the budget forces the end tag (`common/sampling.cpp`, `tools/server/server-common.cpp:1447`). Selftest 35 checks OK.
+- Procedure: `llm-serve` skill, "CRAwDAD debate", with `--label crawdad-smoke-v1 --set v1 --tasks v1_20_determinant,v1_24_add_duration` on the first step. Endpoint defaults: vk, ctx 32768, 1 slot, `--parallel 1`. Up to 5 sessions, one model resident, each a single background chain with `bye` after a successful invite. `llmctl run` at its defaults (8 GiB MemoryMax, 16 GiB AS); each grade's child is capped at 1 GiB AS. Memory: +26.7 / +26.8 GiB GTT over the 7.3 GiB idle at first load.
+- Cost: at most 10 replies, each at most 6,144 tokens, ~9 min at the first load's 11.1 t/s, so <= ~1.5 h of decode plus up to 5 loads.
+- Pass, every line has to hold:
+  1. Every reply has `finish` = `stop`. A `length` means the budget did not leave room for the answer.
+  2. Every R1 has a code block, and no task ends as `no_code` or `parse_fail`.
+  3. Each seat has at least one reply with `budget_hit` true, which shows the budget is in effect for that template. If a seat's thinking never reached 2,048 tokens, that line is unanswered rather than failed, and the report says so.
+  4. `think_leak` is false on every reply.
+  5. `report --regrade` exits 0.
+- Recorded, no bar: gen_s, completion_tokens, reasoning_chars, prompt_n and tg_tps per reply; session count; GTT per session (llmctl note); `memory.peak` per run.
+- On a fail: the cause is fixed in the runner or the server config, and the smoke repeats under a new label. Solve counts mean nothing here, with n = 2 on a spent set; they tune nothing and are not compared with loop-v1.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
