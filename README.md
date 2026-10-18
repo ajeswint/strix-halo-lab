@@ -1205,8 +1205,30 @@ Next: v7, rewritten inline with no agents and every reference and test run under
   - 10: properties
 - Checks: `check_tasks.py --set v7` 10/10 OK. `run.py --selftest --set v7` and `agent.py --selftest --set v7` OK. `debate.py --selftest` OK (protocol unchanged). Negative control: 20 single-line mutants of the references (two per task, each a plausible bug) graded against the tests. 19 caught; the 20th is equivalent (a zero-area rectangle's difference-array marks cancel), so 19 of 19 non-equivalent mutants were caught. The script is in the session scratchpad, not the repo.
 - Two entry-point clashes found by the checker were renamed: `parse_ini` (v3) became `parse_ini_strict`, and `justify` (v0) became `justify_lines`. Two example values in v7_05's prompt were wrong in the draft and were recomputed before the checker ran. The 10^18 count, 168856464709124011, matches the closed form 1 + (9^19 - 9) / 8.
-- Not done: a cold review. v6 used fresh Claude subagents who saw only the prompts. Whether each prompt alone determines its answer is so far only the author's review. A cold review now needs the user's call (agents only on request, capped), or the user waives it.
-- Sealed from this commit: no prompt, test or reference edits on v7_01-10, except a defect found by a cold review, which is fixed and recorded here before any model sees the set.
+- Sealed from 6680747: no prompt, test or reference edits on v7_01-10, except a defect found by a cold review, which is fixed and recorded here before any model sees the set.
+- Cold review, 2026-10-18, allowed by the user and capped:
+  - Setup: ten solvers, one per task, `red-team` agent type (tools Read/Grep/Glob only: no Bash, no writes, so no code ran), model Sonnet. Each got its prompt verbatim with "use no tools, read no file", and returned one module plus a list of ambiguities. All ten reported `TOOLS USED: none`, at 13-16k tokens each.
+  - Grading: the code was graded by `run.grade`, whose child is capped, at the visible seed, the fresh seed 104729 and seeds 1-3. 10 of 10 passed on all five, each on the first attempt. No defect, no prompt edit, and the seal stands.
+  - Listed ambiguities that a test depends on: v7_02's `a=1\r\r` (only one "\r" is dropped), v7_05's out-of-range lo or hi raising before the lo > hi shortcut, and v7_09's rows given as tuples being rejected. Each is resolved by explicit prompt text ("loses that one \r", the argument ranges, "list of lists"), and each solver took that reading. The other listed points are not tested: subclasses of str, list or int, more than 200 rectangles, n > 300, ints past 4,300 digits.
+  - The solver code is kept in the session scratchpad, not the repo.
+
+## CRAwDAD probe on v7_01-10 (pre-run)
+
+Stated before any GPU session (2026-10-18; the user's go, and the bar is the user's, relayed from the review that accepted 6680747). Not a keep/drop of the debate. It decides how v7 tasks 11-30 are written. The set is v7_01-10 as committed in 6680747, unchanged after the cold review.
+- Label `crawdad-v7-probe`, `--set v7 --tasks v7_01_packbits,v7_02_ini_strict,v7_03_semver_order,v7_04_partition_rank,v7_05_digit_rules,v7_06_route_lexmin,v7_07_rect_union,v7_08_bowling_frames,v7_09_paint_posts,v7_10_justify_lines` on the first step. `coin()` shuffles that list (seed 42, five tasks per seat first), and `step` refuses a later change of the list, so this label cannot grow into the 30-task run; that run is a later label.
+- Code: `debate.py` protocol `137acf32c95d`, as in the smoke run, with seats `qwen32` / `r1d32` at the endpoint defaults (vk, ctx 32768, 1 slot, `--parallel 1`), reasoning budget 2,048 and `max_tokens` 6,144. Procedure: `llm-serve` skill, "CRAwDAD debate", with this label. Up to 5 sessions, one model resident at a time, each a background chain with `bye` after a successful invite.
+- Cost and memory: 20 solo replies plus 1-3 debate replies per task, so 30-50 replies. At the smoke run's ~3.6 min per reply that is about 1.8-3 h of decode; the worst case (6,144 tokens at ~11 t/s, ~9 min per reply) is 7.5 h. GTT +26.7 / +26.8 GiB over the 7.4 GiB idle, client capped by `llmctl run` (8 GiB), each grade's child at 1 GiB AS.
+- Per task, from `results/crawdad-v7-probe.debate.summary.json` and the rows:
+  - signal = the two solos disagree (one passes, one fails), or at least one solo passes and the leaf fails;
+  - all-fail = both solos and the leaf fail.
+- Bar, applied in this order:
+  1. all-fail >= 8 of 10: v7_01-10 stay, and 11-30 are written easier.
+  2. signal >= 2 of 10: 11-30 are written in this same style.
+  3. signal = 0: v7_01-10 stay, and 11-30 get less of the algorithm spelled out in the prompt.
+  4. signal = 1 (and all-fail < 8): not covered by the user's bar. The result is reported, and the user decides.
+  Lines 1 and 4 (order and gap) are Claude's additions to the relayed bar, made because all-fail >= 8 and signal >= 2 can both hold (8 all-fail plus 2 signal) and signal = 1 falls between the rules. Nothing else is decided from this run: no prompt, K, budget or protocol change.
+- Recorded, no bar: the determinant case (tasks where a solo passed and the leaf failed, with the seat), per-reply time (gen_s mean, median, max per seat and per round), `budget_hit` rate per seat, any `finish` = `length`, `no_code` and `parse_fail` counts, leaf rounds and stops, session count, GTT per session and `memory.peak`.
+- Validity: `report --regrade` must exit 0; otherwise the run is reported as unreadable and the bar is not applied. One run, n = 10, no spread: the bar reads headroom for writing tasks, not a rate.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
