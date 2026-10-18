@@ -1187,6 +1187,27 @@ Seen, not measured (n = 2, a spent set):
 
 Next: v7, rewritten inline with no agents and every reference and test run under `prlimit --as=4294967296`, then the CRAwDAD pre-run with a question and a bar. Each needs the user's go.
 
+## v7 tasks: held-out set for the CRAwDAD debate (batch 1 of 3, 2026-10-18)
+
+`bench/loop/tasks_v7.py`, registered as `v7` in `run.SETS`. It replaces the v7 lost in the 2026-10-15 crash. Written inline in one session by Claude, with no subagents. Every check ran under `prlimit --as=4294967296`, and no model ran.
+- Batch 1 is v7_01-10, seeds 7001-7010. The buckets are those of v6: formats (01 packbits, 02 ini_strict, 03 semver_order), number theory and combinatorics (04 partition_rank, 05 digit_rules), graphs and geometry (06 route_lexmin, 07 rect_union), simulation and DP (08 bowling_frames, 09 paint_posts, 10 justify_lines). Tasks 11-30 append at the marker in the file, and v7_01-10 stay frozen from now on, so a 10-task probe stays the first 10 rows of a 30-task run.
+- Unaimed: no family was taken from a stored failure. Difficulty is a judgement for the debate pair, not a measurement. Specs are exact, at 1,300-2,600 chars, and the algorithms fit a 2,048-token thinking budget (DP, Dijkstra, coordinate compression, digit DP). There is no 10^18-scale number theory of the v4-v6 kind. Whether this gives headroom in both directions is for the CRAwDAD pre-run's probe to show.
+- Each test file has one `random.seed(N)`. Seeded cases are checked against an oracle built differently from the reference:
+  - 01: groupby encoder, and packet streams built with their expansion
+  - 02: a generator that serializes a known dict
+  - 03: a `cmp_to_key` comparator
+  - 04: brute enumeration, Euler's pentagonal recurrence, and a distinct-parts product
+  - 05: brute force, and a forward tight-flag DP
+  - 06: simple-path DFS, an O(n^2) Dijkstra, and a grid with known C(118, 59)
+  - 07: unit-grid counting under affine maps
+  - 08: frame generator
+  - 09: brute force over all plans, and a forward DP
+  - 10: properties
+- Checks: `check_tasks.py --set v7` 10/10 OK. `run.py --selftest --set v7` and `agent.py --selftest --set v7` OK. `debate.py --selftest` OK (protocol unchanged). Negative control: 20 single-line mutants of the references (two per task, each a plausible bug) graded against the tests. 19 caught; the 20th is equivalent (a zero-area rectangle's difference-array marks cancel), so 19 of 19 non-equivalent mutants were caught. The script is in the session scratchpad, not the repo.
+- Two entry-point clashes found by the checker were renamed: `parse_ini` (v3) became `parse_ini_strict`, and `justify` (v0) became `justify_lines`. Two example values in v7_05's prompt were wrong in the draft and were recomputed before the checker ran. The 10^18 count, 168856464709124011, matches the closed form 1 + (9^19 - 9) / 8.
+- Not done: a cold review. v6 used fresh Claude subagents who saw only the prompts. Whether each prompt alone determines its answer is so far only the author's review. A cold review now needs the user's call (agents only on request, capped), or the user waives it.
+- Sealed from this commit: no prompt, test or reference edits on v7_01-10, except a defect found by a cold review, which is fixed and recorded here before any model sees the set.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
