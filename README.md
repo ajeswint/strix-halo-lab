@@ -1230,6 +1230,37 @@ Stated before any GPU session (2026-10-18; the user's go, and the bar is the use
 - Recorded, no bar: the determinant case (tasks where a solo passed and the leaf failed, with the seat), per-reply time (gen_s mean, median, max per seat and per round), `budget_hit` rate per seat, any `finish` = `length`, `no_code` and `parse_fail` counts, leaf rounds and stops, session count, GTT per session and `memory.peak`.
 - Validity: `report --regrade` must exit 0; otherwise the run is reported as unreadable and the bar is not applied. One run, n = 10, no spread: the bar reads headroom for writing tasks, not a rate.
 
+### Result (2026-10-18, at 073cc52): all-fail 9 of 10, so line 1 applies, and 11-30 get easier
+
+Four sessions (llmctl 30-33; the fifth was not needed), 39 replies, 10 of 10 tasks at a leaf, `report --regrade` ok, exit 0. Results are in `bench/loop/results/crawdad-v7-probe.debate.{jsonl,meta.json,summary.json}`.
+
+| task | first | solo Qwen | solo R1-D | leaf | stop |
+|---|---|---|---|---|---|
+| v7_01 packbits | r1d32 | fail | fail | fail | R3 accept |
+| v7_02 ini_strict | r1d32 | fail | fail | fail | R2 accept |
+| v7_03 semver_order | qwen32 | fail | fail | fail | R4 accept |
+| v7_04 partition_rank | qwen32 | fail | fail | fail | R2 accept |
+| v7_05 digit_rules | r1d32 | fail | fail | fail | R3 accept |
+| v7_06 route_lexmin | qwen32 | fail | fail | fail | R2 accept |
+| v7_07 rect_union | r1d32 | fail | fail | fail | R2 accept |
+| v7_08 bowling_frames | qwen32 | fail | fail (length, no code) | fail | R4 max_rounds |
+| v7_09 paint_posts | qwen32 | fail | fail | fail | R4 accept |
+| v7_10 justify_lines | r1d32 | pass | pass | pass | R3 accept |
+
+- Bar, in the stated order: all-fail = 9 >= 8, so line 1 applies. v7_01-10 stay as committed, and tasks 11-30 are written easier. Signal = 0 (no solo disagreement, and no passing solo dropped by a leaf), which on its own would have been line 3, "less spelled out". The order stated in the pre-run decides between them, so line 3 does not apply.
+- For contrast, not a bar: the cold-review solvers (Sonnet, no thinking budget, no tests run) passed 10 of 10 on the same prompts. The gap is the pair at a 2,048-token budget against these specs, not the prompts' determinacy.
+- Recorded, no bar:
+  - Determinant case (a solo passed and the leaf failed): 0.
+  - Per reply: gen_s mean 260 s. Qwen 18 replies, mean 249, median 261, max 308. R1-Distill 21 replies, mean 269, median 280, max 565 (the length reply). By round, mean: R1 291, R2 249, R3 185, R4 245.
+  - Decode 10,146 s (2.8 h). Wall 2 h 50 min 38 s from the first invite to the last bye.
+  - tg 10.74-11.16 t/s at prompts up to 3,671 tokens.
+  - `budget_hit`: Qwen 17/18, R1-Distill 17/21.
+  - One `finish` = `length`: R1-Distill's solo on v7_08, 6,144 tokens and no code. It was not the debate's opener; Qwen opened that task.
+  - Leaves R2 4, R3 3, R4 3. Stops: accept 9, max_rounds 1. No `parse_fail`.
+  - GTT 34.1-34.3 GiB while resident, back to 7.4-7.5 after each bye. `memory.peak` 40-45 MiB.
+- New, not seen in the smoke run: `think_leak` on 5 replies, all R1-Distill and all with `budget_hit`. After llama.cpp forced the end tag, the model emitted `<think>` again and kept reasoning in `content`, then closed it and answered. The thinking traces in content run 16-8,702 chars. So for this template the per-request budget caps the first trace but not the reasoning. `visible()` keeps only the text after the last `</think>`, and all 5 close it, so no trace reached a debate prompt (`history`, `debate.py`). A real pre-run should name this: either count that text against the budget, or accept it as part of R1-Distill's reply.
+- Next: tasks 11-30, written easier (the bar's direction; how much easier is the next pre-run's judgement), then the 30-task run under its own label and pre-run. Each needs the user's go.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.

@@ -1,0 +1,52 @@
+{
+ "label": "crawdad-v7-probe",
+ "set": "v7",
+ "tasks": [
+  "v7_01_packbits",
+  "v7_02_ini_strict",
+  "v7_03_semver_order",
+  "v7_04_partition_rank",
+  "v7_05_digit_rules",
+  "v7_06_route_lexmin",
+  "v7_07_rect_union",
+  "v7_08_bowling_frames",
+  "v7_09_paint_posts",
+  "v7_10_justify_lines"
+ ],
+ "first": {
+  "v7_08_bowling_frames": "qwen32",
+  "v7_04_partition_rank": "qwen32",
+  "v7_03_semver_order": "qwen32",
+  "v7_09_paint_posts": "qwen32",
+  "v7_06_route_lexmin": "qwen32",
+  "v7_07_rect_union": "r1d32",
+  "v7_10_justify_lines": "r1d32",
+  "v7_05_digit_rules": "r1d32",
+  "v7_01_packbits": "r1d32",
+  "v7_02_ini_strict": "r1d32"
+ },
+ "coin_seed": 42,
+ "protocol": "137acf32c95d",
+ "reasoning_budget": 2048,
+ "max_tokens": 6144,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "seed_base": 4000,
+ "fresh_seed": 104729,
+ "build": "b11669-620d2225c",
+ "seats": {
+  "qwen32": {
+   "model": "qwen3-32b",
+   "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  },
+  "r1d32": {
+   "model": "r1-distill-qwen-32b",
+   "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  }
+ }
+}
