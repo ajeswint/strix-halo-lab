@@ -1,0 +1,36 @@
+{
+ "label": "crawdad-smoke-v1",
+ "set": "v1",
+ "tasks": [
+  "v1_20_determinant",
+  "v1_24_add_duration"
+ ],
+ "first": {
+  "v1_24_add_duration": "qwen32",
+  "v1_20_determinant": "r1d32"
+ },
+ "coin_seed": 42,
+ "protocol": "137acf32c95d",
+ "reasoning_budget": 2048,
+ "max_tokens": 6144,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "seed_base": 4000,
+ "fresh_seed": 104729,
+ "build": "b11669-620d2225c",
+ "seats": {
+  "qwen32": {
+   "model": "qwen3-32b",
+   "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  },
+  "r1d32": {
+   "model": "r1-distill-qwen-32b",
+   "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  }
+ }
+}

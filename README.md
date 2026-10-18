@@ -1145,7 +1145,7 @@ Run 2026-10-15 (user's yes for round 1 only), llmctl session 14: preflight READY
 - Seats: Qwen3-32B (`qwen32`) and DeepSeek-R1-Distill-Qwen-32B (`r1d32`), one resident at a time. A balanced seeded coin (seed 42, half the tasks each) picks the first speaker. R1 is a solo answer from both seats (the exclusive-solve check the paper never runs; the coin's seat's R1 opens the debate), R2 the critic, R3 defend or be persuaded, R4 the last word. `VERDICT: accept` ends the debate; the module standing then is the leaf, graded once on fresh seed 104729. No test result reaches a model. A parse failure is a failure, never a coin flip.
 - Reasoning budget 2,048 tokens (user, 2026-10-15) through the per-request `reasoning_budget_tokens` with a budget message, inside `max_tokens` 6,144. In v0.7.0 the per-request field takes effect only when the chat template exposes thinking tags (`tools/server/server-common.cpp`, the `thinking_end_tags` check). Whether both 32B templates do is unverified until a GPU stage reads `reasoning_chars` against the cap.
 - A set takes five llmctl sessions, alternating seats: `step` asks every reply the served seat owes, resumes after a failure, and refuses another set, task list, protocol hash, llama.cpp build or model file than the run started with. Procedure: `llm-serve` skill, "CRAwDAD debate".
-- Tested: `debate.py --selftest`, 34 checks against scripted seats and the real bwrap grader on six v1 tasks, passing on 6 of 6 runs: parsing, every leaf type, history labels and order, the thinking trace and the second seat's solo never in a debate prompt, the request body, the guards, resume after a mid-step failure, five sessions from either seat. Not tested, needs a server: thinking tags in the two templates, the budget in effect, verdict-line compliance, turn times, tg at depth.
+- Tested: `debate.py --selftest`, 34 checks against scripted seats and the real bwrap grader on six v1 tasks, passing on 6 of 6 runs: parsing, every leaf type, history labels and order, the thinking trace and the second seat's solo never in a debate prompt, the request body, the guards, resume after a mid-step failure, five sessions from either seat. Server-side checks (thinking tags in the two templates, the budget in effect, verdict-line compliance, turn times, tg at depth): the GPU smoke below, PASS 2026-10-18.
 - `bench/loop/check_tasks.py`: v6's task checks as a script (v6 passes 30/30; a part file with three planted defects fails on each). The `llm-serve` skill's DeepSeek fix-stage example moved from v7 to v8, because registering v7 would let its gate pass.
 
 ## CRAwDAD debate runner: GPU smoke on 2 spent v1 tasks (pre-run)
@@ -1164,6 +1164,28 @@ Stated before any GPU use (2026-10-18; the user said draft and execute, and waiv
   5. `report --regrade` exits 0.
 - Recorded, no bar: gen_s, completion_tokens, reasoning_chars, prompt_n and tg_tps per reply; session count; GTT per session (llmctl note); `memory.peak` per run.
 - On a fail: the cause is fixed in the runner or the server config, and the smoke repeats under a new label. Solve counts mean nothing here, with n = 2 on a spent set; they tune nothing and are not compared with loop-v1.
+
+### Result (2026-10-18, at 974d684): PASS on every line
+
+Five sessions (llmctl 25-29), 9 replies, both tasks reached a leaf. Results are in `bench/loop/results/crawdad-smoke-v1.debate.{jsonl,meta.json,summary.json}`, build b11669-620d2225c, protocol `137acf32c95d`.
+1. `finish` = `stop` on 9 of 9.
+2. Every R1 has code, and every R2-R4 reply has a verdict line (reject with code, or accept). No `no_code` and no `parse_fail`.
+3. `budget_hit` is true on 3 of 5 Qwen3-32B replies (both solos and none of its 3 debate replies) and on 5 of 5 R1-Distill replies. So the per-request budget is in effect for both templates. A reply that hit the cap still ended with code: completion 2,378-3,459 tokens, so 330-1,411 tokens past the 2,048 budget (the forced message and end tag included), and visible content of 1,172-5,256 chars.
+4. `think_leak` is false on 9 of 9.
+5. `report --regrade`: `ok`, exit 0.
+
+Recorded (one run, no spread):
+- Decode: tg 10.88-11.27 t/s. The lowest is at the deepest prompt (2,595 tokens, Qwen R3), so tg at depth is about 3% below the shallow rate up to there. A reply took 117-317 s. Thinking: Qwen 2,252-9,443 chars, R1-Distill 7,533-8,374.
+- Sessions: 33 min 20 s wall from the first invite to the last bye, of which 32 min was decode (1,920.9 s). Loads and swaps added about 1.3 min over 5 sessions, with the files warm in the page cache.
+- Memory: GTT +26.7 / +26.8 GiB over 7.4 GiB idle, matching `gtt_need`, and back to 7.4 GiB after every bye. Client `memory.peak` 38-39 MiB.
+- Leaves: add_duration ended at R3 accept (Qwen, defending, accepted R1-Distill's module) and determinant at R4 max_rounds.
+
+Seen, not measured (n = 2, a spent set):
+- Qwen's R3 `accept` reply also carried a code block, which the verdict rules say to omit. `walk` keeps the previous standing module on accept (`debate.py`, the `accept` branch), so the leaf is R1-Distill's R2 module, as designed. Compliance with "accept: write no code" is not perfect.
+- determinant: Qwen's solo passed and R1-Distill's failed. With R1-Distill first, Qwen's R2 critic rejected with a new module that failed, and the leaf failed. So the debate lost a solve one seat had alone. The summary counts this case as `qwen32_only` 1 and `debate_solved` 0. It is a single case and says nothing about rates, but it is the case the exclusive-solve check exists to catch, and the real pre-run should name it.
+- Cost model for the real pre-run: at about 3.6 min per reply and 5-9 replies per task, a 30-task set is roughly 9-16 h of decode.
+
+Next: v7, rewritten inline with no agents and every reference and test run under `prlimit --as=4294967296`, then the CRAwDAD pre-run with a question and a bar. Each needs the user's go.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

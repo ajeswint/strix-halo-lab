@@ -53,7 +53,7 @@ SET=v8; S1=qwen-$SET-agent-k4e4-vk-np4; L=deepseek-$SET-fix-k4e2-hip; python3 be
 
 ## CRAwDAD debate (bench/loop/debate.py)
 
-Built 2026-10-15, stub-tested only (`python3 bench/loop/debate.py --selftest`, no server). No GPU session runs before a README pre-run for it is committed, Grok gives accord and the user says go; each session is a GPU stage. Protocol, deviations from the paper and the file layout are in the `debate.py` docstring. Seats are llmctl endpoints `qwen32` and `r1d32` at the defaults (vk, ctx 32768, 1 slot); `step` refuses a slot under 26,624 tokens (`SLOT_MIN`), a served model that is not a seat, another llama.cpp build or model file than the run started with, and changed prompts or constants (protocol hash).
+Built 2026-10-15 (`python3 bench/loop/debate.py --selftest`, no server). GPU smoke passed 2026-10-18 (`crawdad-smoke-v1`, 2 v1 tasks, README "GPU smoke" result): the budget is in effect for both templates and the verdicts parse. No GPU session runs before a README pre-run for it is committed and the user says go (a Grok round unless the user waives it); each session is a GPU stage. Protocol, deviations from the paper and the file layout are in the `debate.py` docstring. Seats are llmctl endpoints `qwen32` and `r1d32` at the defaults (vk, ctx 32768, 1 slot); `step` refuses a slot under 26,624 tokens (`SLOT_MIN`), a served model that is not a seat, another llama.cpp build or model file than the run started with, and changed prompts or constants (protocol hash).
 
 A set takes five sessions, alternating seats. Each is one background chain (gpu-guard denies `run`, `bye` and `python3` while a model is resident); `bye` sits in the group after a successful invite. The first step fixes the run in `results/<label>.debate.meta.json` (set, tasks, balanced coin); a probe passes `--tasks` on the first step only. Session 1 (Qwen first; `status` names the seat when a run already exists):
 
@@ -73,7 +73,7 @@ scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop
 
 - A step that dies (server gone, HTTP error) keeps every reply already written; the same command resumes and never asks a reply twice.
 - After `status` prints `done`: `python3 bench/loop/debate.py report --label crawdad-v7 --regrade` (CPU only) writes `results/crawdad-v7.debate.summary.json` and exits 2 if any stored grade does not reproduce.
-- Cost is unmeasured: a reply is at most 6,144 tokens (2,048 thinking); at the one-request 11.1 t/s of the first load that is ~9 min at worst per reply, slower at depth.
+- Cost, measured on the smoke run (one run): replies took 117-317 s (about 3.6 min mean), tg 10.9-11.3 t/s at prompts up to 2,595 tokens, loads and swaps about 1.3 min over 5 sessions with the files warm. A 30-task set is roughly 9-16 h of decode at 5-9 replies per task. Worst case per reply is 6,144 tokens, about 9 min.
 
 ## The primitive underneath
 

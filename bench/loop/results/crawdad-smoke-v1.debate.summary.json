@@ -1,0 +1,169 @@
+{
+ "label": "crawdad-smoke-v1",
+ "set": "v1",
+ "tasks": 2,
+ "complete": true,
+ "protocol": "137acf32c95d",
+ "build": "b11669-620d2225c",
+ "seats": {
+  "qwen32": {
+   "model": "qwen3-32b",
+   "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  },
+  "r1d32": {
+   "model": "r1-distill-qwen-32b",
+   "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  }
+ },
+ "reasoning_budget": 2048,
+ "max_tokens": 6144,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "fresh_seed": 104729,
+ "first_counts": {
+  "qwen32": 1,
+  "r1d32": 1
+ },
+ "solo_solved": {
+  "qwen32": 1,
+  "r1d32": 0
+ },
+ "solo_union": 1,
+ "exclusive": {
+  "both": 0,
+  "neither": 1,
+  "qwen32_only": 1,
+  "r1d32_only": 0
+ },
+ "debate_solved": 0,
+ "leaves": {
+  "R4": 1,
+  "R3": 1
+ },
+ "stops": {
+  "max_rounds": 1,
+  "accept": 1
+ },
+ "first_solo_to_leaf": {
+  "pass_pass": 0,
+  "fail_pass": 0,
+  "pass_fail": 0,
+  "fail_fail": 2
+ },
+ "by_first_speaker": {
+  "qwen32": {
+   "tasks": 1,
+   "first_solo": 0,
+   "leaf": 0
+  },
+  "r1d32": {
+   "tasks": 1,
+   "first_solo": 0,
+   "leaf": 0
+  }
+ },
+ "per_seat": {
+  "qwen32": {
+   "replies": 5,
+   "completion_tokens": 9794,
+   "gen_s": 898.8,
+   "finish_length": 0,
+   "solo_no_code": 0,
+   "no_verdict": 0,
+   "reject_no_code": 0,
+   "think_leak": 0,
+   "accept_with_code": 1,
+   "by_round": {
+    "R1": {
+     "replies": 2,
+     "mean_prompt_tokens": 230,
+     "mean_tg_tps": 11.15
+    },
+    "R2": {
+     "replies": 1,
+     "mean_prompt_tokens": 641,
+     "mean_tg_tps": 11.2
+    },
+    "R3": {
+     "replies": 1,
+     "mean_prompt_tokens": 2646,
+     "mean_tg_tps": 10.88
+    },
+    "R4": {
+     "replies": 1,
+     "mean_prompt_tokens": 1501,
+     "mean_tg_tps": 11.07
+    }
+   }
+  },
+  "r1d32": {
+   "replies": 4,
+   "completion_tokens": 11297,
+   "gen_s": 1022.1,
+   "finish_length": 0,
+   "solo_no_code": 0,
+   "no_verdict": 0,
+   "reject_no_code": 0,
+   "think_leak": 0,
+   "accept_with_code": 0,
+   "by_round": {
+    "R1": {
+     "replies": 2,
+     "mean_prompt_tokens": 226,
+     "mean_tg_tps": 11.23
+    },
+    "R2": {
+     "replies": 1,
+     "mean_prompt_tokens": 1276,
+     "mean_tg_tps": 11.03
+    },
+    "R3": {
+     "replies": 1,
+     "mean_prompt_tokens": 1136,
+     "mean_tg_tps": 11.12
+    }
+   }
+  }
+ },
+ "replies": 9,
+ "regrade": "ok",
+ "per_task": [
+  {
+   "task": "v1_20_determinant",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "max_rounds",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    4
+   ]
+  },
+  {
+   "task": "v1_24_add_duration",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  }
+ ]
+}
