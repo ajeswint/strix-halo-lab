@@ -1260,6 +1260,34 @@ Four sessions (llmctl 30-33; the fifth was not needed), 39 replies, 10 of 10 tas
   - GTT 34.1-34.3 GiB while resident, back to 7.4-7.5 after each bye. `memory.peak` 40-45 MiB.
 - New, not seen in the smoke run: `think_leak` on 5 replies, all R1-Distill and all with `budget_hit`. After llama.cpp forced the end tag, the model emitted `<think>` again and kept reasoning in `content`, then closed it and answered. The thinking traces in content run 16-8,702 chars. So for this template the per-request budget caps the first trace but not the reasoning. `visible()` keeps only the text after the last `</think>`, and all 5 close it, so no trace reached a debate prompt (`history`, `debate.py`). A real pre-run should name this: either count that text against the budget, or accept it as part of R1-Distill's reply.
 - Next: tasks 11-30, written easier (the bar's direction; how much easier is the next pre-run's judgement), then the 30-task run under its own label and pre-run. Each needs the user's go.
+- Accord (review relayed by the user, 2026-10-18, on 05605d1): line 1 applies, signal 0 and all-fail 9 confirmed from the committed rows. The reviewer rebuilt all 19 debate prompts from the rows; none contains `<think>`, `</think>` or a slice of a leaked prefix. The bowling solo's prefix ends with the budget message. "Easier" means fewer rules and a smaller set of corner cases. The next pre-run records R1-Distill's continued reasoning as this one did, and the budget and protocol stay unchanged.
+
+## v7 tasks 11-30: written easier (2026-10-18)
+
+Stated with the tasks, not before them: this is the judgement the probe's bar left to the next step, and no model has seen these tasks. Written by Claude inline, with no subagents, every check under `prlimit --as=4294967296`, and no GPU.
+- How much easier, measured against v7_01-10:
+  - one or two functions per task;
+  - about six rules, each shown by an example;
+  - validation is at most a type check plus a range;
+  - at most one stated size, with the algorithm named when one is needed (heap, BFS, sieve, DP);
+  - references of at most about 40 lines (v7_29's stack machine is 60).
+  The model is justify_lines, the one probe task both seats solved. Prompts are 1,168-1,831 chars (v7_01-10: 1,309-2,630), and references are 12-60 lines (v7_01-10: 35-65).
+- Tasks, seeds 7011-7030:
+  - formats: 11 rle_letters, 12 hex_lines, 13 column_totals, 14 bit_flags, 15 duration_words;
+  - number theory and combinatorics: 16 collatz_leader, 17 prime_gap, 18 perm_rank, 19 change_ways, 20 radix_text;
+  - graphs and geometry: 21 island_stats, 22 course_order, 23 shoelace, 24 knight_hops, 25 point_location;
+  - simulation and DP: 26 teller_queue, 27 lis_count, 28 life_board, 29 stack_machine, 30 wrap_cost.
+- Oracles, each built differently from the reference: groupby and regex expansion; `ljust` formatting; a table generator; `int(bits, 2)`; arithmetic without divmod; plain chain loops; trial division; `itertools.permutations`; recursive enumeration; `int()` behind a canonical-form regex; union-find; brute-force permutations; the trapezoid formula and lattice walking; Bellman-Ford-style relaxation; a star-polygon triangle fan; a unit-time tick simulation; DFS over increasing subsequences; a Counter-based Life; expression trees evaluated by `eval`; brute force over all line breaks.
+- Checks:
+  - `check_tasks.py --set v7`: 30/30 OK.
+  - v7_01-10 are byte-identical to 6680747 (sha256 of their task dicts `b523b223c82ff7ce`, before and after).
+  - `run.py --selftest --set v7` (30 tasks), `agent.py --selftest --set v7` and `debate.py --selftest` OK.
+  - Mutant control on 11-30: 40 single-line mutants, two per task. 39 caught. The 40th (v7_25, "strictly above" changed to "on or above" in the crossing rule) is equivalent, because boundary points are classified first and either half-open convention gives the same parity. So 39 of 39 non-equivalent mutants were caught. The script is in the session scratchpad.
+- Draft defects fixed before the first checker run:
+  - v7_23's example line was garbled;
+  - v7_27's example count was wrong: [1, 5, 2, 6, 3, 7] has 3 longest subsequences, not 4;
+  - three test literals were checked against independent code. 321335886 (ways to pay 1000 with UK coins) and 134 (knight, 200 by 200, corner to corner) were right. The base-36 text of 10^30 was wrong and is now `2oy99wnkl1c76diocq9s`.
+- Open: the cold review of 11-30 (same method as batch 1, capped, needs the user's go). Sealed from this commit, with the same rule as v7_01-10: only a defect found by the cold review may change a task, recorded here before any model sees it.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
