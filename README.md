@@ -1393,7 +1393,11 @@ Accord on the pre-run relayed by the user (2026-10-18), then the user's go on al
   - The request order on R1-Distill's one slot matches the probe through v7_03R1. Then the probe sent v7_03R2 (Qwen opened v7_03 there) and this run sent v7_04R1. That fits outputs that depend on the server's prompt-cache state (`--cache-reuse 256`, one slot) as well as on prompt and seed. Not tested.
   - So the pre-run's "`--parallel 1` makes each draw reproducible" holds at most for an identical request sequence; as written it was too broad. The probe's length reply moved with this: its v7_08 solo was 6,144 tokens, and this run's is 3,791; this run's length reply is v7_09.
 - Pre-run text: its date line said 2026-10-19, but 5fbba2a was committed 2026-10-18 22:22 CDT (2026-10-19T03:22:34Z). The line now says 2026-10-18. Nothing else in the pre-run changed.
-- Next, each step needing the user's go: the bar names critique rows and retrieval as the next CRAwDAD steps on this configuration. Not decided here: whether `visible()` should strip a never-closed `<think>` tag. That would be a protocol change, and it would need a new hash and its own pre-run.
+- Next, each step needing the user's go: the bar names critique rows and retrieval as the next CRAwDAD steps on this configuration, with `visible()` unchanged (accord below).
+- Accord (review relayed by the user, 2026-10-19, on 4947330): the keep stands at the line.
+  - The leaf's passes beyond Qwen's solos are v7_17, v7_28 and v7_29. v7_28 is R1-Distill's opener kept by an accept, so it is not a rescue. v7_21 was already a Qwen solo pass.
+  - `visible()` stays as it is, and the never-closed `<think>` case is recorded with no new protocol hash. The tag wraps the same "To solve this problem," essay that tag-free solos put in content (1,183-1,707 chars before the code fence, not counting the tags). Stripping the tag characters would leave that essay. The closed cases are still cut at `</think>`.
+  - v7_03's VERDICT and CONFIDENCE lines are inside the code block, which closes only after them, so `parse()` drops them. `CODE_BLOCK` would drop them from an unclosed fence too.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
