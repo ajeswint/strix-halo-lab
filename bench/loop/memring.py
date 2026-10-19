@@ -6,6 +6,9 @@
   memring.py replay --root DIR --set v5 --slot N results/X.jsonl [--out J]
                                               fuzz replay: regrade every stored coded turn, seal, admit, one flush
                                               with the fuzzer on; per-mutation table vs EXPECT; no server
+  memring.py debate --root DIR --set v7 results/A.debate.jsonl [B.debate.jsonl ...] [--out J]
+                                              solver-row corpus from stored debate replies: fresh-seed regrade,
+                                              seal, admit to the writer's solver slot, one flush, no canaries; no server
 
 Design: docs/diagrams/qwen-laguna-v2.drawio; slot roles now follow the CRAwDAD pair (SLOTS below,
 docs/diagrams/crawdad-qd-v2.drawio, README Models). agent.py --ring writes to it (measure-only: nothing is retrieved).
@@ -92,7 +95,27 @@ FAMILIES = {"v5": {"v5_01_table_zone": "civil_time", "v5_02_leap_smear": "civil_
                    "v5_03_petri_starts": "ordering", "v5_04_gate_trace": "ordering",
                    "v5_05_weak_poly": "hm_infer", "v5_06_group_infer": "hm_infer",
                    "v5_07_branch_influence": "dom_frontier", "v5_08_pruned_phis": "dom_frontier",
-                   "v5_09_sigfig_sci": "rounding", "v5_10_step_snap": "rounding"}}
+                   "v5_09_sigfig_sci": "rounding", "v5_10_step_snap": "rounding"},
+            # v7: the four writing buckets in README "v7 tasks" (batch 1 and tasks 11-30)
+            "v7": {"v7_01_packbits": "formats", "v7_02_ini_strict": "formats", "v7_03_semver_order": "formats",
+                   "v7_04_partition_rank": "number_theory", "v7_05_digit_rules": "number_theory",
+                   "v7_06_route_lexmin": "graphs_geometry", "v7_07_rect_union": "graphs_geometry",
+                   "v7_08_bowling_frames": "simulation_dp", "v7_09_paint_posts": "simulation_dp",
+                   "v7_10_justify_lines": "simulation_dp",
+                   "v7_11_rle_letters": "formats", "v7_12_hex_lines": "formats", "v7_13_column_totals": "formats",
+                   "v7_14_bit_flags": "formats", "v7_15_duration_words": "formats",
+                   "v7_16_collatz_leader": "number_theory", "v7_17_prime_gap": "number_theory",
+                   "v7_18_perm_rank": "number_theory", "v7_19_change_ways": "number_theory",
+                   "v7_20_radix_text": "number_theory",
+                   "v7_21_island_stats": "graphs_geometry", "v7_22_course_order": "graphs_geometry",
+                   "v7_23_shoelace": "graphs_geometry", "v7_24_knight_hops": "graphs_geometry",
+                   "v7_25_point_location": "graphs_geometry",
+                   "v7_26_teller_queue": "simulation_dp", "v7_27_lis_count": "simulation_dp",
+                   "v7_28_life_board": "simulation_dp", "v7_29_stack_machine": "simulation_dp",
+                   "v7_30_wrap_cost": "simulation_dp"}}
+# debate.py seat -> the writer's solver slot. Every graded module goes there, whatever its debate role: the critique
+# kind for slots 2 and 4 is not built (it follows a solver-row retrieval test, reviewer accord 2026-10-19)
+DEBATE_SLOT = {"qwen32": 1, "r1d32": 3}
 
 # what each python mutator is predicted to do against the python guardian (docstring: Fuzzer)
 EXPECT = {"rename": "order", "reformat": "order", "inject_comment_oblique": "order",
@@ -974,6 +997,58 @@ def replay(a):
     return 0 if res["bar"]["met"] else 1
 
 
+def debate_corpus(a):
+    """Solver-row corpus from stored CRAwDAD debate results (debate.py jsonl, one or more files of one set): regrade
+    every coded reply on the fresh seed (the grade the debate stored; the seal must come from a grade this process
+    ran), compare, admit each to its writer's solver slot (DEBATE_SLOT), one flush per slot with no canaries (a canary
+    decided before its source would displace a real row; the duplicate check spans one flush, and each model reads only
+    its own slots). Code in an accept reply is skipped: walk() ignores it, and it is usually a copy of the module the
+    seat accepted, which would land in the accepter's slot. Readout only; exit 2 if a regrade disagrees with a stored grade."""
+    import concurrent.futures as cf
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import agent
+    import run
+    run.load_set(a.set)
+    tests = {t["id"]: t["tests"] for t in run.TASKS}
+    fam = FAMILIES.get(a.set)
+    if fam is None:
+        raise SystemExit(f"no family map for set {a.set}")
+    if os.path.exists(os.path.join(a.root, "buffer.db")):
+        raise SystemExit(f"{a.root} already has a buffer; the corpus wants a fresh root")
+    files = [a.jsonl] + a.more
+    rows = [json.loads(l) for p in files for l in open(p)]
+    if any(r["task"] not in fam for r in rows):
+        raise SystemExit("a task in the files has no family")
+    coded = [r for r in rows if r["code"] is not None and r["verdict"] != "accept"]
+    accept_code = sum(1 for r in rows if r["code"] is not None and r["verdict"] == "accept")
+    pool = cf.ThreadPoolExecutor(a.parallel)
+    verdicts = list(pool.map(lambda r: agent.fresh_grade(r["code"], tests[r["task"]])[:2], coded))
+    mism = [(r["task"], r["seat"], r["round"]) for r, (p, _) in zip(coded, verdicts) if p != r["fresh_pass"]]
+    ring = Ring(a.root)
+    ing, fl = {}, {}
+    for seat, slot in DEBATE_SLOT.items():
+        sel = [(r, v) for r, v in zip(coded, verdicts) if r["seat"] == seat]
+        ing[slot] = ring.ingest(slot, fam.__getitem__, [r for r, _ in sel], [v for _, v in sel])
+        fl[f"slot{slot}"] = ring.flush(plan=[])
+    states = {}
+    for r in ring.buf.execute("SELECT slot, state, reason, COUNT(*) n FROM buffer GROUP BY slot, state, reason"):
+        states.setdefault(f"slot{r['slot']}", {})[f"{r['state']}: {r['reason']}"] = r["n"]
+    committed = {f"slot{n}": {f"{r['family']} {r['kind']}": r["c"] for r in db.execute(
+        "SELECT family, kind, COUNT(*) c FROM rows GROUP BY family, kind ORDER BY family, kind")}
+        for n, db in ring.slots.items() if n in DEBATE_SLOT.values()}
+    tasks_with_pass = {f"slot{n}": ring.slots[n].execute("SELECT COUNT(DISTINCT task_id) FROM rows WHERE kind = 'pass'").fetchone()[0]
+                       for n in DEBATE_SLOT.values()}
+    res = {"files": [os.path.basename(p) for p in files], "set": a.set, "root": a.root, "grader": GRADER_VER,
+           "replies": len(rows), "coded_not_accept": len(coded), "accept_code_skipped": accept_code, "regrade_mismatch": mism,
+           "ingest": {f"slot{s}": v for s, v in ing.items()}, "flush": fl, "states": states,
+           "committed": committed, "tasks_with_a_pass_row": tasks_with_pass}
+    print(json.dumps(res, indent=1))
+    if a.out:
+        with open(a.out, "w") as f:
+            json.dump(res, f, indent=1)
+    return 2 if mism else 0
+
+
 def selftest():
     fails = []
 
@@ -1135,6 +1210,30 @@ def selftest():
     names, ver = grader_surface()
     check(f"GRADER_VER matches the grader surface ({ver}, {len(names)} names)", ver == GRADER_VER)
     check("exc_type's line test is run.EXC_LINE", EXC_LINE.pattern == run.EXC_LINE.pattern)
+    # debate corpus: real grader on v7_10's reference; an accept's copy of the opponent's module must not land in the accepter's slot
+    import contextlib, io
+    run.load_set("v7")
+    good = next(t for t in run.TASKS if t["id"] == "v7_10_justify_lines")["ref"]
+    bad = "def nothing():\n    pass\n"
+    row = lambda seat, rnd, verdict, code, fp: {"task": "v7_10_justify_lines", "seat": seat, "round": rnd, "verdict": verdict,
+                                                 "code": code, "fresh_pass": fp}
+    with tempfile.TemporaryDirectory() as d:
+        def corpus(rows, name):
+            p, out = os.path.join(d, name + ".jsonl"), os.path.join(d, name + ".json")
+            with open(p, "w") as f:
+                f.writelines(json.dumps(r) + "\n" for r in rows)
+            ns = argparse.Namespace(set="v7", root=os.path.join(d, name), jsonl=p, more=[], parallel=2, out=out)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = debate_corpus(ns)
+            return rc, json.load(open(out)), Ring(os.path.join(d, name))
+        rc, res, rg = corpus([row("qwen32", 1, None, good, True), row("r1d32", 1, None, bad, False),
+                              row("r1d32", 2, "accept", good, True)], "ok")
+        kinds = lambda n: sorted(r["kind"] for r in rg.slots[n].execute("SELECT kind FROM rows"))
+        check("debate corpus: writer's solver slot, accept code skipped, regrade agrees",
+              rc == 0 and kinds(1) == ["pass"] and kinds(3) == ["fail"] and res["accept_code_skipped"] == 1
+              and not res["regrade_mismatch"] and res["flush"]["slot1"]["canaries"] == 0)
+        rc, res, _ = corpus([row("qwen32", 1, None, bad, True)], "mism")
+        check("debate corpus: a stored grade the regrade contradicts exits 2", rc == 2 and len(res["regrade_mismatch"]) == 1)
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -1149,8 +1248,9 @@ def _raises(f):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", nargs="?", choices=["report", "replay", "llm-guard"])
+    ap.add_argument("cmd", nargs="?", choices=["report", "replay", "llm-guard", "debate"])
     ap.add_argument("jsonl", nargs="?")
+    ap.add_argument("more", nargs="*", help="debate: further debate.py jsonl files of the same set")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--root", default="/data/ring")
     ap.add_argument("--set")
@@ -1177,6 +1277,10 @@ def main():
         if not (a.jsonl and a.set and a.slot):
             ap.error("replay needs JSONL, --set and --slot")
         return replay(a)
+    if a.cmd == "debate":
+        if not (a.jsonl and a.set):
+            ap.error("debate needs JSONL and --set")
+        return debate_corpus(a)
     if a.cmd == "llm-guard":
         if not (a.roots and a.set and a.out):
             ap.error("llm-guard needs --roots, --set and --out")

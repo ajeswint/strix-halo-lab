@@ -1399,6 +1399,39 @@ Accord on the pre-run relayed by the user (2026-10-18), then the user's go on al
   - `visible()` stays as it is, and the never-closed `<think>` case is recorded with no new protocol hash. The tag wraps the same "To solve this problem," essay that tag-free solos put in content (1,183-1,707 chars before the code fence, not counting the tags). Stripping the tag characters would leave that essay. The closed cases are still cut at `</think>`.
   - v7_03's VERDICT and CONFIDENCE lines are inside the code block, which closes only after them, so `parse()` drops them. `CODE_BLOCK` would drop them from an unclosed fence too.
 
+## CRAwDAD solver-row corpus from v7 (2026-10-19, no GPU)
+
+A build with a readout and no bar. No model ran.
+- Order (the user's question, which goes first; reviewer accord 2026-10-19): a solver-row retrieval test comes before any critique kind.
+  - Putting critic text in first mixes two questions. A zero would not say whether retrieval failed or whether the corpus called a failing module fine.
+  - The critique kind (the comment, for slots 2 and 4) is built only if solver-row retrieval shows a gain, and its rows carry the grader's result, never the accept word.
+  - Evidence from the v7-30 rows (45 critic judgments against the true grade of the judged module; counts, not rates): R1-Distill accepted 10 of the 14 failing modules it judged (10 of its 21 accepts are failures). Qwen's accepts are 4 failures and 2 passes. Of 15 rejects of failing code, 3 produced passing code, the 3 rescues.
+- Determinism line for the next debate pre-run (agreed with the reviewer, replacing the cross-run byte check):
+  - within one server load, compare that seat's requests by index with the earlier run;
+  - byte-compare while the index is the same prompt and the same position;
+  - the first index that differs in prompt or position, and every request after it in that load, is grades only;
+  - if an index matches and the output still differs, it is grades only from the next request to the end of that load.
+  The `--cache-reuse` cause stays untested.
+- Built: `memring.py debate --root DIR --set v7 A.debate.jsonl [B ...]`.
+  - It regrades every coded reply on the fresh seed (the grade the debate stored) and exits 2 on any disagreement.
+  - It seals and admits each module to its writer's solver slot (`DEBATE_SLOT`: Qwen 1, R1-Distill 3), whatever the debate role.
+  - It skips the code in accept replies, as `walk()` does.
+  - It flushes once per slot, with no canaries.
+  - The family map `FAMILIES["v7"]` is the four writing buckets: formats, number_theory, graphs_geometry, simulation_dp.
+- Found while building, fixed before any commit: the first draft took the code from accept replies and flushed both slots together. That put Qwen's v7_20 module in R1-Distill's slot: R1-Distill's accept restated it, and the duplicate check spans one flush.
+- Readout on crawdad-v7-30 plus crawdad-v7-probe, in a scratch root. It rebuilds in about 1 s from the committed jsonl, so no root is kept yet.
+  - 144 replies: 106 coded non-accept, 16 accept-reply code blocks skipped, 0 regrade mismatches.
+  - Admitted 58 Qwen and 47 R1-Distill. One refused: Qwen's v7_29 solo, an empty code block.
+  - Committed 47 and 43. Rejected as duplicates 11 and 4, all exact: the v7_01-10 solos that are byte-identical in the two runs, Qwen's v7_01 R2, and R1-Distill's v7_04 R3, which restates its own R1.
+  - Pass rows: Qwen 14 on 11 tasks (its 10 solo passes and the v7_29 rescue); R1-Distill 10 on 8 tasks (its 7 solo passes and its own passing R2 module on v7_30). The tasks with any pass row are the leaf's 13. Fail rows: 33 and 33.
+  - Pass/fail by family, Qwen: formats 3/8, graphs_geometry 4/7, number_theory 1/11, simulation_dp 6/7. R1-Distill: formats 3/6, graphs_geometry 0/11, number_theory 2/8, simulation_dp 5/8.
+- For the retrieval pre-run, not decided here:
+  - Each model reads only its own slots (slot roles, 2026-10-15), so a family-filtered read for R1-Distill on graphs_geometry can return failures only.
+  - `retrieve()` does not filter by kind.
+  - v7 is now the corpus, so the test needs held-out tasks outside v7 (a v8 set, not written).
+- Tested: `memring.py --selftest` with two new checks (the real grader on v7_10's reference: the writer's slot, accept code skipped, a contradicted stored grade exits 2); `agent.py --selftest --set v7` OK.
+- Next, each step needing the user's go: the v8 tasks, then the retrieval pre-run.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
