@@ -1299,6 +1299,31 @@ Stated with the tasks, not before them: this is the judgement the probe's bar le
   - Listed ambiguities: nothing a test depends on that the prompt leaves open. Recurring untested points: subclasses of str, list and int, wrong-type exceptions (the prompts say ValueError), sizes past the stated bounds, and `int()`'s acceptance of underscores and non-ASCII digits in v7_13, which the prompt hands to `int()` on purpose.
   - Solver code is in the session scratchpad, not the repo.
 
+## CRAwDAD debate on v7 (30 tasks, pre-run)
+
+Stated before any GPU session (2026-10-19, measure skill steps 1-6). For review before it runs; the GPU sessions need the user's go after that. The set is v7 as of 2ba635b: v7_01-10 from 6680747, v7_11-30 from 153dece, all cold-reviewed, sealed, no edits since.
+- Question: does the CRAwDAD debate leaf solve more v7 tasks than the first speaker's own solo answer, and is it at least as good as either model alone?
+- Arms, all in one run, label `crawdad-v7-30`, `--set v7` with no `--tasks`, so all 30 (first step only):
+  - first-speaker solo F: the R1 that opens each debate. The coin gives 15 tasks to each seat (seed 42, a shuffle of the 30 sorted ids). On v7_01-10 it differs from the probe's coin on 6 tasks;
+  - each model's solo, Q (Qwen3-32B) and R (R1-Distill): both solos on every task, as in the probe;
+  - leaf L: the module standing when the debate ends, graded once on the fresh seed 104729.
+- Fixed and recorded: `debate.py` protocol `137acf32c95d` (reasoning budget 2,048, `max_tokens` 6,144, `SEED_BASE` 4000, sampling 0.6 / 0.95 / 20), llama.cpp b11669-620d2225c on vk, endpoint defaults (ctx 32768, 1 slot, `--parallel 1`), model files as in the probe meta. No budget, prompt or protocol change from the probe.
+- Metric, per task: a rescue is F fail and L pass; a drop is F pass and L fail (the determinant case); net = rescues - drops. Totals: L, F, Q, R, and U (either solo passes).
+- Bar, stated now:
+  - keep the debate as configured as the base for the next CRAwDAD steps (critique rows, retrieval) when net >= 3 and L >= max(Q, R);
+  - drop it as configured when net <= 0;
+  - net 1 or 2 is inconclusive, which is a drop unless the user approves a rerun on more tasks (measure skill);
+  - no room: if both Q and R are >= 27 of 30, or L = 30, the run cannot separate the arms, and that is reported instead of a verdict.
+  3 of 30 is 10 points, the same size as the +3 bars used at n = 15 and 30 in v3-v6. It is a judgement, not a measured spread: one run, no repeat, and `--parallel 1` makes each draw reproducible rather than averaged.
+- Recorded, no bar:
+  - rescues and drops by first-speaker seat; leaf rounds and stops; signal and all-fail counts as in the probe, split v7_01-10 vs v7_11-30 (whether the easier batch gave headroom);
+  - per-reply gen_s, tg and prompt depth, decode hours, wall time, GPU hours per leaf solve vs per solo solve;
+  - `budget_hit` per seat, `finish` = `length`, `no_code` and `parse_fail` counts;
+  - R1-Distill's continued reasoning, recorded as in the probe and changing nothing: `think_leak` rows, the length of the text before the last `</think>`, and any reply where an opened `<think>` is never closed (only then could trace text reach a debate prompt through `visible()`), with whether such a reply entered a prompt;
+  - determinism check: v7_01-10's solos use the same prompt, seed, build and model as the probe, so each is compared with the probe row (content identical or not). A difference is reported, not corrected.
+- Cost: the probe averaged 3.9 replies per task at 260 s each, so about 117 replies and about 8.5 h of decode, plus up to 5 loads. Worst case, every task reaching R4 with 6,144-token replies, is about 150 replies and 22 h. Sessions are background chains under llmctl, one model resident at a time (GTT +26.7 / +26.8 GiB over 7.4 idle), client capped at 8 GiB, each grade's child at 1 GiB AS. `report --regrade` must exit 0, or the run is unreadable and the bar is not applied.
+- Procedure: `llm-serve` skill, "CRAwDAD debate", with label `crawdad-v7-30` and `--set v7` on the first step.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
