@@ -1464,7 +1464,18 @@ Written by Claude inline, with no subagents, every check under `prlimit --as=429
   - v8_08's reference was trimmed from 53 to 44 lines.
 - Registered: `run.SETS["v8"]`. The `llm-serve` skill's DeepSeek gate example moved from v8 to v9; `select_fix.py fresh v9` refuses (not registered).
 - Sealed from this commit, with the same rule as v7: only a defect found by the cold review may change a task, recorded here before any model sees it.
-- Next, each step needing the user's go: the cold review (as for v7: one capped Sonnet solver per task with no tools, graded at five seeds), then the retrieval pre-run.
+- Cold review, 2026-10-19, on 488f1af (the user's go; reviewer: nothing in 488f1af holds it):
+  - Method as for v7: thirty solvers, one per task, `red-team` agent type (Read/Grep/Glob only: no Bash, no writes, no code run), model Sonnet. Each got its prompt verbatim with "use no tools, read no file". All thirty reported `TOOLS USED: none` (one tool call each, the hand-back), at 12.2-13.4k tokens each, about 379k in all. All thirty ran in one batch, with no per-spawn prompt.
+  - Grading: `run.grade` at the visible seed, the fresh seed 104729 and seeds 1-3. 30 of 30 passed on all five, each on the first attempt. No defect and no prompt edit, so the seal on v8 stands from 488f1af.
+  - Listed ambiguities: none that a test depends on and the prompt leaves open. Recurring untested points:
+    - subclasses of int, str, list and tuple;
+    - ValueError rather than TypeError for a wrong type (the prompts say ValueError);
+    - a trailing newline and non-ASCII digits;
+    - v8_23's grid and command sizes, which solvers read as guarantees rather than checks;
+    - ints past Python's 4,300-digit str limit in v8_04 ("no size limit"; the tests stop at 10**25);
+    - unreduced p/q in v8_15 (2/4 gives [2]).
+  - The solver code is kept in the session scratchpad, not the repo.
+- Next, each step needing the user's go: the retrieval pre-run on v8, with the corpus from `memring.py debate` on v7.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
