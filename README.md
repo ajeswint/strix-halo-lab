@@ -1288,6 +1288,11 @@ Stated with the tasks, not before them: this is the judgement the probe's bar le
   - v7_27's example count was wrong: [1, 5, 2, 6, 3, 7] has 3 longest subsequences, not 4;
   - three test literals were checked against independent code. 321335886 (ways to pay 1000 with UK coins) and 134 (knight, 200 by 200, corner to corner) were right. The base-36 text of 10^30 was wrong and is now `2oy99wnkl1c76diocq9s`.
 - Open: the cold review of 11-30 (same method as batch 1, capped, needs the user's go). Sealed from this commit, with the same rule as v7_01-10: only a defect found by the cold review may change a task, recorded here before any model sees it.
+- Amendment (review relayed by the user, 2026-10-18, on c1e96d4). Seventeen of the twenty prompts meet the easier bar. Three were held before the cold review because they still carried batch-1 validation: v7_13 (header checks, a number grammar, a single "\r" rule), v7_20 (the canonical form only: leading zeros, "-0" and the int() near-misses), and v7_29 (name and operand checks, every jump target checked before running, a 10,000-step cap). No model had seen them, so the seal above gives way to the reviewer's hold; nothing else changed.
+  - v7_13: `splitlines()`, the header is split and stripped (names guaranteed distinct, no check), each field goes through `int()`, and the only check is the field count.
+  - v7_20: one rule, an optional "-" then digits whose value is below the base. Leading zeros and "-0" are now accepted. `to_base` is unchanged.
+  - v7_29: programs are guaranteed well-formed, with in-range jumps, and guaranteed to stop. The only runtime check is stack underflow.
+  Each keeps its id, entry names and seed. Results: references 15, 35 and 36 lines; prompts 1,363, 1,427 and 1,632 chars. `check_tasks.py --set v7` 30/30, run/agent selftests on v7 OK, and only these three task dicts differ from c1e96d4. Mutant control on the three new references: 9 mutants, 9 caught. The cold review now covers all twenty.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

@@ -11,8 +11,9 @@ the ref (brute force, a generator that builds the expected answer, or properties
 Batch 1: v7_01 packbits, v7_02 ini_strict, v7_03 semver_order, v7_04 partition_rank, v7_05 digit_rules,
 v7_06 route_lexmin, v7_07 rect_union, v7_08 bowling_frames, v7_09 paint_posts, v7_10 justify_lines.
 Tasks 11-30 (2026-10-18) were written easier after the crawdad-v7-probe bar (all-fail 9 of 10): one or two functions,
-about six rules each with an example, light validation, references of at most about 40 lines (the stack machine is
-60). v7_11 rle_letters, v7_12 hex_lines, v7_13 column_totals, v7_14 bit_flags, v7_15 duration_words,
+about six rules each with an example, validation of a type and a range, references of at most about 40 lines.
+v7_13, v7_20 and v7_29 were cut down again before the cold review (reviewer's hold, README).
+v7_11 rle_letters, v7_12 hex_lines, v7_13 column_totals, v7_14 bit_flags, v7_15 duration_words,
 v7_16 collatz_leader, v7_17 prime_gap, v7_18 perm_rank, v7_19 change_ways, v7_20 radix_text, v7_21 island_stats,
 v7_22 course_order, v7_23 shoelace, v7_24 knight_hops, v7_25 point_location, v7_26 teller_queue, v7_27 lis_count,
 v7_28 life_board, v7_29 stack_machine, v7_30 wrap_cost.
@@ -1866,23 +1867,24 @@ task("v7_13_column_totals", r'''
 Write `column_totals(text)` that reads a small comma-separated table of integers and returns the sum of each column as
 a dict {column name: sum}.
 
-`text` must be a str (otherwise ValueError). Only spaces and tabs count as blanks here.
-- Split `text` on "\n"; a line ending in "\r" loses that one "\r". Lines that are empty or contain only blanks are
-  skipped everywhere.
-- The first remaining line is the header: split it on ",", strip blanks from each name. Every name must be non-empty
-  and the names must be distinct, else ValueError.
-- Every later remaining line is a data row: split on ",", strip blanks from each field. It must have exactly as many
-  fields as the header, else ValueError. Each field must be an optional "+" or "-" followed by one or more ASCII
-  digits (leading zeros are fine), else ValueError. So "1_000", "1.0", "", " " and non-ASCII digits are all errors.
-- The result maps every header name to the sum of its column's integers (0 when there are no data rows).
-- If no remaining line exists at all, return {}.
+`text` must be a str; anything else raises ValueError.
+
+1. Split `text` into lines with text.splitlines(), and drop every line that is empty after .strip().
+2. The first remaining line is the header: split it on "," and strip each piece. These are the column names; they are
+   always distinct and non-empty, so there is nothing to check.
+3. Every later remaining line is a data row: split it on ",". A row whose number of fields differs from the number of
+   names raises ValueError. Convert each field with int(field). int already ignores surrounding whitespace and accepts
+   a leading "+" or "-", and it raises ValueError for anything that is not an integer; let that error propagate.
+4. Return a dict mapping each name to the sum of its column, 0 when there are no data rows. If no line remains at all,
+   return {}.
 
 Examples:
 - column_totals("a,b\n1,2\n3,4\n") == {"a": 4, "b": 6}
 - column_totals(" x , y \r\n\n -1, +2\r\n007,-0\n") == {"x": 6, "y": 2}
 - column_totals("") == {} and column_totals("only\n") == {"only": 0}
-- ValueError: column_totals("a,a\n1,2"), column_totals("a,\n1,2"), column_totals("a,b\n1"),
-  column_totals("a,b\n1,x"), column_totals("a,b\n1,2.0"), column_totals("a,b\n1,1_000"), column_totals(5)
+- column_totals("n\n5\n\n-7\n") == {"n": -2}
+- ValueError: column_totals("a,b\n1"), column_totals("a,b\n1,x"), column_totals("a,b\n1,2.5"),
+  column_totals("a,b\n1,2,3"), column_totals(5)
 ''', r'''
 import random
 
@@ -1898,9 +1900,8 @@ def rej(x):
 assert C("a,b\n1,2\n3,4\n") == {"a": 4, "b": 6}
 assert C(" x , y \r\n\n -1, +2\r\n007,-0\n") == {"x": 6, "y": 2}
 assert C("") == {} and C("only\n") == {"only": 0} and C(" \n\t\n") == {}
-assert C("n\n5\n\n-7\n") == {"n": -2} and C("a b,c\n1,1") == {"a b": 1, "c": 1}
-for bad in ("a,a\n1,2", "a,\n1,2", "a,b\n1", "a,b\n1,x", "a,b\n1,2.0", "a,b\n1,1_000", 5, None, "a,b\n1,2,3", "a,b\n1, ",
-            "a,b\n1,٣", "a,b\n+,1", "a,b\n1,--2", "a,b\n1,2\n3", ",\n1,2", b"a\n1"):
+assert C("n\n5\n\n-7\n") == {"n": -2} and C("a b,c\n1,1") == {"a b": 1, "c": 1} and C("a,b\n\t1 , 2\t") == {"a": 1, "b": 2}
+for bad in ("a,b\n1", "a,b\n1,x", "a,b\n1,2.5", "a,b\n1,2,3", 5, None, b"a\n1", "a,b\n1,", "a,b\n1,2\n3", "a\n--1"):
     assert rej(bad), bad
 
 random.seed(7013)
@@ -1909,16 +1910,15 @@ for _ in range(300):
     k = random.randint(1, 5)
     names = []
     while len(names) < k:
-        nm = "".join(random.choice(NAMES) for _ in range(random.randint(1, 5))).strip(" ")
+        nm = "".join(random.choice(NAMES) for _ in range(random.randint(1, 5))).strip()
         if nm and nm not in names:
             names.append(nm)
     rows = [[random.randint(-10**6, 10**6) for _ in range(k)] for _ in range(random.randint(0, 8))]
     want = {nm: sum(r[i] for r in rows) for i, nm in enumerate(names)}
     sp = lambda: random.choice(["", " ", "\t", "  "])
     def fmt(v):
-        s = str(abs(v)).zfill(random.choice([1, 1, 4]))
-        sign = "-" if v < 0 else random.choice(["", "", "+"]) if v > 0 else random.choice(["", "-", "+"])
-        return sp() + sign + s + sp()
+        sign = "-" if v < 0 else random.choice(["", "+"])
+        return sp() + sign + str(abs(v)).zfill(random.choice([1, 1, 4])) + sp()
     lines = [",".join(sp() + nm + sp() for nm in names)] + [",".join(fmt(v) for v in r) for r in rows]
     for _ in range(random.randint(0, 3)):
         lines.insert(random.randint(0, len(lines)), random.choice(["", " ", "\t "]))
@@ -1927,38 +1927,25 @@ for _ in range(300):
     assert C(text) == want, (text, want)
     if rows:
         bad = list(lines)
-        i = max(j for j, s in enumerate(bad) if s.strip(" \t"))
+        i = max(j for j, s in enumerate(bad) if s.strip())
         bad[i] = bad[i] + random.choice([",1", ",", "x", ".5"])
         assert rej(eol.join(bad)), bad
 ''', r'''
-import re
-
-_INT = re.compile(r"[+-]?[0-9]+")
-BL = " \t"
-
-
 def column_totals(text):
     if not isinstance(text, str):
         raise ValueError("text must be a str")
-    header, sums = None, None
-    for line in text.split("\n"):
-        if line.endswith("\r"):
-            line = line[:-1]
-        if not line.strip(BL):
-            continue
-        fields = [f.strip(BL) for f in line.split(",")]
-        if header is None:
-            if any(not f for f in fields) or len(set(fields)) != len(fields):
-                raise ValueError("bad header")
-            header, sums = fields, [0] * len(fields)
-            continue
-        if len(fields) != len(header):
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return {}
+    names = [n.strip() for n in lines[0].split(",")]
+    sums = [0] * len(names)
+    for line in lines[1:]:
+        fields = line.split(",")
+        if len(fields) != len(names):
             raise ValueError("wrong number of fields")
         for i, f in enumerate(fields):
-            if not _INT.fullmatch(f):
-                raise ValueError("bad integer")
             sums[i] += int(f)
-    return {} if header is None else dict(zip(header, sums))
+    return dict(zip(names, sums))
 ''')
 
 task("v7_14_bit_flags", r'''
@@ -2508,26 +2495,22 @@ def change_ways(amount, coins, limit=None):
 task("v7_20_radix_text", r'''
 Write `to_base(n, base)` and `from_base(text, base)` that convert between ints and their text in a base from 2 to 36.
 
-The digits are 0-9 for the values 0 to 9 and the ASCII letters a-z for the values 10 to 35. `base` must be an int from
-2 to 36 and `n` an int; a bool is never accepted. Otherwise ValueError.
+The 36 digits are 0-9 for the values 0 to 9 and the ASCII letters a-z for the values 10 to 35. `base` must be an int
+from 2 to 36, `n` an int, and `text` a str; a bool is never accepted as an int. Otherwise raise ValueError.
 
-to_base(n, base): the usual representation with lowercase letters, no leading zeros, "0" for zero, and a "-" in front
-of negative numbers. No prefix such as "0x".
-
-from_base(text, base): `text` must be a str (else ValueError). It accepts exactly the canonical form, in either letter
-case:
-- an optional leading "-" (a "+" is not allowed), then one or more digits, each a valid digit for `base` (upper and
-  lower case letters both work: "FF" and "ff" are 255 in base 16);
-- no leading zeros, except the single digit "0", and "-0" is not allowed;
-- nothing else: no blanks, no underscores, no prefix, no non-ASCII digits.
-Anything else raises ValueError. Note that Python's int(text, base) is more permissive than this (it accepts "+5",
-" 5", "1_0", "007"), so it cannot be used unchecked.
+- to_base(n, base): the usual representation, with lowercase letters, no leading zeros, "0" for zero and a "-" in
+  front of negative numbers. No prefix such as "0x".
+- from_base(text, base): `text` is an optional leading "-" followed by one or more digits. Letters may be upper or
+  lower case ("FF" and "ff" are both 255 in base 16), and leading zeros are fine ("007" is 7, "-0" is 0). Every
+  character after the optional "-" must be a digit whose value is less than `base`; any other text raises ValueError.
+  Python's int(text, base) also accepts blanks, a "+" sign and underscores, so it is not a drop-in replacement.
 
 Examples:
 - to_base(255, 16) == "ff" and to_base(-10, 2) == "-1010" and to_base(0, 7) == "0" and to_base(35, 36) == "z"
-- from_base("FF", 16) == 255 and from_base("-1010", 2) == -10 and from_base("0", 36) == 0 and from_base("zZ", 36) == 1295
-- ValueError: from_base("012", 10), from_base("-0", 10), from_base("+5", 10), from_base("1_0", 10),
-  from_base(" 5", 10), from_base("9", 8), from_base("", 10), to_base(5, 1), to_base(5, 37), to_base(True, 10)
+- from_base("FF", 16) == 255 and from_base("-1010", 2) == -10 and from_base("007", 10) == 7
+- from_base("zZ", 36) == 1295 and from_base("-0", 10) == 0
+- ValueError: from_base("9", 8), from_base("", 10), from_base("-", 10), from_base("+5", 10), from_base(" 5", 10),
+  from_base("1_0", 10), to_base(5, 1), to_base(5, 37), to_base(True, 10)
 ''', r'''
 import random, re
 
@@ -2542,24 +2525,24 @@ def rej(f, *a):
     return False
 
 assert TB(255, 16) == "ff" and TB(-10, 2) == "-1010" and TB(0, 7) == "0" and TB(35, 36) == "z"
-assert FB("FF", 16) == 255 and FB("-1010", 2) == -10 and FB("0", 36) == 0 and FB("zZ", 36) == 1295
-assert TB(10**30, 36) == "2oy99wnkl1c76diocq9s" and FB("2OY99WNKL1C76DIOCQ9S", 36) == 10**30
-for a in [("012", 10), ("-0", 10), ("+5", 10), ("1_0", 10), (" 5", 10), ("9", 8), ("", 10), ("-", 10), ("5 ", 10),
-          ("0x1f", 16), ("١", 10), ("K", 36), ("1", 1), ("1", 37), ("1", True), (5, 10), (None, 10), ("00", 2), ("--1", 10), ("1.0", 10)]:
+assert FB("FF", 16) == 255 and FB("-1010", 2) == -10 and FB("007", 10) == 7 and FB("zZ", 36) == 1295 and FB("-0", 10) == 0
+assert TB(10**30, 36) == "2oy99wnkl1c76diocq9s" and FB("2OY99WNKL1C76DIOCQ9S", 36) == 10**30 and FB("000", 2) == 0
+for a in [("9", 8), ("", 10), ("-", 10), ("+5", 10), (" 5", 10), ("1_0", 10), ("5 ", 10), ("0x1f", 16), ("--1", 10),
+          ("1.0", 10), ("g", 16), ("1", 1), ("1", 37), ("1", True), (5, 10), (None, 10), ("2", 2)]:
     assert rej(FB, *a), a
 for a in [(5, 1), (5, 37), (True, 10), (5.0, 10), ("5", 10), (5, 10.0), (5, False)]:
     assert rej(TB, *a), a
 
-def canon(s, b):
+def valid(s, b):
     digits = D[:b] + D[10:b].upper()
-    return re.fullmatch(r"-?(0|[%s][%s]*)" % (re.escape(digits.replace("0", "")), re.escape(digits)), s) and s != "-0"
+    return re.fullmatch(r"-?[%s]+" % re.escape(digits), s) is not None
 
 random.seed(7020)
 for _ in range(600):
     b = random.randint(2, 36)
     n = random.choice([random.randint(-50, 50), random.randint(-10**12, 10**12), random.randint(-10**40, 10**40)])
     s = TB(n, b)
-    assert int(s, b) == n and s == s.lower() and canon(s, b), (n, b, s)
+    assert int(s, b) == n and s == s.lower() and valid(s, b) and (s == "0" or not s.lstrip("-").startswith("0")), (n, b, s)
     if b in (2, 8, 10, 16):
         assert s == format(n, {2: "b", 8: "o", 10: "d", 16: "x"}[b])
     mixed = "".join(c.upper() if random.random() < 0.5 else c for c in s)
@@ -2567,7 +2550,7 @@ for _ in range(600):
 for _ in range(2500):
     b = random.randint(2, 36)
     s = "".join(random.choice("0129azAZ-+ _") for _ in range(random.randint(0, 4)))
-    if canon(s, b):
+    if valid(s, b):
         assert FB(s, b) == int(s, b), (s, b)
     else:
         assert rej(FB, s, b), (s, b)
@@ -2598,16 +2581,15 @@ def from_base(text, base):
     if not isinstance(text, str):
         raise ValueError("text must be a str")
     _check_base(base)
-    neg = text.startswith("-")
-    s = text[1:] if neg else text
-    if not s or (len(s) > 1 and s[0] == "0") or (neg and s == "0"):
-        raise ValueError("not canonical")
+    s = text[1:] if text.startswith("-") else text
+    if not s:
+        raise ValueError("no digits")
     v = 0
     for ch in s:
         if ch not in _ALLOWED or DIGITS.index(ch.lower()) >= base:
             raise ValueError("bad digit")
         v = v * base + DIGITS.index(ch.lower())
-    return -v if neg else v
+    return -v if text.startswith("-") else v
 ''')
 
 task("v7_21_island_stats", r'''
@@ -3377,30 +3359,29 @@ def life_steps(grid, steps):
 task("v7_29_stack_machine", r'''
 Write `run_stack(program)` that runs a tiny stack machine and returns the list of numbers it printed.
 
-`program` is a list or tuple of str instructions, indexed from 0. The machine has a stack of ints (initially empty)
-and a program counter pc (initially 0). Each instruction is a lowercase name, optionally followed by exactly one space
-and one decimal int operand (an optional "-" then ASCII digits):
-- "push N": push N.
+`program` is a list or tuple of str instructions, indexed from 0; anything else, or an item that is not a str, raises
+ValueError. Every instruction is well-formed, every jump target is between 0 and len(program), and every program you
+are given stops, so none of that needs checking.
+
+The machine has a stack of ints (initially empty) and a program counter pc (initially 0). An instruction is a name,
+optionally followed by one space and an int operand:
+- "push N": push the int N.
 - "pop": remove the top. "dup": push a copy of the top. "swap": exchange the top two.
 - "add", "sub", "mul": pop b (the top), then pop a, and push a + b, a - b or a * b.
 - "print": pop the top and append it to the output.
 - "jz T": pop the top; if it is 0, continue at instruction T. "jmp T": continue at instruction T.
 - "halt": stop.
-After every other instruction pc moves to the next one. The machine stops normally on "halt" or when pc equals
-len(program); it then returns the output list.
-
-ValueError for: `program` not a list or tuple, or an instruction that is not a str; an unknown name; a wrong operand
-(missing, extra, not an int, or given to an instruction that takes none); a jump target outside 0..len(program)
-(checked for every jz and jmp before running, reached or not); popping from a stack with too few items; and running
-more than 10000 instructions (count each executed instruction; executing a 10001st raises).
+After any other instruction pc moves to the next one. The machine stops on "halt" or when pc reaches len(program), and
+returns the output list. An instruction that needs more items than the stack holds raises ValueError.
 
 Examples:
 - run_stack(["push 2", "push 3", "add", "print"]) == [5]
 - run_stack(["push 1", "push 2", "swap", "sub", "print"]) == [1]
 - run_stack(["push 3", "dup", "print", "push 1", "sub", "dup", "jz 8", "jmp 1", "halt"]) == [3, 2, 1]
 - run_stack([]) == [] and run_stack(["push 7", "halt", "print"]) == []
-- ValueError: run_stack(["add"]), run_stack(["push x"]), run_stack(["jmp 5"]), run_stack(["jmp 0"]),
-  run_stack(["PUSH 1"]), run_stack(["push  1"]), run_stack(["pop 1"])
+- run_stack(["push -4", "dup", "mul", "print"]) == [16]
+- ValueError: run_stack(["add"]), run_stack(["push 1", "add"]), run_stack(["print"]), run_stack(["jz 0"]),
+  run_stack("push 1")
 ''', r'''
 import random
 
@@ -3417,11 +3398,10 @@ assert R(["push 2", "push 3", "add", "print"]) == [5] and R(["push 1", "push 2",
 assert R(["push 3", "dup", "print", "push 1", "sub", "dup", "jz 8", "jmp 1", "halt"]) == [3, 2, 1]
 assert R([]) == [] and R(["push 7", "halt", "print"]) == [] and R(("push -4", "dup", "mul", "print")) == [16]
 assert R(["push 0", "jz 3", "push 9", "push 1", "print"]) == [1] and R(["jmp 1"]) == [] and R(["push 5", "pop"]) == []
-for bad in (["add"], ["push x"], ["jmp 5"], ["jmp 0"], ["PUSH 1"], ["push  1"], ["pop 1"], ["push"], ["push 1 2"], ["print"],
-            ["push 1", "add"], ["swap"], ["jz 0"], ["push 1", "jz -1"], [5], None, "push 1", ["push +1"], ["push 1.0"],
-            ["push 0", "jz 3", "jmp 99"], [" push 1"], ["push 1 "], ["push ١"], ["nop"]):
+assert R(["push 1", "jz 3", "push 9", "print"]) == [9] and R(["push 6", "push 7", "swap", "print", "print"]) == [6, 7]
+for bad in (["add"], ["push 1", "add"], ["print"], ["jz 0"], "push 1", ["swap"], ["push 1", "swap"], ["pop"], ["dup"],
+            ["push 1", "print", "print"], [5], None, ["push 1", None]):
     assert rej(bad), bad
-assert rej(["push 1", "jmp 0"])
 
 def gen(depth):
     if depth == 0 or random.random() < 0.3:
@@ -3441,67 +3421,46 @@ for _ in range(300):
         outs.append(eval(e))
     assert R(prog) == outs, prog
 for _ in range(30):
-    k = random.randint(1, 300)
+    k = random.randint(0, 300)
     acc = ["push 0", "push %d" % k, "dup", "jz 12", "swap", "push 1", "add", "swap", "push 1", "sub", "jmp 2", "halt", "pop", "print"]
     assert R(acc) == [k], k
+    x = random.randint(-5, 5)
+    br = ["push %d" % x, "jz 5", "push 1", "print", "jmp 7", "push 0", "print"]
+    assert R(br) == [0 if x == 0 else 1], x
 ''', r'''
-import re
-
-_NUM = re.compile(r"-?[0-9]+")
-_NOARG = {"pop", "dup", "swap", "add", "sub", "mul", "print", "halt"}
-_ARG = {"push", "jz", "jmp"}
-
-
 def run_stack(program):
-    if not isinstance(program, (list, tuple)):
-        raise ValueError("program must be a list or tuple")
-    code = []
-    for ins in program:
-        if not isinstance(ins, str):
-            raise ValueError("instructions must be str")
-        parts = ins.split(" ")
-        if parts[0] in _ARG and len(parts) == 2 and _NUM.fullmatch(parts[1]):
-            code.append((parts[0], int(parts[1])))
-        elif parts[0] in _NOARG and len(parts) == 1:
-            code.append((parts[0], None))
-        else:
-            raise ValueError("bad instruction")
-    n = len(code)
-    if any(op in ("jz", "jmp") and not 0 <= arg <= n for op, arg in code):
-        raise ValueError("jump target out of range")
-    stack, out, pc, steps = [], [], 0, 0
+    if not isinstance(program, (list, tuple)) or not all(isinstance(ins, str) for ins in program):
+        raise ValueError("program must be a list or tuple of str")
+    stack, out, pc = [], [], 0
 
     def pop():
         if not stack:
             raise ValueError("stack underflow")
         return stack.pop()
 
-    while pc < n:
-        steps += 1
-        if steps > 10000:
-            raise ValueError("too many steps")
-        op, arg = code[pc]
+    while pc < len(program):
+        name, _, arg = program[pc].partition(" ")
         pc += 1
-        if op == "push":
-            stack.append(arg)
-        elif op == "pop":
+        if name == "push":
+            stack.append(int(arg))
+        elif name == "pop":
             pop()
-        elif op == "dup":
+        elif name == "dup":
             v = pop()
             stack += [v, v]
-        elif op == "swap":
+        elif name == "swap":
             b, a = pop(), pop()
             stack += [b, a]
-        elif op in ("add", "sub", "mul"):
+        elif name in ("add", "sub", "mul"):
             b, a = pop(), pop()
-            stack.append(a + b if op == "add" else a - b if op == "sub" else a * b)
-        elif op == "print":
+            stack.append(a + b if name == "add" else a - b if name == "sub" else a * b)
+        elif name == "print":
             out.append(pop())
-        elif op == "jz":
+        elif name == "jz":
             if pop() == 0:
-                pc = arg
-        elif op == "jmp":
-            pc = arg
+                pc = int(arg)
+        elif name == "jmp":
+            pc = int(arg)
         else:
             break
     return out
