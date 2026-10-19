@@ -1293,6 +1293,11 @@ Stated with the tasks, not before them: this is the judgement the probe's bar le
   - v7_20: one rule, an optional "-" then digits whose value is below the base. Leading zeros and "-0" are now accepted. `to_base` is unchanged.
   - v7_29: programs are guaranteed well-formed, with in-range jumps, and guaranteed to stop. The only runtime check is stack underflow.
   Each keeps its id, entry names and seed. Results: references 15, 35 and 36 lines; prompts 1,363, 1,427 and 1,632 chars. `check_tasks.py --set v7` 30/30, run/agent selftests on v7 OK, and only these three task dicts differ from c1e96d4. Mutant control on the three new references: 9 mutants, 9 caught. The cold review now covers all twenty.
+- Cold review of 11-30, 2026-10-18/19, on 153dece:
+  - Method as in batch 1: twenty solvers, one per task, `red-team` agent type (Read/Grep/Glob only: no Bash, no writes, no code run), model Sonnet, prompt verbatim with "use no tools, read no file". All twenty reported `TOOLS USED: none`, at 13-15k tokens each. 18 ran in one batch; v7_27 and v7_30 were rejected at the per-spawn permission prompt and re-run in a second batch.
+  - Grading: `run.grade` at the visible seed, 104729 and seeds 1-3. 20 of 20 passed on all five, each on the first attempt. No defect, no prompt edit; the seal on v7_11-30 stands from 153dece.
+  - Listed ambiguities: nothing a test depends on that the prompt leaves open. Recurring untested points: subclasses of str, list and int, wrong-type exceptions (the prompts say ValueError), sizes past the stated bounds, and `int()`'s acceptance of underscores and non-ASCII digits in v7_13, which the prompt hands to `int()` on purpose.
+  - Solver code is in the session scratchpad, not the repo.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
