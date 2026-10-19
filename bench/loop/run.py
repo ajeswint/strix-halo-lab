@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import importlib  # noqa: E402
 
-SETS = {"v0": "tasks", "v1": "tasks_v1", "v2": "tasks_v2", "v3": "tasks_v3", "v4": "tasks_v4", "v5": "tasks_v5", "v6": "tasks_v6", "v7": "tasks_v7"}
+SETS = {"v0": "tasks", "v1": "tasks_v1", "v2": "tasks_v2", "v3": "tasks_v3", "v4": "tasks_v4", "v5": "tasks_v5", "v6": "tasks_v6", "v7": "tasks_v7", "v8": "tasks_v8"}
 TASKS = []  # filled by load_set()
 
 

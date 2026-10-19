@@ -112,7 +112,22 @@ FAMILIES = {"v5": {"v5_01_table_zone": "civil_time", "v5_02_leap_smear": "civil_
                    "v7_25_point_location": "graphs_geometry",
                    "v7_26_teller_queue": "simulation_dp", "v7_27_lis_count": "simulation_dp",
                    "v7_28_life_board": "simulation_dp", "v7_29_stack_machine": "simulation_dp",
-                   "v7_30_wrap_cost": "simulation_dp"}}
+                   "v7_30_wrap_cost": "simulation_dp"},
+            # v8: the retrieval test set, same four families as the v7 corpus (README "v8 tasks"); never ingested
+            "v8": {"v8_01_hex_color": "formats", "v8_02_morse_text": "formats", "v8_03_case_convert": "formats",
+                   "v8_04_money_text": "formats", "v8_05_cidr_range": "formats", "v8_06_clock_12h": "formats",
+                   "v8_07_luhn_digits": "formats", "v8_08_query_pairs": "formats",
+                   "v8_09_digit_persistence": "number_theory", "v8_10_euler_phi": "number_theory",
+                   "v8_11_goldbach_pairs": "number_theory", "v8_12_pascal_mod": "number_theory",
+                   "v8_13_primitive_triples": "number_theory", "v8_14_happy_count": "number_theory",
+                   "v8_15_egyptian_greedy": "number_theory", "v8_16_two_color": "graphs_geometry",
+                   "v8_17_lattice_segment": "graphs_geometry", "v8_18_closest_pair": "graphs_geometry",
+                   "v8_19_euler_trail": "graphs_geometry", "v8_20_triangle_kind": "graphs_geometry",
+                   "v8_21_manhattan_center": "graphs_geometry", "v8_22_tree_centers": "graphs_geometry",
+                   "v8_23_robot_walk": "simulation_dp", "v8_24_elevator_scan": "simulation_dp",
+                   "v8_25_josephus_order": "simulation_dp", "v8_26_max_subarray": "simulation_dp",
+                   "v8_27_stair_ways": "simulation_dp", "v8_28_lcs_smallest": "simulation_dp",
+                   "v8_29_matrix_chain": "simulation_dp", "v8_30_ledger_events": "simulation_dp"}}
 # debate.py seat -> the writer's solver slot. Every graded module goes there, whatever its debate role: the critique
 # kind for slots 2 and 4 is not built (it follows a solver-row retrieval test, reviewer accord 2026-10-19)
 DEBATE_SLOT = {"qwen32": 1, "r1d32": 3}

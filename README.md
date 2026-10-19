@@ -1431,6 +1431,40 @@ A build with a readout and no bar. No model ran.
   - v7 is now the corpus, so the test needs held-out tasks outside v7 (a v8 set, not written).
 - Tested: `memring.py --selftest` with two new checks (the real grader on v7_10's reference: the writer's slot, accept code skipped, a contradicted stored grade exits 2); `agent.py --selftest --set v7` OK.
 - Next, each step needing the user's go: the v8 tasks, then the retrieval pre-run.
+- Accord (review relayed by the user, 2026-10-19, on 611e5e5): modules stay in the writer's solver slot, and the round is not stored for the first retrieval test.
+  - A solo-only filter would drop a writer's only pass on two tasks: Qwen's v7_29 R2 (a rescue; its solo is the refused empty block) and R1-Distill's v7_30 R2 (not a rescue: Qwen opened v7_30 and its solo passed).
+  - It would also drop the four debate modules that sit beside the same writer's solo pass (Qwen v7_10, v7_21 and v7_30; R1-Distill v7_17).
+  - The retrieval pre-run may put the round in the verdict and run two arms if that is its question. A re-ingest costs about 1 s.
+
+## v8 tasks: held-out set for the CRAwDAD retrieval test (2026-10-19)
+
+Written by Claude inline, with no subagents, every check under `prlimit --as=4294967296`, and no GPU. No model has seen these tasks.
+- Design (reviewer accord 2026-10-19; size by the user):
+  - 30 tasks in v7's four families, split 8/7/7/8, because `retrieve()` reads one family of the v7 corpus: formats v8_01-08, number_theory v8_09-15, graphs_geometry v8_16-22, simulation_dp v8_23-30 (`memring.FAMILIES["v8"]`).
+  - Why 30: the no-retrieval arm on v8 is a full debate, so it also repeats crawdad-v7-30's keep at the same n. The retrieval arm does not count as that repeat: its prompts carry the corpus, so it is the new question. At 20 tasks the same `net >= 3` line would be a different claim, and the family mix would stop matching the corpus.
+  - The style is v7_11-30's, which is already calibrated (Qwen solo 9/20, R1-Distill 6/20, leaf 12/20, all-fail 8/20), so there is no probe batch.
+  - New problems, and v8 never enters the corpus: a near-copy of a v7 task would make a gain look like retrieval when the stored module was already the answer. graphs_geometry stays even though R1-Distill's rows there are all failures.
+- Tasks, seeds 8001-8030:
+  - formats: 01 hex_color, 02 morse_text, 03 case_convert, 04 money_text, 05 cidr_range, 06 clock_12h, 07 luhn_digits, 08 query_pairs;
+  - number_theory: 09 digit_persistence, 10 euler_phi, 11 goldbach_pairs, 12 pascal_mod, 13 primitive_triples, 14 happy_count, 15 egyptian_greedy;
+  - graphs_geometry: 16 two_color, 17 lattice_segment, 18 closest_pair, 19 euler_trail, 20 triangle_kind, 21 manhattan_center, 22 tree_centers;
+  - simulation_dp: 23 robot_walk, 24 elevator_scan, 25 josephus_order, 26 max_subarray, 27 stair_ways, 28 lcs_smallest, 29 matrix_chain, 30 ledger_events.
+  Prompts are 1,202-2,022 chars and references 15-44 lines.
+- Checks:
+  - `check_tasks.py --set v8`: 30/30 OK.
+  - `run.py --selftest --set v8`, `agent.py --selftest --set v8`, `debate.py --selftest` (protocol `137acf32c95d`, unchanged) and `memring.py --selftest`: OK.
+  - Mutant control: 60 single-node AST mutants, two per task (a comparison, an arithmetic operator, an int constant or and/or), graded at the visible seed. 57 are caught. The 3 survivors are equivalent: in v8_05 a /33 prefix still raises ValueError through the negative shift that follows; v8_11's sieve index 0 is never read; in v8_20, `>=` after the `==` branch changes nothing. A fourth survivor, v8_26 rejecting -10**9, was a test gap, closed with a boundary test before this commit. The script is in the session scratchpad.
+  - Near-copy check against v7: the word-set overlap (Jaccard, words of 4+ letters) between prompts is at most 0.37, for v8_16 two_color against v7_22 course_order (shared validation wording, different problem). The median of the per-task maxima is 0.23, and v7's own within-set maximum is 0.27. The closest in substance is v8_27 stair_ways against v7_19 change_ways: both count with a DP, but ordered moves with broken stairs against unordered coin sums, so the stored module is not the answer.
+- Draft defects, each caught by the checker or by independent code before this commit:
+  - wrong hand-written literals in v8_09 (persistence of 400 nines), v8_20 (a right angle written as acute) and v8_30 (a ledger total);
+  - a garbled example line in v8_13, and a self-referential assert in v8_19 and in v8_26;
+  - v8_15's bound q <= 100 contradicted its 5/121 example. It is now q <= 200, which gives at most 11 terms and 1,348 digits (measured over every p/q).
+  - v8_17's entry name `lattice_count` clashed with v4, so it was renamed `segment_lattice_*`;
+  - v8_10's random 10**12 oracle was too slow for the 0.8 s limit and was dropped; the prime literal covers that path;
+  - v8_08's reference was trimmed from 53 to 44 lines.
+- Registered: `run.SETS["v8"]`. The `llm-serve` skill's DeepSeek gate example moved from v8 to v9; `select_fix.py fresh v9` refuses (not registered).
+- Sealed from this commit, with the same rule as v7: only a defect found by the cold review may change a task, recorded here before any model sees it.
+- Next, each step needing the user's go: the cold review (as for v7: one capped Sonnet solver per task with no tools, graded at five seeds), then the retrieval pre-run.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
