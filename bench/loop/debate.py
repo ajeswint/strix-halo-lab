@@ -3,8 +3,9 @@
 coin picks who answers first, at most 4 replies, graded only at the leaf.
 
   debate.py --selftest                          the protocol against scripted fake seats and the real grader; no server
-  debate.py step --label L --set v7 [--tasks a,b] [--parallel 1] [--api URL]
-                                                every reply the served model owes (run inside its llmctl session)
+  debate.py step --label L --set v7 [--tasks a,b] [--parallel 1] [--api URL] [--retrieve EXPORT]
+                                                every reply the served model owes (run inside its llmctl session);
+                                                --retrieve (first step only) makes it the retrieval arm (REF_HEAD)
   debate.py status --label L                    each task's state and the seat to invite next; no server
   debate.py report --label L [--regrade]        results/L.debate.summary.json from the replies; --regrade re-grades
                                                 every coded reply and exits 2 on a mismatch; no server
@@ -46,6 +47,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run  # noqa: E402  grade, extract, load_set, SAMPLING, served_model
 import agent  # noqa: E402  fresh_grade, FRESH_SEED
+import memring  # noqa: E402  FAMILIES (the retrieval arm's family of each task)
 
 SEATS = {"qwen3-32b": "qwen32", "r1-distill-qwen-32b": "r1d32"}   # served alias (llm-serve.sh --alias) -> llmctl endpoint
 ORDER = ("qwen32", "r1d32")
@@ -75,6 +77,11 @@ FENCE = "=========="
 PROTOCOL = hashlib.sha256(json.dumps([SOLO_SUFFIX, DEBATE_HEAD, CRITIC, DEFENDER, VERDICT_RULES, FENCE, BUDGET_MESSAGE,
                                       REASONING_BUDGET, MAX_TOKENS, SEED_BASE, COIN_SEED, run.SAMPLING,
                                       agent.FRESH_SEED]).encode()).hexdigest()[:12]
+# Retrieval arm (step --retrieve EXPORT on a run's first step): every prompt a seat writes, solo R1 included, starts
+# with the grader-pass modules memring.passes() chose from that seat's own solver slot for the task's family. An empty
+# read adds nothing, so that prompt is the plain one. A run without --retrieve is the plain debate, hash PROTOCOL.
+REF_HEAD = ("Reference modules for other tasks of the same kind. Each one passed that task's hidden tests (grader "
+            "pass). None of them solves this task.\n\n")
 
 CODE_BLOCK = re.compile(r"```.*?(?:```|\Z)", re.S)
 VERDICT_RE = re.compile(r"^[\W_]*verdict[\W_]*(accept|reject)\b", re.I | re.M)
@@ -137,6 +144,32 @@ def history(speaker, entries):
                  else "Your original answer:" if row["round"] == 1 else "Your response:")
         out.append(f"{FENCE}\n{label}\n{visible(row['content'])}")
     return "\n".join(out) + f"\n{FENCE}"
+
+
+def ref_block(refs):
+    """The retrieval prefix of a prompt; "" for an empty read."""
+    if not refs:
+        return ""
+    body = "\n".join(f"{FENCE}\nReference module (task {r['task_id']}, grader pass):\n```python\n{r['content']}\n```"
+                     for r in refs)
+    return REF_HEAD + body + f"\n{FENCE}\n\n"
+
+
+def protocol(retrieval):
+    """PROTOCOL for the plain debate; with retrieval, a hash that also binds the block layout and the export."""
+    if not retrieval:
+        return PROTOCOL
+    return hashlib.sha256(json.dumps([PROTOCOL, ref_block([{"task_id": "T", "content": "C"}]),
+                                      retrieval["sha256"]]).encode()).hexdigest()[:12]
+
+
+def load_refs(path):
+    """(meta entry, {seat: {family: [rows]}}) of a memring retrieval export (memring.py debate --passes-out)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    exp = json.loads(data)
+    return ({"file": os.path.relpath(os.path.abspath(path), HERE), "sha256": hashlib.sha256(data).hexdigest(),
+             "corpus_set": exp["set"], "k": exp["k"]}, exp["slots"])
 
 
 def solo_prompt(task):
@@ -235,8 +268,9 @@ def owed(meta, idx, seat):
     return out
 
 
-def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print):
-    """Ask every reply the served seat owes. Returns the number of replies asked."""
+def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print, retrieve=None):
+    """Ask every reply the served seat owes. Returns the number of replies asked. retrieve: a retrieval export, first
+    step only (the meta fixes it, by sha256, for the rest of the run)."""
     if alias not in SEATS:
         raise SystemExit(f"served model {alias!r} is not a debate seat ({sorted(SEATS)})")
     seat = SEATS[alias]
@@ -245,13 +279,21 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
     if parallel > (server.get("total_slots") or 1):
         raise SystemExit(f"--parallel {parallel} > the server's {server.get('total_slots')} slots")
     mp, rp, _ = paths(root, label)
+    refs = None
     if os.path.exists(mp):
         meta, rows = load(root, label)
         for k, want in (("set", set_name), ("tasks", task_ids)):
             if want is not None and meta[k] != want:
                 raise SystemExit(f"{mp}: {k} is {meta[k]}, this step asked for {want}")
-        if meta["protocol"] != PROTOCOL:
-            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {PROTOCOL} (prompts or constants changed mid-run)")
+        if retrieve is not None:
+            raise SystemExit(f"{mp}: --retrieve is for a run's first step; the meta already fixes it")
+        ret = meta.get("retrieval")
+        if ret:
+            info, refs = load_refs(os.path.join(HERE, ret["file"]))
+            if info["sha256"] != ret["sha256"]:
+                raise SystemExit(f"{ret['file']} changed since the run started (sha256 {info['sha256'][:12]})")
+        if meta["protocol"] != protocol(ret):
+            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {protocol(ret)} (prompts or constants changed mid-run)")
         if meta["build"] != server.get("build_info"):
             raise SystemExit(f"{mp}: server build {meta['build']}, the served one is {server.get('build_info')}")
         prev = meta["seats"].get(seat)
@@ -265,10 +307,21 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
         unknown = set(task_ids) - set(all_ids)
         if unknown:
             raise SystemExit(f"unknown task ids: {sorted(unknown)}")
+        ret = None
+        if retrieve is not None:
+            ret, refs = load_refs(retrieve)
+            if set(task_ids) - set(memring.FAMILIES.get(set_name, {})):
+                raise SystemExit(f"--retrieve needs a family for every task: memring.FAMILIES has no full map for {set_name}")
+            if ret["corpus_set"] == set_name:
+                raise SystemExit(f"the retrieval export was built from {set_name}, the set this run measures")
+            if sorted(refs) != sorted(ORDER):
+                raise SystemExit(f"the retrieval export covers {sorted(refs)}, not both seats")
         meta = {"label": label, "set": set_name, "tasks": task_ids, "first": coin(task_ids), "coin_seed": COIN_SEED,
-                "protocol": PROTOCOL, "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
+                "protocol": protocol(ret), "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
                 "sampling": run.SAMPLING, "seed_base": SEED_BASE, "fresh_seed": agent.FRESH_SEED,
                 "build": server.get("build_info"), "seats": {}}
+        if ret:
+            meta["retrieval"] = ret
         rows = []
     meta["seats"].setdefault(seat, {"model": alias, "model_path": server.get("model_path"), "n_ctx": server.get("n_ctx")})
     save_meta(mp, meta)
@@ -293,6 +346,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                     role = "critic" if rnd % 2 == 0 else "defender"
                     entries = [solo[meta["first"][tid]]] + [deb[k] for k in range(2, rnd)]
                     prompt = debate_prompt(task, seat, rnd, entries)
+                got = refs[seat].get(memring.FAMILIES[meta["set"]][tid], []) if refs else []
+                prompt = ref_block(got) + prompt
             try:
                 r = ask(prompt, SEED_BASE + rnd)
             except BaseException:
@@ -306,6 +361,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                    "prompt_tokens": r["usage"].get("prompt_tokens"), "prompt_n": r.get("prompt_n"),
                    "tg_tps": r.get("tg_tps"), "gen_s": r["gen_s"], "code": code, "verdict": verdict,
                    "confidence": conf, "think_leak": "</think>" in (r["content"] or "")}
+            if refs:
+                row["retrieved"] = [x["task_id"] for x in got]
             if code is not None:
                 t0 = time.monotonic()
                 fp, ferr, nf = agent.fresh_grade(code, task["tests"])
@@ -409,12 +466,13 @@ def report(root, label, regrade=False, log=print):
                 "reject_no_code": sum(r["verdict"] == "reject" and r["code"] is None for r in rs),
                 "think_leak": sum(bool(r.get("think_leak")) for r in rs),
                 "accept_with_code": sum(r["verdict"] == "accept" and r["code"] is not None for r in rs),
+                "empty_reads": sum(r.get("retrieved") == [] for r in rs),
                 "by_round": {k: {"replies": d["replies"], "mean_prompt_tokens": round(d["prompt_tokens"] / d["replies"]),
                                  "mean_tg_tps": round(sum(d["tps"]) / len(d["tps"]), 2) if d["tps"] else None}
                              for k, d in sorted(by_round.items())}}
 
     summary = {"label": label, "set": meta["set"], "tasks": len(meta["tasks"]), "complete": complete,
-               "protocol": meta["protocol"], "build": meta["build"], "seats": meta["seats"],
+               "protocol": meta["protocol"], "retrieval": meta.get("retrieval"), "build": meta["build"], "seats": meta["seats"],
                "reasoning_budget": meta["reasoning_budget"], "max_tokens": meta["max_tokens"],
                "sampling": meta["sampling"], "fresh_seed": meta["fresh_seed"],
                "first_counts": {s: sum(v == s for v in meta["first"].values()) for s in ORDER},
@@ -607,6 +665,65 @@ def selftest():
             seat = other(seat)
         check(f"r1d32 as the first session also finishes in five (replies after the solos {n})",
               status(root, "r", log=quiet).startswith("done: 6/6") and len(load(root, "r")[1]) == 22)
+        check("plain run: no retrieval in meta, rows or hash", "retrieval" not in meta and protocol(None) == PROTOCOL
+              and not any("retrieved" in r for r in load(root, "r")[1]))
+    # the retrieval arm: a fake export over the six v1 tasks, a family map patched in for the test only
+    memring.FAMILIES["v1"] = {t: ("fa" if i < 4 else "fb") for i, t in enumerate(ids)}
+    try:
+        with tempfile.TemporaryDirectory() as root:
+            ref = lambda tid, mark: {"task_id": tid, "hash": "h", "content": f"def ref():\n    return 1  # {mark}"}
+            exp = {"set": "v0", "k": 3, "files": [], "grader": "g",
+                   "slots": {"qwen32": {"fa": [ref("q1", "QWEN-REF-1"), ref("q2", "QWEN-REF-2")], "fb": []},
+                             "r1d32": {"fa": [ref("r1", "R1D-REF-1")], "fb": []}}}
+            ep = os.path.join(root, "x.passes.json")
+            with open(ep, "w") as f:
+                json.dump(exp, f)
+            calls.clear()
+            seat = "qwen32"
+            for i in range(5):
+                step(root, "x", "v1" if i == 0 else None, ids if i == 0 else None, alias[seat],
+                     dict(srv, model_path="/m/" + seat), fake(seat), parallel=3, log=quiet, retrieve=ep if i == 0 else None)
+                seat = other(seat)
+            meta, rows = load(root, "x")
+            check("retrieval: done in five sessions, 22 replies, hash binds the export and differs from the plain one",
+                  status(root, "x", log=quiet).startswith("done: 6/6") and len(rows) == 22
+                  and meta["protocol"] == protocol(meta["retrieval"]) != PROTOCOL and meta["retrieval"]["corpus_set"] == "v0")
+            fa = {t for t in ids if memring.FAMILIES["v1"][t] == "fa"}
+            byseat = {s: ref_block(exp["slots"][s]["fa"]) for s in ORDER}
+            check("retrieval: every prompt on a family with rows starts with the writer's own block, solo R1 included",
+                  all(p.startswith(byseat[s]) and (("QWEN-REF" in p) == (s == "qwen32")) and (("R1D-REF" in p) == (s == "r1d32"))
+                      for s, tid, rnd, p in calls if tid in fa)
+                  and any(rnd == 1 for s, tid, rnd, p in calls if tid in fa) and any(rnd > 1 for s, tid, rnd, p in calls if tid in fa))
+            check("retrieval: an empty read leaves the prompt plain (solo = task prompt + SOLO_SUFFIX)",
+                  all("Reference module" not in p for s, tid, rnd, p in calls if tid not in fa)
+                  and all(p == next(t for t in tasks if t["id"] == tid)["prompt"] + SOLO_SUFFIX
+                          for s, tid, rnd, p in calls if tid not in fa and rnd == 1))
+            check("retrieval: rows record what was read; empty reads counted in the report",
+                  all(r["retrieved"] == ([x["task_id"] for x in exp["slots"][r["seat"]]["fa"]] if r["task"] in fa else [])
+                      for r in rows)
+                  and sum(report(root, "x", log=quiet)[0]["per_seat"][s]["empty_reads"] for s in ORDER)
+                  == sum(r["task"] not in fa for r in rows))
+            check("refused: --retrieve on a later step",
+                  refused(lambda: step(root, "x", None, None, alias["qwen32"], dict(srv, model_path="/m/qwen32"),
+                                       fake("qwen32"), log=quiet, retrieve=ep)))
+            exp["slots"]["qwen32"]["fb"] = [ref("q9", "CHANGED")]
+            with open(ep, "w") as f:
+                json.dump(exp, f)
+            check("refused: an export that changed since the run started",
+                  refused(lambda: step(root, "x", None, None, alias["qwen32"], dict(srv, model_path="/m/qwen32"),
+                                       fake("qwen32"), log=quiet)))
+            exp["set"] = "v1"
+            with open(ep, "w") as f:
+                json.dump(exp, f)
+            check("refused: an export built from the measured set",
+                  refused(lambda: step(root, "y", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, retrieve=ep)))
+            exp["set"] = "v0"
+            with open(ep, "w") as f:
+                json.dump(exp, f)
+            check("refused: --retrieve on a set without a family map",
+                  refused(lambda: step(root, "z", "v2", None, alias["qwen32"], srv, fake("qwen32"), log=quiet, retrieve=ep)))
+    finally:
+        memring.FAMILIES.pop("v1", None)
     print(f"selftest {'OK' if ok else 'FAILED'} (protocol {PROTOCOL})")
     return 0 if ok else 1
 
@@ -621,6 +738,7 @@ def main():
     ap.add_argument("--parallel", type=int, default=1, help="tasks in flight; at most the server's slots")
     ap.add_argument("--api", default=run.API)
     ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch")
+    ap.add_argument("--retrieve", help="step, first step only: a memring retrieval export (memring.py debate --passes-out)")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
@@ -635,7 +753,7 @@ def main():
     os.makedirs(root, exist_ok=True)
     alias = run.served_model(api=a.api)
     step(root, a.label, a.set, a.tasks.split(",") if a.tasks else None, alias, server_props(a.api),
-         server_ask(alias, a.api), a.parallel)
+         server_ask(alias, a.api), a.parallel, retrieve=a.retrieve)
     return 0
 
 

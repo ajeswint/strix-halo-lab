@@ -1477,6 +1477,45 @@ Written by Claude inline, with no subagents, every check under `prlimit --as=429
   - The solver code is kept in the session scratchpad, not the repo.
 - Next, each step needing the user's go: the retrieval pre-run on v8, with the corpus from `memring.py debate` on v7.
 
+## CRAwDAD retrieval on v8 (pre-run)
+
+Stated before any GPU session (2026-10-19, measure skill steps 1-6). It is for review before it runs; the GPU sessions need the user's go after that. The design points marked "accord" were settled in review rounds relayed by the user. The set is v8 as of 23b316a (sealed, cold-reviewed). No model has seen v8.
+- Question: when every prompt a seat writes starts with up to three of its own grader-passed v7 modules from the task's family, does the debate leaf solve more v8 tasks than the same debate without them?
+- Arms. Both run on all 30 v8 tasks with the same coin (seed 42 over the 30 sorted ids, 15 openers per seat), the same seeds, build, model files and endpoint defaults as crawdad-v7-30:
+  - D, label `crawdad-v8-d`: `debate.py` as configured, protocol `137acf32c95d`, no `--retrieve`. It is the no-retrieval baseline, and at the same n it also repeats crawdad-v7-30's keep (accord).
+  - DR, label `crawdad-v8-r`: identical, except that every prompt each seat writes (solo R1 and R2-R4) starts with that seat's block for the task's family (`REF_HEAD`, then each module fenced and marked "grader pass"). Protocol `a01c192bac5d`, which binds the block layout and the export's sha256. In accord, the solo R1 prompts carry the block too: a solo written after a debate reply in the same load is not an unchanged baseline anyway, and D is the baseline.
+- Retrieval is fixed by `bench/loop/results/crawdad-v7.passes.json` (sha256 `5118c06066ba7744…`, 27,370 bytes). It was built by `memring.py debate --passes-out` from crawdad-v7-30 and crawdad-v7-probe (0 regrade mismatches); a rebuild into a fresh root gives the same bytes.
+  - For each seat's own solver slot (Qwen 1, R1-Distill 3) and family it holds pass rows only (accord: a labelled fail row is a later arm). Each task contributes its first committed row, tasks in id order, at most k = 3 per family. The order is fixed because "newest" in memring is the flush's seeded shuffle, not file order.
+  - Rows per family (formats / number_theory / graphs_geometry / simulation_dp):
+    - Qwen: 3 / 1 / 3 / 3, of 3 / 1 / 3 / 4 tasks with a pass: v7_12, 13, 15; v7_20; v7_21, 22, 23; v7_10, 27, 29.
+    - R1-Distill: 3 / 1 / 0 / 3, of 3 / 1 / 0 / 4: v7_12, 13, 15; v7_17; none; v7_10, 27, 28.
+    - The id order leaves out v7_30 in simulation_dp for both seats.
+  - R1-Distill's graphs_geometry read is empty: those prompts carry no block (they are the plain prompts), and the rows record `retrieved: []` (accord: the empty read is recorded).
+  - Blocks are 1,229-5,461 chars. v8 never enters the corpus, and `step` refuses an export built from the measured set.
+  - Closest v7-to-v8 overlap, named in advance: v8_17's count is one gcd term (+1) of v7_23 shoelace's boundary sum, and Qwen's graphs_geometry block holds that passing v7_23 module.
+- Metric, per task: leaf L_D and L_R. A gain is D fail and DR pass; a loss is D pass and DR fail; net = gains - losses = L_R - L_D.
+- Bar, stated now:
+  - keep retrieval as configured (pass rows, own slot, family, k = 3, every prompt) as the base for the next steps when net >= 3;
+  - drop it as configured when net <= 0;
+  - net 1 or 2 is inconclusive, which is a drop unless the user approves a rerun on more tasks;
+  - no room: if L_D >= 27, the run cannot separate the arms, and that is reported instead of a verdict.
+  This is the same +3 on 30 as crawdad-v7-30: a judgement, one run per arm, no repeat.
+- Recorded, no bar:
+  - Q and R (solo passes per seat) on both arms, so that a leaf gap already present in the solos is visible (accord). Solo gains and losses per seat, by family.
+  - D read against crawdad-v7-30's bar (net over the first speaker's solo >= 3 and L >= max(Q, R)), as a replication reading. If D reads net <= 0, the debate keep is reopened for the user.
+  - Gains and losses by family and by first-speaker seat, with R1-Distill's graphs_geometry prompts (empty read) split out.
+  - Leaves and stops per arm, and critic verdicts against the judged module's true grade per seat (accepts of failing modules).
+  - Prompt tokens per reply (DR adds the block), gen_s, decode hours, wall time; `budget_hit`, `finish` = `length`, `no_code`, `parse_fail`, `think_leak` and never-closed `<think>` per arm.
+  - The retrieved task ids of every DR reply (row field `retrieved`).
+  - Determinism (agreed line): byte-compare only while a load's requests match an earlier run's by index in prompt and position. No earlier run shares v8 prompts, so nothing is byte-compared; reported as not applicable.
+- Cost: crawdad-v7-30 took 6.91 h of decode for 105 replies. DR adds at most about 1.5k prompt tokens per reply. That is about 7-7.5 h of decode per arm, about 14-15 h for both, worst case about 44 h (every task to R4 at 6,144 tokens). Ten sessions, five per arm, one model resident at a time, D first. Memory as in crawdad-v7-30: GTT +26.7 / +26.8 GiB, client capped at 8 GiB, each grade's child at 1 GiB AS. `report --regrade` must exit 0 on both arms, or the run is unreadable and the bar is not applied.
+- Code in this commit, no GPU:
+  - `memring.Ring.passes()` (pass-only, one per task, task order, k) and `memring.py debate --passes-out`;
+  - `debate.py step --retrieve EXPORT` (first step only; the meta pins the export by sha256 and refuses a changed file, `--retrieve` on a later step, a set without a family map, and an export built from the measured set), `ref_block`, `protocol(retrieval)`, the row field `retrieved`, and the report's `retrieval` and `empty_reads`.
+  - Without `--retrieve` the prompts and hash are unchanged (`137acf32c95d`; the selftest checks both).
+  - Selftests: `debate.py --selftest` (9 new checks) and `memring.py --selftest` (2 new, 1 extended) pass.
+- Procedure: `llm-serve` skill, "CRAwDAD debate": D with label `crawdad-v8-d` and `--set v8`; then DR with label `crawdad-v8-r`, `--set v8` and `--retrieve bench/loop/results/crawdad-v7.passes.json` on the first step.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.

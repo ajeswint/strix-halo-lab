@@ -6,9 +6,10 @@
   memring.py replay --root DIR --set v5 --slot N results/X.jsonl [--out J]
                                               fuzz replay: regrade every stored coded turn, seal, admit, one flush
                                               with the fuzzer on; per-mutation table vs EXPECT; no server
-  memring.py debate --root DIR --set v7 results/A.debate.jsonl [B.debate.jsonl ...] [--out J]
+  memring.py debate --root DIR --set v7 results/A.debate.jsonl [B.debate.jsonl ...] [--out J] [--passes-out P]
                                               solver-row corpus from stored debate replies: fresh-seed regrade,
-                                              seal, admit to the writer's solver slot, one flush, no canaries; no server
+                                              seal, admit to the writer's solver slot, one flush, no canaries; no server.
+                                              P: the frozen retrieval export debate.py --retrieve reads (passes())
 
 Design: docs/diagrams/qwen-laguna-v2.drawio; slot roles now follow the CRAwDAD pair (SLOTS below,
 docs/diagrams/crawdad-qd-v2.drawio, README Models). agent.py --ring writes to it (measure-only: nothing is retrieved).
@@ -131,6 +132,7 @@ FAMILIES = {"v5": {"v5_01_table_zone": "civil_time", "v5_02_leap_smear": "civil_
 # debate.py seat -> the writer's solver slot. Every graded module goes there, whatever its debate role: the critique
 # kind for slots 2 and 4 is not built (it follows a solver-row retrieval test, reviewer accord 2026-10-19)
 DEBATE_SLOT = {"qwen32": 1, "r1d32": 3}
+PASSES_K = 3   # rows per (seat, family) in the debate retrieval export; retrieve()'s k
 
 # what each python mutator is predicted to do against the python guardian (docstring: Fuzzer)
 EXPECT = {"rename": "order", "reformat": "order", "inject_comment_oblique": "order",
@@ -643,6 +645,17 @@ class Ring:
             self.slots[slot].execute("INSERT INTO retrievals (row_id, task_id, turn) VALUES (?,?,?)", (r["id"], task_id, turn))
         return [dict(r) for r in rows]
 
+    def passes(self, slot, family, k=3):
+        """Grader-pass rows of one family: one per task (its first committed row, the flush's seeded order), tasks in
+        id order, at most k. No canary, nothing logged (debate.py reads a frozen export of these, not the DB)."""
+        out, seen = [], set()
+        for r in self.slots[slot].execute("SELECT * FROM rows WHERE family = ? AND kind = 'pass' AND canary = 0 "
+                                          "ORDER BY task_id, id", (family,)):
+            if r["task_id"] not in seen:
+                seen.add(r["task_id"])
+                out.append(dict(r))
+        return out[:k]
+
     def record_outcome(self, task_id, solved):
         for db in self.slots.values():
             db.execute("UPDATE retrievals SET outcome = ? WHERE task_id = ? AND outcome IS NULL", (1.0 if solved else 0.0, task_id))
@@ -1057,6 +1070,15 @@ def debate_corpus(a):
            "replies": len(rows), "coded_not_accept": len(coded), "accept_code_skipped": accept_code, "regrade_mismatch": mism,
            "ingest": {f"slot{s}": v for s, v in ing.items()}, "flush": fl, "states": states,
            "committed": committed, "tasks_with_a_pass_row": tasks_with_pass}
+    if a.passes_out and not mism:
+        fams = sorted(set(fam.values()))
+        exp = {"set": a.set, "files": res["files"], "grader": GRADER_VER, "k": PASSES_K,
+               "slots": {seat: {f: [{"task_id": r["task_id"], "hash": r["hash"], "content": r["content"]}
+                                    for r in ring.passes(slot, f, PASSES_K)] for f in fams}
+                         for seat, slot in DEBATE_SLOT.items()}}
+        with open(a.passes_out, "w") as f:
+            json.dump(exp, f, indent=1)
+        res["passes"] = {seat: {f: [x["task_id"] for x in v] for f, v in d.items()} for seat, d in exp["slots"].items()}
     print(json.dumps(res, indent=1))
     if a.out:
         with open(a.out, "w") as f:
@@ -1237,7 +1259,8 @@ def selftest():
             p, out = os.path.join(d, name + ".jsonl"), os.path.join(d, name + ".json")
             with open(p, "w") as f:
                 f.writelines(json.dumps(r) + "\n" for r in rows)
-            ns = argparse.Namespace(set="v7", root=os.path.join(d, name), jsonl=p, more=[], parallel=2, out=out)
+            ns = argparse.Namespace(set="v7", root=os.path.join(d, name), jsonl=p, more=[], parallel=2, out=out,
+                                    passes_out=os.path.join(d, name + ".passes.json"))
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = debate_corpus(ns)
             return rc, json.load(open(out)), Ring(os.path.join(d, name))
@@ -1247,8 +1270,26 @@ def selftest():
         check("debate corpus: writer's solver slot, accept code skipped, regrade agrees",
               rc == 0 and kinds(1) == ["pass"] and kinds(3) == ["fail"] and res["accept_code_skipped"] == 1
               and not res["regrade_mismatch"] and res["flush"]["slot1"]["canaries"] == 0)
+        exp = json.load(open(os.path.join(d, "ok.passes.json")))
+        check("debate corpus: the export holds the pass row for its seat and family only, k = PASSES_K",
+              exp["k"] == PASSES_K and [x["task_id"] for x in exp["slots"]["qwen32"]["simulation_dp"]] == ["v7_10_justify_lines"]
+              and exp["slots"]["qwen32"]["simulation_dp"][0]["content"] == good
+              and not any(v for f, v in exp["slots"]["r1d32"].items()) and sorted(exp["slots"]["qwen32"]) == sorted(set(FAMILIES["v7"].values())))
         rc, res, _ = corpus([row("qwen32", 1, None, bad, True)], "mism")
-        check("debate corpus: a stored grade the regrade contradicts exits 2", rc == 2 and len(res["regrade_mismatch"]) == 1)
+        check("debate corpus: a stored grade the regrade contradicts exits 2, and writes no export",
+              rc == 2 and len(res["regrade_mismatch"]) == 1 and not os.path.exists(os.path.join(d, "mism.passes.json")))
+    with tempfile.TemporaryDirectory() as d:
+        ring = Ring(d, slots=(1,))
+        for tid, kind, src in (("t3", "pass", "c = 3"), ("t1", "pass", "a = 1"), ("t1", "pass", "a = 11"), ("t2", "fail", "b = 2"),
+                               ("t4", "pass", "e = 4"), ("t9", "pass", "f = 9"), ("t5", "pass", "g = 5")):
+            v = {"passed": kind == "pass", "err": "" if kind == "pass" else "AssertionError"}
+            fam = "other" if tid == "t9" else "fam"
+            ring.admit(1, kind, tid, fam, src, v, ring.seal(1, kind, tid, fam, src, v))
+            ring.flush(plan=[])   # one row per flush, so the flood rule stays out of the fixture
+        got = ring.passes(1, "fam", k=3)
+        check("passes: pass rows only, one per task (its first row), tasks in id order, at most k, family only",
+              [(r["task_id"], r["content"]) for r in got] == [("t1", "a = 1"), ("t3", "c = 3"), ("t4", "e = 4")]
+              and len(ring.passes(1, "fam", k=10)) == 4 and ring.passes(1, "none") == [])
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -1266,6 +1307,7 @@ def main():
     ap.add_argument("cmd", nargs="?", choices=["report", "replay", "llm-guard", "debate"])
     ap.add_argument("jsonl", nargs="?")
     ap.add_argument("more", nargs="*", help="debate: further debate.py jsonl files of the same set")
+    ap.add_argument("--passes-out", help="debate: write the retrieval export (passes(), PASSES_K per seat and family) here")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--root", default="/data/ring")
     ap.add_argument("--set")

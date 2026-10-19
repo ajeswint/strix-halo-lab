@@ -73,6 +73,11 @@ scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop
 
 - A step that dies (server gone, HTTP error) keeps every reply already written; the same command resumes and never asks a reply twice.
 - After `status` prints `done`: `python3 bench/loop/debate.py report --label crawdad-v7 --regrade` (CPU only) writes `results/crawdad-v7.debate.summary.json` and exits 2 if any stored grade does not reproduce.
+- Retrieval arm (README "CRAwDAD retrieval on v8"): only the first step changes. It adds `--retrieve` with the frozen export from `memring.py debate --passes-out`. Later steps are the same commands without it; the meta pins the export by sha256 and refuses a changed file or a repeated `--retrieve`:
+
+```
+scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop/debate.py step --label crawdad-v8-r --set v8 --retrieve bench/loop/results/crawdad-v7.passes.json; scripts/llmctl.py bye; }
+```
 - Cost, measured on the smoke run (one run): replies took 117-317 s (about 3.6 min mean), tg 10.9-11.3 t/s at prompts up to 2,595 tokens, loads and swaps about 1.3 min over 5 sessions with the files warm. A 30-task set is roughly 9-16 h of decode at 5-9 replies per task. Worst case per reply is 6,144 tokens, about 9 min.
 
 ## The primitive underneath
