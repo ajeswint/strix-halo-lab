@@ -4,7 +4,7 @@ Working repo for a Framework Desktop (Ryzen AI Max+ 395 / Strix Halo, Radeon 806
 
 **Provenance.** Started 2026-10-04 from a snapshot of [strix-halo-setup](https://github.com/ajeswint/strix-halo-setup) at `b94e957` (archived, read-only). That repo holds the commit history of the install and tuning work; this one starts from its final state. The machine setup is complete: install, tuning, firewall. Work here is the Roadmap.
 
-**Carried over, open:** check the silkscreen at the fan plug (see *Why the fan is pegged*). Orchestrator timer still held. Its marker for this repo is `4650476` (run 6, 2026-10-09 00:31 UTC: `ok`, 3 findings, all rejected; before that the baseline at `606df2d`, run 5: no model, the tree up to there waived, only run 4's 13 files reviewed). `bench/loop/tasks_v6.py` was never model-reviewed (scope waiver below); 1 of 16 findings accepted across all runs. **Loop testing: the v6 pipeline ran 2026-10-15 on the user's go (refreshed pre-run `0334b3b`, amended `03ac168`; results `b618af0`, `21a57c2`): Qwen loop 24/30, DeepSeek fixer 6/6 vs Qwen control 2/6 on the 6 usable failures, verdict KEEP (optional batch step after the loop, off by default); that line is closed and v6 is spent.** Earlier: paused, unpaused and paused again on 2026-10-08 (the user's decisions); results up to then are summarised in `docs/testing-summary-2026-10-08.md`. History: the first pause waited on a test protocol written from ISO/IEC/IEEE 29119-2 and 29119-3; the user obtained only the 2013 first editions (copies licensed to other institutions), kept them out of the repo, and dropped that route: the pre-run bars and the measure skill are the standing protocol, and the v6 pipeline run (Roadmap 2) was to go ahead in its own steps (tasks first, no GPU; each GPU stage needs the user's separate yes). The tasks were done 2026-10-08; the GPU stages ran 2026-10-15 (above). Stored results stay exploratory leads. Current direction (2026-10-15): CRAwDAD, the equal-size debate pair Qwen3-32B + DeepSeek-R1-Distill-Qwen-32B with two RAGs (Models row, *CRAwDAD debate runner*); DeepSeek V4 Flash is abandoned for it and the Qwen + Laguna design is superseded. The v6 tasks are written as a sealed held-out set (no design iteration on them).
+**Carried over, open:** check the silkscreen at the fan plug (see *Why the fan is pegged*). Orchestrator timer still held. Its marker for this repo is `4650476` (run 6, 2026-10-09 00:31 UTC: `ok`, 3 findings, all rejected; before that the baseline at `606df2d`, run 5: no model, the tree up to there waived, only run 4's 13 files reviewed). `bench/loop/tasks_v6.py` was never model-reviewed (scope waiver below); 1 of 16 findings accepted across all runs. **Loop testing: the v6 pipeline ran 2026-10-15 on the user's go (refreshed pre-run `0334b3b`, amended `03ac168`; results `b618af0`, `21a57c2`): Qwen loop 24/30, DeepSeek fixer 6/6 vs Qwen control 2/6 on the 6 usable failures, verdict KEEP (optional batch step after the loop, off by default); that line is closed and v6 is spent.** Earlier: paused, unpaused and paused again on 2026-10-08 (the user's decisions); results up to then are summarised in `docs/testing-summary-2026-10-08.md`. History: the first pause waited on a test protocol written from ISO/IEC/IEEE 29119-2 and 29119-3; the user obtained only the 2013 first editions (copies licensed to other institutions), kept them out of the repo, and dropped that route: the pre-run bars and the measure skill are the standing protocol, and the v6 pipeline run (Roadmap 2) was to go ahead in its own steps (tasks first, no GPU; each GPU stage needs the user's separate yes). The tasks were done 2026-10-08; the GPU stages ran 2026-10-15 (above). Stored results stay exploratory leads. Current direction (2026-10-15): CRAwDAD, the equal-size debate pair Qwen3-32B + DeepSeek-R1-Distill-Qwen-32B with two RAGs (Models row, *CRAwDAD debate runner*); DeepSeek V4 Flash is abandoned for it and the Qwen + Laguna design is superseded. **CRAwDAD on v7, 30 tasks (pre-run `5fbba2a`, run 2026-10-19): keep, exactly at the line: net +3 over the first speaker's solo, leaf 13 against Qwen 10 and R1-Distill 7 (*CRAwDAD debate on v7*).** The v6 tasks are written as a sealed held-out set (no design iteration on them).
 
 ## Hardware
 
@@ -1301,7 +1301,7 @@ Stated with the tasks, not before them: this is the judgement the probe's bar le
 
 ## CRAwDAD debate on v7 (30 tasks, pre-run)
 
-Stated before any GPU session (2026-10-19, measure skill steps 1-6). For review before it runs; the GPU sessions need the user's go after that. The set is v7 as of 2ba635b: v7_01-10 from 6680747, v7_11-30 from 153dece, all cold-reviewed, sealed, no edits since.
+Stated before any GPU session (2026-10-18, measure skill steps 1-6). For review before it runs; the GPU sessions need the user's go after that. The set is v7 as of 2ba635b: v7_01-10 from 6680747, v7_11-30 from 153dece, all cold-reviewed, sealed, no edits since.
 - Question: does the CRAwDAD debate leaf solve more v7 tasks than the first speaker's own solo answer, and is it at least as good as either model alone?
 - Arms, all in one run, label `crawdad-v7-30`, `--set v7` with no `--tasks`, so all 30 (first step only):
   - first-speaker solo F: the R1 that opens each debate. The coin gives 15 tasks to each seat (seed 42, a shuffle of the 30 sorted ids). On v7_01-10 it differs from the probe's coin on 6 tasks;
@@ -1323,6 +1323,77 @@ Stated before any GPU session (2026-10-19, measure skill steps 1-6). For review 
   - determinism check: v7_01-10's solos use the same prompt, seed, build and model as the probe, so each is compared with the probe row (content identical or not). A difference is reported, not corrected.
 - Cost: the probe averaged 3.9 replies per task at 260 s each, so about 117 replies and about 8.5 h of decode, plus up to 5 loads. Worst case, every task reaching R4 with 6,144-token replies, is about 150 replies and 22 h. Sessions are background chains under llmctl, one model resident at a time (GTT +26.7 / +26.8 GiB over 7.4 idle), client capped at 8 GiB, each grade's child at 1 GiB AS. `report --regrade` must exit 0, or the run is unreadable and the bar is not applied.
 - Procedure: `llm-serve` skill, "CRAwDAD debate", with label `crawdad-v7-30` and `--set v7` on the first step.
+
+### Result (2026-10-19, at 5fbba2a): net +3 and L 13 >= max(Q 10, R 7), so keep, exactly at the line
+
+Accord on the pre-run relayed by the user (2026-10-18), then the user's go on all five sessions. Five sessions (llmctl 34-38, qwen32 / r1d32 alternating), 105 replies, 30 of 30 tasks at a leaf, `report --regrade` ok, exit 0. Results are in `bench/loop/results/crawdad-v7-30.debate.{jsonl,meta.json,summary.json}`.
+
+| task | first | solo Qwen | solo R1-D | leaf | stop |
+|---|---|---|---|---|---|
+| v7_01 packbits | r1d32 | fail | fail | fail | R3 accept |
+| v7_02 ini_strict | r1d32 | fail | fail | fail | R2 accept |
+| v7_03 semver_order | r1d32 | fail | fail | fail | R2 parse_fail |
+| v7_04 partition_rank | r1d32 | fail | fail | fail | R4 max_rounds |
+| v7_05 digit_rules | r1d32 | fail | fail | fail | R3 accept |
+| v7_06 route_lexmin | qwen32 | fail | fail | fail | R4 accept |
+| v7_07 rect_union | qwen32 | fail | fail | fail | R3 accept |
+| v7_08 bowling_frames | r1d32 | fail | fail | fail | R3 accept |
+| v7_09 paint_posts | r1d32 | fail | fail (length, no code) | fail | R1 no_code |
+| v7_10 justify_lines | qwen32 | pass | pass | pass | R2 accept |
+| v7_11 rle_letters | qwen32 | fail | fail | fail | R2 accept |
+| v7_12 hex_lines | qwen32 | pass | pass | pass | R2 accept |
+| v7_13 column_totals | qwen32 | pass | pass | pass | R2 accept |
+| v7_14 bit_flags | r1d32 | fail | fail | fail | R2 accept |
+| v7_15 duration_words | qwen32 | pass | pass | pass | R2 accept |
+| v7_16 collatz_leader | qwen32 | fail | fail | fail | R2 accept |
+| v7_17 prime_gap | qwen32 | fail | pass | pass (rescue) | R3 accept |
+| v7_18 perm_rank | r1d32 | fail | fail | fail | R2 accept |
+| v7_19 change_ways | r1d32 | fail | fail | fail | R3 accept |
+| v7_20 radix_text | qwen32 | pass | fail | pass | R2 accept |
+| v7_21 island_stats | r1d32 | pass | fail | pass (rescue) | R3 accept |
+| v7_22 course_order | qwen32 | pass | fail | pass | R2 accept |
+| v7_23 shoelace | qwen32 | pass | fail | pass | R2 accept |
+| v7_24 knight_hops | r1d32 | fail | fail | fail | R3 accept |
+| v7_25 point_location | r1d32 | fail | fail | fail | R3 accept |
+| v7_26 teller_queue | qwen32 | fail | fail | fail | R2 accept |
+| v7_27 lis_count | qwen32 | pass | pass | pass | R2 accept |
+| v7_28 life_board | r1d32 | fail | pass | pass | R2 accept |
+| v7_29 stack_machine | r1d32 | fail | fail | pass (rescue) | R3 accept |
+| v7_30 wrap_cost | qwen32 | pass | fail | pass | R4 accept |
+
+- Totals: F 10, L 13, Q 10, R 7, U 12. Rescues 3 (v7_17, v7_21, v7_29), drops 0, net +3, and L = F + net.
+- Bar: net 3 >= 3 and L 13 >= max(10, 7), so the keep line applies. The debate as configured is the base for the next CRAwDAD steps. The no-room line does not apply (Q and R are below 27, L is below 30).
+- Scope: one run, no repeat, and the verdict sits on the line: one rescue fewer is net 2, inconclusive. Two of the three rescues are tasks the critic's model also solved alone:
+  - v7_17: R1-Distill's R2 code replaced Qwen's failing opener, and R1-Distill's solo passed too;
+  - v7_21: Qwen's R2 code replaced R1-Distill's, and Qwen's solo passed too.
+  Only v7_29 is a pass that neither solo had: Qwen's R2 code passed after R1-Distill's opener failed, and Qwen's own solo had failed; R1-Distill accepted at R3. In both v7_17 and v7_21 the R2 code is not the critic's solo code. The leaf passed every task in U, plus v7_29.
+- Easier batch: all 3 rescues and all 7 signal tasks are in v7_11-30. Signal: v7_01-10 0, v7_11-30 7. All-fail: v7_01-10 9, v7_11-30 8 (17 in all). On v7_01-10 the run repeats the probe: F 1, leaf 1 (v7_10).
+- By first speaker: Qwen opened 15, opener solo 9, leaf 10 (1 rescue); R1-Distill opened 15, opener solo 1, leaf 3 (2 rescues). No drops for either seat.
+- Recorded, no bar:
+  - Leaves: R1 1, R2 16, R3 10, R4 3. Stops: accept 27, max_rounds 1 (v7_04), no_code 1, parse_fail 1.
+    - no_code is v7_09: R1-Distill's opener hit 6,144 tokens (`finish` = `length`) and wrote no code, so the task ended at R1.
+    - parse_fail is v7_03: Qwen's R2 put its VERDICT line inside the code fence, which `parse()` skips. That module failed the tests too, so no pass was lost.
+  - Per reply: 105 replies, gen_s mean 237 s. Qwen 49 replies, mean 233, median 239, max 288. R1-Distill 56 replies, mean 240, median 259, max 564 (the length reply). By round, mean: R1 264, R2 223, R3 162, R4 156.
+  - Decode 24,889 s (6.91 h), against the pre-run's ~8.5 h for ~117 replies. Wall 6 h 57 min 14 s from the first invite (03:36:00Z) to the last bye (10:33:14Z).
+  - tg 10.69-11.25 t/s at prompts of 437-3,983 tokens.
+  - GPU hours per solve, decode only:
+    - Qwen solo: 2.01 h for 10 solves, 0.20 h each;
+    - R1-Distill solo: 2.39 h for 7, 0.34 h each;
+    - both solos: 4.40 h for U = 12, 0.37 h each (and U needs an oracle to pick the passing one);
+    - debate path (the opener's R1 plus R2-R4, 75 replies): 4.74 h for L = 13, 0.36 h each.
+  - `budget_hit`: Qwen 43/49, R1-Distill 40/56. One `finish` = `length` (v7_09). `no_code` 17: 16 accept replies without code (the walk ignores code on an accept) plus the v7_09 solo. No reject without code.
+  - GTT 34.3-34.4 GiB while a model was resident, 7.6 GiB after each bye. `memory.peak` 40-61 MiB.
+- R1-Distill's continued reasoning, recorded and changing nothing:
+  - `think_leak` (a `</think>` in content) on 4 replies, all R1-Distill solos with `budget_hit`. The text before the last `</think>` is 1,372-9,290 chars, and `visible()` cuts it.
+  - New shape, on 3 replies (R1-Distill solos on v7_06, v7_12 and v7_19, all `budget_hit`): the content opens with `<think>` (`<think><think>` on two of them) and never closes it. The start and end of each are answer text (approach, code, explanation); the reasoning is in `reasoning_content` (6,932-8,874 chars).
+  - Only v7_19's was an opener, so its whole content, tags included, went into Qwen's R2 prompt through `visible()`. Read in full, the text after the tags is the answer and contains no reasoning. So no trace reached a prompt, but the literal tags did. v7_19 is all-fail, so this cannot be a drop. One reply cannot show whether the tags changed Qwen's critique.
+- Determinism vs the probe (reported, not corrected):
+  - Qwen's 10 solos on v7_01-10 are byte-identical to the probe's.
+  - R1-Distill's v7_01-03 are identical and v7_04-10 differ. All 20 grades are the same.
+  - The request order on R1-Distill's one slot matches the probe through v7_03R1. Then the probe sent v7_03R2 (Qwen opened v7_03 there) and this run sent v7_04R1. That fits outputs that depend on the server's prompt-cache state (`--cache-reuse 256`, one slot) as well as on prompt and seed. Not tested.
+  - So the pre-run's "`--parallel 1` makes each draw reproducible" holds at most for an identical request sequence; as written it was too broad. The probe's length reply moved with this: its v7_08 solo was 6,144 tokens, and this run's is 3,791; this run's length reply is v7_09.
+- Pre-run text: its date line said 2026-10-19, but 5fbba2a was committed 2026-10-18 22:22 CDT (2026-10-19T03:22:34Z). The line now says 2026-10-18. Nothing else in the pre-run changed.
+- Next, each step needing the user's go: the bar names critique rows and retrieval as the next CRAwDAD steps on this configuration. Not decided here: whether `visible()` should strip a never-closed `<think>` tag. That would be a protocol change, and it would need a new hash and its own pre-run.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

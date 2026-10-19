@@ -1,0 +1,623 @@
+{
+ "label": "crawdad-v7-30",
+ "set": "v7",
+ "tasks": 30,
+ "complete": true,
+ "protocol": "137acf32c95d",
+ "build": "b11669-620d2225c",
+ "seats": {
+  "qwen32": {
+   "model": "qwen3-32b",
+   "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  },
+  "r1d32": {
+   "model": "r1-distill-qwen-32b",
+   "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  }
+ },
+ "reasoning_budget": 2048,
+ "max_tokens": 6144,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "fresh_seed": 104729,
+ "first_counts": {
+  "qwen32": 15,
+  "r1d32": 15
+ },
+ "solo_solved": {
+  "qwen32": 10,
+  "r1d32": 7
+ },
+ "solo_union": 12,
+ "exclusive": {
+  "both": 5,
+  "neither": 18,
+  "qwen32_only": 5,
+  "r1d32_only": 2
+ },
+ "debate_solved": 13,
+ "leaves": {
+  "R3": 10,
+  "R2": 16,
+  "R4": 3,
+  "R1": 1
+ },
+ "stops": {
+  "accept": 27,
+  "parse_fail": 1,
+  "max_rounds": 1,
+  "no_code": 1
+ },
+ "first_solo_to_leaf": {
+  "pass_pass": 10,
+  "fail_pass": 3,
+  "pass_fail": 0,
+  "fail_fail": 17
+ },
+ "by_first_speaker": {
+  "qwen32": {
+   "tasks": 15,
+   "first_solo": 9,
+   "leaf": 10
+  },
+  "r1d32": {
+   "tasks": 15,
+   "first_solo": 1,
+   "leaf": 3
+  }
+ },
+ "per_seat": {
+  "qwen32": {
+   "replies": 49,
+   "completion_tokens": 124413,
+   "gen_s": 11440.3,
+   "finish_length": 0,
+   "solo_no_code": 0,
+   "no_verdict": 1,
+   "reject_no_code": 0,
+   "think_leak": 0,
+   "accept_with_code": 0,
+   "by_round": {
+    "R1": {
+     "replies": 30,
+     "mean_prompt_tokens": 591,
+     "mean_tg_tps": 11.11
+    },
+    "R2": {
+     "replies": 14,
+     "mean_prompt_tokens": 1810,
+     "mean_tg_tps": 10.94
+    },
+    "R3": {
+     "replies": 4,
+     "mean_prompt_tokens": 2208,
+     "mean_tg_tps": 10.96
+    },
+    "R4": {
+     "replies": 1,
+     "mean_prompt_tokens": 3983,
+     "mean_tg_tps": 10.69
+    }
+   }
+  },
+  "r1d32": {
+   "replies": 56,
+   "completion_tokens": 147115,
+   "gen_s": 13448.5,
+   "finish_length": 1,
+   "solo_no_code": 1,
+   "no_verdict": 0,
+   "reject_no_code": 0,
+   "think_leak": 4,
+   "accept_with_code": 11,
+   "by_round": {
+    "R1": {
+     "replies": 30,
+     "mean_prompt_tokens": 586,
+     "mean_tg_tps": 11.14
+    },
+    "R2": {
+     "replies": 15,
+     "mean_prompt_tokens": 1236,
+     "mean_tg_tps": 11.12
+    },
+    "R3": {
+     "replies": 9,
+     "mean_prompt_tokens": 2539,
+     "mean_tg_tps": 10.97
+    },
+    "R4": {
+     "replies": 2,
+     "mean_prompt_tokens": 3112,
+     "mean_tg_tps": 10.92
+    }
+   }
+  }
+ },
+ "replies": 105,
+ "regrade": "ok",
+ "per_task": [
+  {
+   "task": "v7_01_packbits",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_02_ini_strict",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v7_03_semver_order",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "parse_fail",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v7_04_partition_rank",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "max_rounds",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    4
+   ]
+  },
+  {
+   "task": "v7_05_digit_rules",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_06_route_lexmin",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    3
+   ]
+  },
+  {
+   "task": "v7_07_rect_union",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  },
+  {
+   "task": "v7_08_bowling_frames",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_09_paint_posts",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 1,
+   "stop": "no_code",
+   "leaf_pass": false,
+   "standing": null
+  },
+  {
+   "task": "v7_10_justify_lines",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_11_rle_letters",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_12_hex_lines",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_13_column_totals",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_14_bit_flags",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v7_15_duration_words",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_16_collatz_leader",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_17_prime_gap",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  },
+  {
+   "task": "v7_18_perm_rank",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v7_19_change_ways",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_20_radix_text",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_21_island_stats",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_22_course_order",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_23_shoelace",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_24_knight_hops",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_25_point_location",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_26_teller_queue",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_27_lis_count",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v7_28_life_board",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v7_29_stack_machine",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v7_30_wrap_cost",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    3
+   ]
+  }
+ ]
+}
