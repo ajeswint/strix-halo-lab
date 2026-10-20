@@ -1515,6 +1515,68 @@ Stated before any GPU session (2026-10-19, measure skill steps 1-6). It is for r
   - Without `--retrieve` the prompts and hash are unchanged (`137acf32c95d`; the selftest checks both).
   - Selftests: `debate.py --selftest` (9 new checks) and `memring.py --selftest` (2 new, 1 extended) pass.
 - Procedure: `llm-serve` skill, "CRAwDAD debate": D with label `crawdad-v8-d` and `--set v8`; then DR with label `crawdad-v8-r`, `--set v8` and `--retrieve bench/loop/results/crawdad-v7.passes.json` on the first step.
+- Accord (review relayed by the user, 2026-10-19, on be1fd42): one block on every turn as built (`history()` carries reply text only, so blocks do not pile up); `prompt_n` recorded (already on every row). The deepest crawdad-v7-30 prompt was 3,983 tokens (Qwen's v7_04 R4), not the probe's 3,671.
+
+### Result (2026-10-20, at be1fd42): net +3 (L_R 11, L_D 8), so the keep line applies, exactly at the line; one gain came from an unchanged prompt
+
+The user's go came on 2026-10-19. Nine sessions ran: D in llmctl 39-42 (four sessions; no fifth was owed), DR in llmctl 43-47. That is 107 + 108 replies, 30 of 30 tasks at a leaf in each arm, and `report --regrade` ok (exit 0) on both. Protocols are `137acf32c95d` (D) and `a01c192bac5d` (DR, export sha256 `5118c060…` pinned in the meta). Results are in `bench/loop/results/crawdad-v8-{d,r}.debate.{jsonl,meta.json,summary.json}`.
+
+| task | family | first | solos D (Q R) | solos DR (Q R) | leaf D | leaf DR | stop D | stop DR |
+|---|---|---|---|---|---|---|---|---|
+| v8_01 hex_color | formats | r1d32 | P - | - P | fail | fail | R3 accept | R3 accept |
+| v8_02 morse_text | formats | r1d32 | - - | - - | fail | pass (gain) | R2 parse_fail | R3 accept |
+| v8_03 case_convert | formats | r1d32 | P - | P - | fail | fail | R3 accept | R3 accept |
+| v8_04 money_text | formats | r1d32 | - - | - - | fail | fail | R3 accept | R3 accept |
+| v8_05 cidr_range | formats | r1d32 | - - | - - | fail | fail | R2 accept | R2 accept |
+| v8_06 clock_12h | formats | qwen32 | P - | P - | pass | pass | R2 accept | R2 accept |
+| v8_07 luhn_digits | formats | qwen32 | - - | - - | fail | fail | R2 accept | R3 accept |
+| v8_08 query_pairs | formats | r1d32 | - - | - - | fail | fail | R3 accept | R4 max_rounds |
+| v8_09 digit_persistence | number_theory | r1d32 | P P | P P | pass | pass | R2 accept | R2 parse_fail |
+| v8_10 euler_phi | number_theory | qwen32 | - - | - - | fail | fail | R2 accept | R2 accept |
+| v8_11 goldbach_pairs | number_theory | qwen32 | P P | P P | pass | pass | R2 accept | R2 accept |
+| v8_12 pascal_mod | number_theory | qwen32 | - P | P - | fail | pass (gain) | R2 accept | R4 accept |
+| v8_13 primitive_triples | number_theory | qwen32 | - - | - - | fail | fail | R2 accept | R2 accept |
+| v8_14 happy_count | number_theory | r1d32 | P - | - - | pass | pass | R3 accept | R3 accept |
+| v8_15 egyptian_greedy | number_theory | qwen32 | - - | - - | fail | fail | R3 accept | R3 accept |
+| v8_16 two_color | graphs_geometry | qwen32 | - - | - - | fail | fail | R3 accept | R3 accept |
+| v8_17 lattice_segment | graphs_geometry | qwen32 | - - | - - | fail | fail | R3 accept | R2 accept |
+| v8_18 closest_pair | graphs_geometry | r1d32 | - - | - P | fail | pass (gain) | R2 accept | R2 accept |
+| v8_19 euler_trail | graphs_geometry | r1d32 | - - | - - | fail | fail | R3 accept | R3 parse_fail |
+| v8_20 triangle_kind | graphs_geometry | qwen32 | - - | - - | fail | fail | R4 accept | R2 accept |
+| v8_21 manhattan_center | graphs_geometry | r1d32 | - - | P - | fail | fail | R2 accept | R2 accept |
+| v8_22 tree_centers | graphs_geometry | qwen32 | - - | - - | fail | fail | R2 accept | R2 accept |
+| v8_23 robot_walk | simulation_dp | qwen32 | - - | - P | fail | fail | R2 accept | R2 accept |
+| v8_24 elevator_scan | simulation_dp | r1d32 | - - | - - | fail | fail | R2 accept | R3 accept |
+| v8_25 josephus_order | simulation_dp | r1d32 | P - | P - | pass | fail (loss) | R3 accept | R2 parse_fail |
+| v8_26 max_subarray | simulation_dp | qwen32 | - - | - - | fail | fail | R2 accept | R4 accept |
+| v8_27 stair_ways | simulation_dp | qwen32 | - - | P P | fail | pass (gain) | R4 accept | R2 accept |
+| v8_28 lcs_smallest | simulation_dp | r1d32 | P P | - - | pass | pass | R3 parse_fail | R3 accept |
+| v8_29 matrix_chain | simulation_dp | r1d32 | P - | P - | pass | pass | R3 accept | R3 parse_fail |
+| v8_30 ledger_events | simulation_dp | qwen32 | - - | P P | pass | pass | R3 accept | R2 accept |
+
+- Totals: L_D 8, L_R 11. Gains v8_02, v8_12, v8_18, v8_27; loss v8_25; net +3. L_D is below 27, so there is room.
+- Bar: net 3 >= 3, so the keep line applies: retrieval as configured is the base for the next steps.
+- Scope: one run per arm, and the verdict sits on the line again. The gains and the loss do not all come from retrieval:
+  - v8_18: R1-Distill opened, and its graphs_geometry read is empty, so its solo had the same prompt (572 tokens, same seed) in both arms. It failed in D and passed in DR with different bytes, and Qwen accepted it at R2 in both arms. This gain did not come from a reference block. Of R1-Distill's seven graphs_geometry solos (identical prompts in both arms), none matched byte for byte (the slot's request history differs, as in the crawdad-v7-30 determinism finding) and one flipped. So same-prompt draws move by about this much.
+  - v8_02 and v8_25 are mirror images. On both tasks Qwen's R2 rewrite passed in both arms, and the outcome turned on which arm's R2 put `VERDICT:` inside the code fence (a parse_fail, so the opener's failing solo stood). That happened in D on v8_02 and in DR on v8_25.
+  - v8_12 and v8_27 are the gains where a block was present and the solos changed. On v8_12, Qwen's solo passed in DR (block v7_20) and failed in D. On v8_27, both solos passed in DR (simulation_dp blocks) and both failed in D. Each is one draw.
+  So the stated bar reads keep, but the run cannot tell retrieval from same-prompt variation at this size: without v8_18 the net is +2, inconclusive. Because the keep sits on the line again, the next pre-run should address this before building on it.
+- Recorded, no bar:
+  - Q and R: D 9 and 4, DR 10 and 7; U 10 and 13. Solo changes D to DR: Qwen +4 / -3 (gains v8_12, v8_21, v8_27, v8_30; losses v8_01, v8_14, v8_28); R1-Distill +5 / -2 (gains v8_01, v8_18, v8_23, v8_27, v8_30; losses v8_12, v8_28).
+  - D against crawdad-v7-30's bar: F 4, rescues 4 (v8_14, v8_25, v8_29, v8_30), drops 0, net +4 >= 3, but L 8 < max(Q, R) = 9. D does not repeat the keep's second condition, while DR meets both (net +3 over F 8; L 11 >= 10). D's net is not <= 0, so the reopen clause does not trigger, but the debate keep now rests on one run that met both conditions and one that did not.
+  - By family, leaf D to DR (gains / losses): formats 1 to 2 (+1 / 0), number_theory 3 to 4 (+1 / 0), graphs_geometry 0 to 1 (+1 / 0; the gain is v8_18 above), simulation_dp 4 to 4 (+1 / -1). By first speaker: Qwen-opened +2 / 0, R1-Distill-opened +2 / -1.
+  - The named overlap: v8_17 failed in every solo and leaf of both arms, so Qwen's v7_23 shoelace module made no visible difference.
+  - Leaves: D R2 15, R3 13, R4 2; DR R2 15, R3 12, R4 3. Stops: D accept 28, parse_fail 2; DR accept 25, parse_fail 4, max_rounds 1. All six parse failures are the VERDICT-inside-the-fence case (two fence lines, the closing one after the verdict): D v8_02 R2 Qwen and v8_28 R3 R1-Distill; DR v8_09 R2 Qwen, v8_25 R2 Qwen, v8_19 R3 R1-Distill and v8_29 R3 R1-Distill. Five of the six parse-failed modules passed the tests.
+  - Critic verdicts against the judged module's grade:
+    - R1-Distill accepted 14 of the 20 failing modules it judged in D, and 11 of 17 in DR.
+    - Qwen accepted 7 of 18 in D, and 5 of 17 in DR.
+  - Prompt depth (`prompt_tokens`): D mean 1,048, max 2,872; DR mean 1,925, max 4,323. Solo R1 prompts average 594 tokens in D and 1,422 in DR. `prompt_n` (the uncached part): D mean 1,031, DR mean 1,204.
+  - Per reply: D gen_s mean 225 s, decode 6.69 h; DR mean 232 s, decode 6.97 h; tg 10.59-11.23 t/s. Wall: D 6 h 43 min 38 s (18:08:41Z to 00:52:19Z), DR 7 h 0 min 58 s (00:53:27Z to 07:54:25Z), 13 h 45 min 44 s in all.
+  - `budget_hit`: D Qwen 46/51, R1-Distill 43/56; DR Qwen 46/51, R1-Distill 44/57. No `finish` = `length` in either arm. `no_code`: D 12, DR 15, mostly accepts without code. `think_leak`: R1-Distill D 2, DR 3. A never-closed `<think>` appears once in D (R1-Distill's v8_23 solo; Qwen opened, so it never entered a prompt) and none in DR.
+  - DR empty reads: 12, all R1-Distill on graphs_geometry. Every DR row carries `retrieved`, and the ids seen match the export.
+  - GTT 34.4-34.5 GiB while resident, 7.7 GiB after each bye; `memory.peak` 41-57 MiB.
+  - Determinism: not applicable as stated (no earlier run shares v8 prompts). Within this run, R1-Distill's seven graphs_geometry solos had identical prompts in both arms and none matched byte for byte.
+- Next: the user's call. Two things are visible without a new run. The VERDICT-in-fence parse failure is the largest single source of leaf flips here (two of five), so a parser change is the protocol fix. And same-prompt variation is as large as the measured effect.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

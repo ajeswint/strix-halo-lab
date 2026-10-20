@@ -1,0 +1,621 @@
+{
+ "label": "crawdad-v8-d",
+ "set": "v8",
+ "tasks": 30,
+ "complete": true,
+ "protocol": "137acf32c95d",
+ "retrieval": null,
+ "build": "b11669-620d2225c",
+ "seats": {
+  "qwen32": {
+   "model": "qwen3-32b",
+   "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  },
+  "r1d32": {
+   "model": "r1-distill-qwen-32b",
+   "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+   "n_ctx": 32768
+  }
+ },
+ "reasoning_budget": 2048,
+ "max_tokens": 6144,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "fresh_seed": 104729,
+ "first_counts": {
+  "qwen32": 15,
+  "r1d32": 15
+ },
+ "solo_solved": {
+  "qwen32": 9,
+  "r1d32": 4
+ },
+ "solo_union": 10,
+ "exclusive": {
+  "both": 3,
+  "neither": 20,
+  "qwen32_only": 6,
+  "r1d32_only": 1
+ },
+ "debate_solved": 8,
+ "leaves": {
+  "R3": 13,
+  "R2": 15,
+  "R4": 2
+ },
+ "stops": {
+  "accept": 28,
+  "parse_fail": 2
+ },
+ "first_solo_to_leaf": {
+  "pass_pass": 4,
+  "fail_pass": 4,
+  "pass_fail": 0,
+  "fail_fail": 22
+ },
+ "by_first_speaker": {
+  "qwen32": {
+   "tasks": 15,
+   "first_solo": 2,
+   "leaf": 3
+  },
+  "r1d32": {
+   "tasks": 15,
+   "first_solo": 2,
+   "leaf": 5
+  }
+ },
+ "per_seat": {
+  "qwen32": {
+   "replies": 51,
+   "completion_tokens": 123970,
+   "gen_s": 11367.0,
+   "finish_length": 0,
+   "solo_no_code": 0,
+   "no_verdict": 1,
+   "reject_no_code": 0,
+   "think_leak": 0,
+   "accept_with_code": 3,
+   "empty_reads": 0,
+   "by_round": {
+    "R1": {
+     "replies": 30,
+     "mean_prompt_tokens": 597,
+     "mean_tg_tps": 11.11
+    },
+    "R2": {
+     "replies": 15,
+     "mean_prompt_tokens": 1602,
+     "mean_tg_tps": 10.98
+    },
+    "R3": {
+     "replies": 6,
+     "mean_prompt_tokens": 1651,
+     "mean_tg_tps": 11.03
+    }
+   }
+  },
+  "r1d32": {
+   "replies": 56,
+   "completion_tokens": 139579,
+   "gen_s": 12728.2,
+   "finish_length": 0,
+   "solo_no_code": 0,
+   "no_verdict": 1,
+   "reject_no_code": 0,
+   "think_leak": 2,
+   "accept_with_code": 13,
+   "empty_reads": 0,
+   "by_round": {
+    "R1": {
+     "replies": 30,
+     "mean_prompt_tokens": 592,
+     "mean_tg_tps": 11.16
+    },
+    "R2": {
+     "replies": 15,
+     "mean_prompt_tokens": 1203,
+     "mean_tg_tps": 11.12
+    },
+    "R3": {
+     "replies": 9,
+     "mean_prompt_tokens": 2184,
+     "mean_tg_tps": 11.04
+    },
+    "R4": {
+     "replies": 2,
+     "mean_prompt_tokens": 2426,
+     "mean_tg_tps": 10.99
+    }
+   }
+  }
+ },
+ "replies": 107,
+ "regrade": "ok",
+ "per_task": [
+  {
+   "task": "v8_01_hex_color",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_02_morse_text",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "parse_fail",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_03_case_convert",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_04_money_text",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_05_cidr_range",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_06_clock_12h",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_07_luhn_digits",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_08_query_pairs",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_09_digit_persistence",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_10_euler_phi",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_11_goldbach_pairs",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_12_pascal_mod",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_13_primitive_triples",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_14_happy_count",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_15_egyptian_greedy",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  },
+  {
+   "task": "v8_16_two_color",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  },
+  {
+   "task": "v8_17_lattice_segment",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  },
+  {
+   "task": "v8_18_closest_pair",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_19_euler_trail",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_20_triangle_kind",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    3
+   ]
+  },
+  {
+   "task": "v8_21_manhattan_center",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_22_tree_centers",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_23_robot_walk",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_24_elevator_scan",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "r1d32",
+    1
+   ]
+  },
+  {
+   "task": "v8_25_josephus_order",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_26_max_subarray",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 2,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    1
+   ]
+  },
+  {
+   "task": "v8_27_stair_ways",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 4,
+   "stop": "accept",
+   "leaf_pass": false,
+   "standing": [
+    "qwen32",
+    3
+   ]
+  },
+  {
+   "task": "v8_28_lcs_smallest",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": true
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "parse_fail",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_29_matrix_chain",
+   "first": "r1d32",
+   "solo": {
+    "qwen32": true,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "qwen32",
+    2
+   ]
+  },
+  {
+   "task": "v8_30_ledger_events",
+   "first": "qwen32",
+   "solo": {
+    "qwen32": false,
+    "r1d32": false
+   },
+   "leaf": true,
+   "round": 3,
+   "stop": "accept",
+   "leaf_pass": true,
+   "standing": [
+    "r1d32",
+    2
+   ]
+  }
+ ]
+}
