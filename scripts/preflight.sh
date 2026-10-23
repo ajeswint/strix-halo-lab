@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Memory preflight before loading any model, llama-bench/llama-perplexity, or training.
-# Usage: scripts/preflight.sh [model.gguf]   (split GGUF: pass shard 1; all shards are summed)
+# Usage: scripts/preflight.sh [model.gguf ...]   (split GGUF: pass shard 1; all shards are summed)
+# Several models = one group loaded together (llmctl's crawdad group): their sizes are summed.
+# PREFLIGHT_NEED_GIB=N raises the need to at least N GiB (llmctl passes the group's measured GTT deltas + 16,
+# because five models' KV cache and buffers outgrow one 16 GiB margin over the summed files).
 # Exit 0 = READY, 1 = NOT READY. Read-only; loads nothing.
 # Policy (CLAUDE.md, README Security, 2026-10-04 OOM): one model at a time. READY needs
 # llama-deepseek inactive, no llama-* process, GTT used <= 16 GiB (the gpu-guard cutoff),
@@ -32,21 +35,27 @@ echo "gtt_used=$(gib "$gtt_used")GiB gtt_total=$(gib "$gtt_total")GiB mem_availa
 [ -n "$procs" ] && echo "llama processes:" && echo "$procs"
 
 if [ $# -ge 1 ]; then
-    m=$1
-    if [ ! -f "$m" ]; then
-        fail+=("model not found: $m")
-    else
+    size=0; names=()
+    for m in "$@"; do
+        if [ ! -f "$m" ]; then
+            fail+=("model not found: $m"); continue
+        fi
         # DeepSeek-...-00001-of-00003.gguf -> sum every shard of the set
         if [[ $m =~ ^(.*)-[0-9]{5}-of-([0-9]{5})\.gguf$ ]]; then
-            size=$(stat -c %s "${BASH_REMATCH[1]}"-?????-of-"${BASH_REMATCH[2]}".gguf | awk '{s+=$1} END{print s}')
+            s=$(stat -c %s "${BASH_REMATCH[1]}"-?????-of-"${BASH_REMATCH[2]}".gguf | awk '{s+=$1} END{print s}')
         else
-            size=$(stat -c %s "$m")
+            s=$(stat -c %s "$m")
         fi
-        need=$((size + MARGIN))
-        echo "model=$(basename "$m") size=$(gib "$size")GiB need=$(gib "$need")GiB gtt_free=$(gib $((gtt_total - gtt_used)))GiB"
-        [ "$avail" -lt "$need" ] && fail+=("MemAvailable $(gib "$avail") GiB < need $(gib "$need") GiB")
-        [ $((gtt_total - gtt_used)) -lt "$need" ] && fail+=("free GTT $(gib $((gtt_total - gtt_used))) GiB < need $(gib "$need") GiB")
+        size=$((size + s)); names+=("$(basename "$m")")
+    done
+    need=$((size + MARGIN))
+    if [ -n "${PREFLIGHT_NEED_GIB:-}" ]; then
+        floor=$(awk -v g="$PREFLIGHT_NEED_GIB" 'BEGIN{printf "%d", g * 2^30}')
+        [ "$floor" -gt "$need" ] && need=$floor
     fi
+    echo "model=$(IFS=+; echo "${names[*]}") size=$(gib "$size")GiB need=$(gib "$need")GiB gtt_free=$(gib $((gtt_total - gtt_used)))GiB"
+    [ "$avail" -lt "$need" ] && fail+=("MemAvailable $(gib "$avail") GiB < need $(gib "$need") GiB")
+    [ $((gtt_total - gtt_used)) -lt "$need" ] && fail+=("free GTT $(gib $((gtt_total - gtt_used))) GiB < need $(gib "$need") GiB")
 fi
 
 if [ ${#fail[@]} -eq 0 ]; then

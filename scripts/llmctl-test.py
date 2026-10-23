@@ -52,8 +52,11 @@ def rows():
     return db.execute("SELECT id, endpoint, state, note FROM sessions ORDER BY id").fetchall()
 
 
-def unit_active():
-    return subprocess.run(["systemctl", "--user", "is-active", "-q", "llmctl-test"]).returncode == 0
+GROUP_UNITS = ("llmctl-test-a", "llmctl-test-b", "llmctl-test-c")
+
+
+def unit_active(unit="llmctl-test"):
+    return subprocess.run(["systemctl", "--user", "is-active", "-q", unit]).returncode == 0
 
 
 def check(name, cond, detail=""):
@@ -65,8 +68,9 @@ def check(name, cond, detail=""):
 
 
 def reset():
-    subprocess.run(["systemctl", "--user", "stop", "llmctl-test"], capture_output=True)
-    subprocess.run(["systemctl", "--user", "reset-failed", "llmctl-test"], capture_output=True)
+    for u in ("llmctl-test", *GROUP_UNITS):
+        subprocess.run(["systemctl", "--user", "stop", u], capture_output=True)
+        subprocess.run(["systemctl", "--user", "reset-failed", u], capture_output=True)
     Path(tmp, "test.db").unlink(missing_ok=True)
     for ext in ("-wal", "-shm"):
         Path(tmp, "test.db" + ext).unlink(missing_ok=True)
@@ -198,9 +202,77 @@ try:
     # 10 the real registry is not reachable in test mode, and real endpoints exist outside it
     rc, out = ctl("invite", "qwen")
     check("test mode hides the real endpoints", rc == 2 and "unknown endpoint" in out, out)
+    rc, out = ctl("invite", "crawdad")
+    check("test mode hides the real group", rc == 2 and "unknown endpoint" in out, out)
+
+    # 11 group: one session over several units, each on its own port
+    reset()
+    rc, out = ctl("invite", "testgroup")
+    check("group invite rc", rc == 0 and ":18082, :18083" in out, out)
+    check("group: one ACTIVE row, both members up", [r[2] for r in rows()] == ["ACTIVE"]
+          and unit_active("llmctl-test-a") and unit_active("llmctl-test-b"), rows())
+    rc, out = ctl("status")
+    check("group status ACTIVE, member units listed", rc == 0 and "state: ACTIVE testgroup" in out
+          and "unit llmctl-test-a: active" in out and "unit llmctl-test-b: active" in out, out)
+    rc, out = ctl("invite", "test")
+    check("nothing loads beside a group", rc == 3 and "bye or swap first" in out and not unit_active(), out)
+    rc, out = ctl("run", "--", sys.executable, "-c", "print('ingroup')")
+    check("run inside a group session", rc == 0 and "ingroup" in out, out)
+    rc, out = ctl("bye")
+    check("group bye stops every member", rc == 0 and rows()[0][2] == "ENDED"
+          and not any(unit_active(u) for u in GROUP_UNITS), (out, rows()))
+
+    # 12 group: a member gone while ACTIVE -> ABORTED; the survivor is UNOWNED and bye ends it
+    reset()
+    ctl("invite", "testgroup")
+    subprocess.run(["systemctl", "--user", "kill", "-s", "SIGKILL", "llmctl-test-b"], check=True)
+    time.sleep(1)
+    rc, out = ctl("status")
+    check("member killed -> ABORTED, survivor UNOWNED", rows()[0][2] == "ABORTED" and rc == 3
+          and "unit active: llmctl-test-a" in out, (rows(), out))
+    rc, out = ctl("bye")
+    check("bye ends the surviving member", rc == 0 and not unit_active("llmctl-test-a"), (out, rows()))
+
+    # 13 group: a member that fails to start stops the members already up; nothing resident
+    reset()
+    rc, out = ctl("invite", "testgroupfail")
+    check("group member start fails: FAILED", rc == 1 and rows()[-1][2] == "FAILED" and "testgroup.bad" in (rows()[-1][3] or ""), (out, rows()))
+    check("group member start fails: nothing resident", not any(unit_active(u) for u in GROUP_UNITS))
+
+    # 14 group: invite options are refused (members run at the measured defaults)
+    reset()
+    rc, out = ctl("invite", "testgroup", "--ctx", "65536")
+    check("group invite with options refused", rc == 2 and "no options" in out and not rows(), out)
+
+    # 15 the real group's argv, no load: one preflight over all five files with the summed need, then each member on
+    # its own port with the group preflight marker; single endpoints keep :8081 and their own preflight
+    probe = ("import importlib.util,sys,json\n"
+             "s=importlib.util.spec_from_file_location('l',sys.argv[1]);l=importlib.util.module_from_spec(s);s.loader.exec_module(l)\n"
+             "g=l.REGISTRY['crawdad'];o={'backend':'vk','ctx':None,'np':1}\n"
+             "print(json.dumps({'need':g.gtt_need,'members':[p.name for p in l.parts(g)],"
+             "'argv':[l.start_argv(p,o) for p in l.parts(g)],'single':l.start_argv(l.REGISTRY['qwen32'],o),"
+             "'units':sorted({p.unit for p in l.all_units()})}))\n")
+    env = {k: v for k, v in os.environ.items() if k != "LLMCTL_TEST_DIR"}
+    r = subprocess.run([sys.executable, "-I", "-c", probe, CTL], env=env, capture_output=True, text=True)
+    import json
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        d = {}
+    check("real group: five members in order, need 64.9",
+          d.get("members") == ["crawdad.qwen32", "crawdad.r1d32", "crawdad.rag1", "crawdad.rag2", "crawdad.rerank"]
+          and d.get("need") == 64.9, (d, r.stderr))
+    want = [("8082", "qwen32", "32768"), ("8083", "r1d32", "32768"), ("8084", "rag1", "8192"), ("8085", "rag2", "8192"), ("8086", "rerank", "8192")]
+    check("real group: member argv", [(a[1].split("=")[1], a[5], a[7]) for a in d.get("argv", [])] == want
+          and all(a[0] == "env" and a[2] == "LLM_SERVE_NO_PREFLIGHT=llmctl-group" and a[4] == "start" for a in d.get("argv", [])), d.get("argv"))
+    check("real single endpoint unchanged", d.get("single", [""])[0].endswith("llm-serve.sh")
+          and d.get("single", [])[1:] == ["start", "qwen32", "vk", "32768", "1"], d.get("single"))
+    check("real units: 8081-8086 and llama-deepseek", d.get("units") == ["llama-deepseek", "llm-8081", "llm-8082", "llm-8083",
+                                                                         "llm-8084", "llm-8085", "llm-8086"], d.get("units"))
 finally:
-    subprocess.run(["systemctl", "--user", "stop", "llmctl-test"], capture_output=True)
-    subprocess.run(["systemctl", "--user", "reset-failed", "llmctl-test"], capture_output=True)
+    for u in ("llmctl-test", *GROUP_UNITS):
+        subprocess.run(["systemctl", "--user", "stop", u], capture_output=True)
+        subprocess.run(["systemctl", "--user", "reset-failed", u], capture_output=True)
 
 print(f"{n - fails}/{n} passed")
 sys.exit(1 if fails else 0)

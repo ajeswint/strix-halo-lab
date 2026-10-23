@@ -2,6 +2,9 @@
 # Serve one model on 127.0.0.1:8081 as a transient user unit (llm-8081).
 # Usage: scripts/llm-serve.sh start MODEL [hip|vk|cpu] [ctx] [parallel]
 #        scripts/llm-serve.sh stop | status | logs
+# LLM_SERVE_PORT=N serves on :N as unit llm-N instead (every verb). Used by llmctl's crawdad group (8082-8086);
+# LLM_SERVE_NO_PREFLIGHT=llmctl-group skips this script's preflight because llmctl ran one preflight for the whole
+# group before the first member (a per-member preflight refuses from the second member on: a llama process runs).
 # MODEL: qwen (Qwen3.6-35B-A3B), laguna (Laguna XS 2.1),
 #        qwen32 (Qwen3-32B), r1d32 (DeepSeek-R1-Distill-Qwen-32B)        the CRAwDAD pair, 2026-10-15
 #        rag1 (Qwen3-Embedding-0.6B, Qwen's RAG), rag2 (EmbeddingGemma 2, R1-Distill's RAG),
@@ -19,7 +22,8 @@
 # Same conditions as llama-deepseek.service otherwise: -ngl 999 -fa on -lm none (cpu: -ngl 0 -fa off).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-UNIT=llm-8081; PORT=8081; LL=/data/src/llama.cpp
+PORT=${LLM_SERVE_PORT:-8081}; UNIT=llm-$PORT; LL=/data/src/llama.cpp
+case $PORT in ''|*[!0-9]*) echo "LLM_SERVE_PORT must be a number" >&2; exit 2 ;; esac
 
 case ${1:-} in
 start)
@@ -49,7 +53,11 @@ start)
     if systemctl --user is-active -q "$UNIT"; then
         echo "$UNIT already running; stop it first" >&2; exit 1
     fi
-    "$here/preflight.sh" "$M" || { echo "refusing to start: preflight NOT READY" >&2; exit 1; }
+    if [ "${LLM_SERVE_NO_PREFLIGHT:-}" = llmctl-group ]; then
+        echo "preflight skipped: llmctl group preflight covers this member"
+    else
+        "$here/preflight.sh" "$M" || { echo "refusing to start: preflight NOT READY" >&2; exit 1; }
+    fi
     systemd-run --user --unit="$UNIT" --collect --property=Restart=no \
         --setenv=ROCBLAS_USE_HIPBLASLT=1 \
         "$LL/build-$BIN/bin/llama-server" -m "$M" --alias "$ALIAS" \

@@ -3,6 +3,7 @@
 
 Usage: scripts/llmctl.py invite qwen|laguna|qwen32|r1d32|rag1|rag2|rerank [--backend vk|hip|cpu] [--ctx N] [--np N]
        scripts/llmctl.py invite deepseek
+       scripts/llmctl.py invite crawdad
        scripts/llmctl.py bye
        scripts/llmctl.py swap <endpoint> [invite options]
        scripts/llmctl.py status
@@ -13,6 +14,14 @@ endpoint resident in GPU memory: INVITE -> PREFLIGHT -> LOADING -> ACTIVE -> BYE
 (ABORTED when the process vanished or the controller died mid-transition). One live session at a time,
 enforced by a unique partial index in /data/orch/orch.db (orchestrator/schema.sql). State is reconciled
 once per invocation; there is no polling and no watchdog.
+
+A group endpoint (crawdad) is one session over several member units, each on its own port: the CRAwDAD pair and
+its three RAG models co-resident (qwen32 :8082, r1d32 :8083, rag1 :8084, rag2 :8085, rerank :8086). Still one
+live session: nothing else loads beside a group, and a group never loads beside anything. One preflight covers
+the whole group (all member files, need >= the summed measured GTT deltas + 16 GiB), then the members start in
+order; any member failing stops every member. bye stops every member; any member gone while ACTIVE = ABORTED.
+Members run at their endpoint defaults (vk, own ctx, 1 slot), the settings their gtt_need was measured at, so a
+group invite takes no options. The single endpoints on :8081 are unchanged.
 
 Rules:
 - invite runs scripts/preflight.sh on the model path (printed), starts the unit, waits a bounded time for
@@ -67,6 +76,7 @@ class Endpoint:
     test_only: bool = False
     preflight: tuple = ()         # test-only override of the preflight argv
     ctx: int = 32768              # default --ctx when invite does not give one (llm-serve.sh uses the same defaults)
+    members: tuple = ()           # group endpoint: names in MEMBERS, started in this order; unit/port/model unused
 
 
 # gtt_need is a delta (absolute GTT carries the ~5.8 GiB non-llama client). Measured 2026-10-07 (invite, sampler max):
@@ -94,6 +104,28 @@ ENDPOINTS = {e.name: e for e in (
              "/data/models/UD-IQ2_M/DeepSeek-V4-Flash-0731-UD-IQ2_M-00001-of-00003.gguf", 85.5,
              confirm_end=True, health_wait=600),
 )}
+# crawdad group members: same models, ctx and gtt_need as the single endpoints above, own unit and port each.
+# Not invitable alone (not in ENDPOINTS); they exist only inside a crawdad session.
+MEMBERS = {e.name: e for e in (
+    Endpoint("crawdad.qwen32", "user", "llm-8082", 8082, "/data/models/Qwen3-32B-Q4_K_M.gguf", 26.7, serve="qwen32"),
+    Endpoint("crawdad.r1d32", "user", "llm-8083", 8083, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 26.8,
+             serve="r1d32"),
+    Endpoint("crawdad.rag1", "user", "llm-8084", 8084, "/data/models/rag/Qwen3-Embedding-0.6B-Q8_0.gguf", 2.3,
+             serve="rag1", ctx=8192),
+    Endpoint("crawdad.rag2", "user", "llm-8085", 8085, "/data/models/rag/embeddinggemma-2-Q8_0.gguf", 1.8,
+             serve="rag2", ctx=8192),
+    Endpoint("crawdad.rerank", "user", "llm-8086", 8086, "/data/models/rag/Qwen3-Reranker-4B.Q8_0.gguf", 7.3,
+             serve="rerank", ctx=8192),
+)}
+# Sum of the members' measured deltas (64.9 GiB); never measured co-resident. The first group invite on the MAX is
+# that measurement (note on the ACTIVE row).
+ENDPOINTS["crawdad"] = Endpoint("crawdad", "user", "", 0, "", round(sum(m.gtt_need for m in MEMBERS.values()), 1),
+                                members=tuple(MEMBERS))
+TEST_MEMBERS = {e.name: e for e in (
+    Endpoint("testgroup.a", "user", "llmctl-test-a", 18082, "-", 0, test_only=True, health_wait=15),
+    Endpoint("testgroup.b", "user", "llmctl-test-b", 18083, "-", 0, test_only=True, health_wait=15),
+    Endpoint("testgroup.bad", "user", "llmctl-test-c", 18084, "-", 0, test_only=True, health_wait=2),
+)}
 TEST_ENDPOINTS = {e.name: e for e in (
     Endpoint("test", "user", "llmctl-test", 18081, "-", 0, test_only=True, health_wait=15, preflight=("true",)),
     Endpoint("testconf", "user", "llmctl-test", 18081, "-", 0, test_only=True, health_wait=15, preflight=("true",),
@@ -101,8 +133,27 @@ TEST_ENDPOINTS = {e.name: e for e in (
     Endpoint("testbad", "user", "llmctl-test", 18081, "-", 0, test_only=True, health_wait=15,
              preflight=("sh", "-c", "echo NOT READY; echo '- test: forced'; exit 1")),
     Endpoint("teststartfail", "user", "llmctl-test", 18081, "-", 0, test_only=True, health_wait=2, preflight=("true",)),
+    Endpoint("testgroup", "user", "", 0, "", 0, test_only=True, preflight=("true",),
+             members=("testgroup.a", "testgroup.b")),
+    Endpoint("testgroupfail", "user", "", 0, "", 0, test_only=True, preflight=("true",),
+             members=("testgroup.a", "testgroup.bad", "testgroup.b")),
 )}
 REGISTRY = TEST_ENDPOINTS if TEST_DIR else ENDPOINTS
+MEMBER_REG = TEST_MEMBERS if TEST_DIR else MEMBERS
+
+
+def parts(ep):
+    """The units an endpoint occupies: its members for a group, else itself."""
+    return tuple(MEMBER_REG[m] for m in ep.members) if ep.members else (ep,)
+
+
+def all_units():
+    """One endpoint per distinct unit, singles and group members (what can be resident)."""
+    seen = {}
+    for ep in (*REGISTRY.values(), *MEMBER_REG.values()):
+        for p in parts(ep):
+            seen.setdefault(p.unit, p)
+    return list(seen.values())
 
 
 def say(msg):
@@ -222,7 +273,10 @@ def reconcile(db):
         return
     ep = REGISTRY.get(row["endpoint"])
     if row["state"] == "ACTIVE":
-        ok = ep is not None and unit_active(ep) and alive(row["pid"])
+        if ep is not None and ep.members:   # pid is the first member's; every member must still run
+            ok = all(unit_active(p) for p in parts(ep))
+        else:
+            ok = ep is not None and unit_active(ep) and alive(row["pid"])
         why = "unit or process gone while ACTIVE" if ep else "endpoint not in the registry"
     else:
         ok = owner_alive(row["pid"])
@@ -235,10 +289,8 @@ def reconcile(db):
 def residents():
     """What is in memory: llama processes, active registered units, GTT above the cutoff."""
     out = [f"process: {p}" for p in llama_procs()]
-    seen = set()
-    for ep in REGISTRY.values():
-        if ep.unit not in seen and unit_active(ep):
-            seen.add(ep.unit)
+    for ep in all_units():
+        if unit_active(ep):
             out.append(f"unit active: {ep.unit}")
     g = gtt_used()
     if g is not None and g > CUT:
@@ -254,8 +306,15 @@ def refuse(msg, rc=3):
 
 
 def preflight(ep):
-    argv = list(ep.preflight) if ep.preflight else [str(HERE / "preflight.sh"), ep.model]
-    r = subprocess.run(argv, capture_output=True, text=True)
+    env = None
+    if ep.preflight:
+        argv = list(ep.preflight)
+    elif ep.members:
+        argv = [str(HERE / "preflight.sh"), *(p.model for p in parts(ep))]
+        env = {**os.environ, "PREFLIGHT_NEED_GIB": f"{ep.gtt_need + CUT / GiB:g}"}
+    else:
+        argv = [str(HERE / "preflight.sh"), ep.model]
+    r = subprocess.run(argv, capture_output=True, text=True, env=env)
     print(r.stdout, end="")
     if r.stderr:
         print(r.stderr, end="")
@@ -264,13 +323,16 @@ def preflight(ep):
 
 def start_argv(ep, opts):
     if ep.test_only:
-        if ep.name == "teststartfail":
+        if ep.name in ("teststartfail", "testgroup.bad"):
             return ["false"]
         return ["systemd-run", "--user", "-q", f"--unit={ep.unit}", "--collect", "--property=Restart=no",
                 "python3", "-I", "-c", TEST_SERVER, str(ep.port)]
     if ep.serve:
         ctx = opts["ctx"] if opts["ctx"] is not None else ep.ctx
-        return [str(HERE / "llm-serve.sh"), "start", ep.serve, opts["backend"], str(ctx), str(opts["np"])]
+        argv = [str(HERE / "llm-serve.sh"), "start", ep.serve, opts["backend"], str(ctx), str(opts["np"])]
+        if ep.port != 8081:   # group member: own port; the group preflight already ran
+            argv = ["env", f"LLM_SERVE_PORT={ep.port}", "LLM_SERVE_NO_PREFLIGHT=llmctl-group", *argv]
+        return argv
     return ["sudo", "-n", SYSTEMCTL, "start", ep.unit]
 
 
@@ -288,10 +350,10 @@ def confirm_end(ep, what):
 
 
 def stop_and_verify(db, sid, ep):
-    """Stop the unit, then check GTT is back under the cutoff (bounded 30 s). Returns (ok, note)."""
-    r = stop_unit(ep)
-    if r.returncode != 0:
-        return False, f"stop failed: {(r.stderr or r.stdout).strip()[:200]}"
+    """Stop the unit(s), then check GTT is back under the cutoff (bounded 30 s). Returns (ok, note)."""
+    errs = [f"{p.unit}: {(r.stderr or r.stdout).strip()[:120]}" for p in parts(ep) for r in [stop_unit(p)] if r.returncode != 0]
+    if errs:
+        return False, "stop failed: " + "; ".join(errs)[:200]
     for _ in range(30):
         g = gtt_used()
         if g is not None and g <= CUT:
@@ -299,6 +361,11 @@ def stop_and_verify(db, sid, ep):
         time.sleep(1)
     g = gtt_used()
     return False, f"GTT not released: {gib(g) if g is not None else 'unreadable'}"
+
+
+def stop_all(ep):
+    for p in parts(ep):
+        stop_unit(p)
 
 
 def parse_opts(args):
@@ -327,6 +394,9 @@ def do_invite(db, name, opts, note=None):
     if not ep:
         say(f"unknown endpoint {name!r}; known: {', '.join(REGISTRY)}")
         return 2
+    if ep.members and opts != {"backend": "vk", "ctx": None, "np": 1}:
+        say(f"{name} is a group: members run at their defaults (vk, own ctx, 1 slot); no options")
+        return 2
     g0 = gtt_used()
     if g0 is None:
         return refuse("mem_info_gtt_used is unreadable; failing closed")
@@ -352,18 +422,23 @@ def do_invite(db, name, opts, note=None):
             say(f"session {sid} FAILED: preflight NOT READY")
             return 1
         sset(db, sid, "LOADING")
-        r = subprocess.run(start_argv(ep, opts))
-        if r.returncode != 0:
-            raise RuntimeError(f"start command exited {r.returncode}"
-                               + (" (is the sudoers drop-in installed? scripts/install-llmctl-sudoers.sh)" if ep.kind == "system" else ""))
-        if not health(ep, ep.health_wait):
-            raise RuntimeError(f"no /health on :{ep.port} within {ep.health_wait} s or unit exited")
+        for p in parts(ep):
+            r = subprocess.run(start_argv(p, opts))
+            if r.returncode != 0:
+                raise RuntimeError(f"start command for {p.name} exited {r.returncode}"
+                                   + (" (is the sudoers drop-in installed? scripts/install-llmctl-sudoers.sh)" if p.kind == "system" else ""))
+            if not health(p, p.health_wait):
+                raise RuntimeError(f"no /health on :{p.port} ({p.name}) within {p.health_wait} s or unit exited")
+            if ep.members:
+                g = gtt_used()
+                say(f"session {sid}: {p.name} up on :{p.port}, GTT {gib(g) if g is not None else '?'}")
         g = gtt_used()
-        sset(db, sid, "ACTIVE", pid=main_pid(ep), note=f"GTT {gib(g) if g is not None else '?'}, {f'+{(g - g0) / GiB:.1f}' if g is not None else '?'} over the {gib(g0)} before (expected +{ep.gtt_need:g} GiB)")
-        say(f"session {sid}: ACTIVE {name} on :{ep.port}, GTT {gib(g) if g is not None else '?'}")
+        ports = ", ".join(f":{p.port}" for p in parts(ep))
+        sset(db, sid, "ACTIVE", pid=main_pid(parts(ep)[0]), note=f"GTT {gib(g) if g is not None else '?'}, {f'+{(g - g0) / GiB:.1f}' if g is not None else '?'} over the {gib(g0)} before (expected +{ep.gtt_need:g} GiB)")
+        say(f"session {sid}: ACTIVE {name} on {ports}, GTT {gib(g) if g is not None else '?'}")
         return 0
     except BaseException as e:   # includes KeyboardInterrupt: nothing may stay resident under a FAILED row
-        stop_unit(ep)
+        stop_all(ep)
         sset(db, sid, "FAILED", pid=os.getpid(), note=f"{type(e).__name__}: {e}"[:300], end=True)
         say(f"session {sid} FAILED: {e}")
         return 1
@@ -394,8 +469,8 @@ def do_bye(db, why=None):
         return refuse(f"session {row['id']} is {row['state']}; another llmctl is mid-transition")
     # no live session: end a resident registered unit, if any
     seen, rc = set(), 0
-    for ep in REGISTRY.values():
-        if ep.unit in seen or not unit_active(ep):
+    for ep in all_units():
+        if not unit_active(ep):
             continue
         seen.add(ep.unit)
         msg = confirm_end(ep, f"end UNOWNED unit {ep.unit}")
@@ -443,9 +518,8 @@ def do_status(db):
     row = live_row(db)
     g = gtt_used()
     print(f"gtt_used: {gib(g) if g is not None else 'UNREADABLE'}")
-    for u in dict.fromkeys(e.unit for e in REGISTRY.values()):
-        ep = next(e for e in REGISTRY.values() if e.unit == u)
-        print(f"unit {u}: {'active' if unit_active(ep) else 'inactive'}")
+    for ep in all_units():
+        print(f"unit {ep.unit}: {'active' if unit_active(ep) else 'inactive'}")
     last = db.execute("SELECT * FROM sessions ORDER BY id DESC LIMIT 3").fetchall()
     for r in reversed(last):
         print(f"session {r['id']}: {r['endpoint']} {r['state']} started {r['started']}"

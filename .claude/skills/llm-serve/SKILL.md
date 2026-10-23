@@ -80,9 +80,32 @@ scripts/llmctl.py invite qwen32 && { scripts/llmctl.py run -- python3 bench/loop
 ```
 - Cost, measured on the smoke run (one run): replies took 117-317 s (about 3.6 min mean), tg 10.9-11.3 t/s at prompts up to 2,595 tokens, loads and swaps about 1.3 min over 5 sessions with the files warm. A 30-task set is roughly 9-16 h of decode at 5-9 replies per task. Worst case per reply is 6,144 tokens, about 9 min.
 
+## crawdad group: the pair and three RAGs co-resident
+
+`invite crawdad` loads Qwen3-32B, R1-Distill-Qwen-32B, rag1, rag2 and rerank in one session, each on its own port. Not for debate.py runs (they use the single seats on :8081 and stay as above). Not yet live-tested: the first invite on the MAX is the measurement of the co-resident GTT (expected +64.9 GiB, need 80.9 free), and needs the user's yes.
+
+```
+scripts/llmctl.py invite crawdad
+scripts/llmctl.py status
+scripts/llmctl.py bye
+```
+
+| member | port | alias | API |
+|---|---|---|---|
+| Qwen3-32B | 8082 | `qwen3-32b` | `/v1/chat/completions` |
+| R1-Distill-Qwen-32B | 8083 | `r1-distill-qwen-32b` | `/v1/chat/completions` |
+| rag1 Qwen3-Embedding-0.6B | 8084 | `qwen3-embedding-0.6b` | `/v1/embeddings` |
+| rag2 EmbeddingGemma 2 | 8085 | `embeddinggemma-2` | `/v1/embeddings` |
+| rerank Qwen3-Reranker-4B | 8086 | `qwen3-reranker-4b` | `/v1/rerank` |
+
+- One preflight for the group (all five files, need >= 80.9 GiB), then members start in that order. A member that fails stops all of them (FAILED). No options: vk, each model's default ctx, 1 slot.
+- `bye` stops all five. A member that dies while ACTIVE aborts the session; the survivors show as UNOWNED and `bye` ends them.
+- Read a member's log: `LLM_SERVE_PORT=8082 scripts/llm-serve.sh logs 100` (8082-8086).
+- Clients go through `scripts/llmctl.py run --` as with any session.
+
 ## The primitive underneath
 
-`scripts/llm-serve.sh` runs llama-server as a transient user unit `llm-8081`. llmctl calls its `start` for qwen and laguna (it runs `scripts/preflight.sh` itself too, so the preflight prints twice). `status` and `logs` are still the way to read the server log; `stop` is `llmctl bye`'s job now.
+`scripts/llm-serve.sh` runs llama-server as a transient user unit `llm-8081` (`llm-<port>` with `LLM_SERVE_PORT`, which only the crawdad group uses). llmctl calls its `start` for qwen and laguna (it runs `scripts/preflight.sh` itself too, so the preflight prints twice). `status` and `logs` are still the way to read the server log; `stop` is `llmctl bye`'s job now.
 
 ```
 scripts/llm-serve.sh start qwen
@@ -99,7 +122,7 @@ API: `http://127.0.0.1:8081/v1` (chat/completions, models). Aliases: `qwen3.6-35
 
 ## Rules
 
-- One model at a time. Qwen and Laguna cannot both be resident (gpu-guard cutoff, user's decision); neither can the two 32B models or a model and a RAG server (preflight refuses any second llama-* process). Switching = `llmctl swap`.
+- One session at a time. Qwen and Laguna cannot both be resident (gpu-guard cutoff, user's decision); the two 32B models and the RAG servers are co-resident only as the `crawdad` group, never by a second invite (preflight refuses any second llama-* process). Switching = `llmctl swap`.
 - End what you invited when the task is done (`llmctl bye`). A forgotten Qwen holds ~28 GiB of GTT at ctx 65536 np 4 (+22.4 over baseline) and blocks every other load.
 - Backend default `vk` comes from the depth-0 table only (Vulkan tg +16% for Qwen, pp equal). At long prompts HIP may win. Measure before changing the default; see the `measure` skill.
 - Load time: the small-model start waits up to 180 s for `/health`; DeepSeek's wait is 600 s, a first value (measured 21 s on 2026-10-07 with cache state unchecked; cold-cache unmeasured). If it times out, read `logs` before retrying. Do not loop.
