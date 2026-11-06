@@ -27,7 +27,21 @@ claude -p --model sonnet --effort high --permission-mode bypassPermissions --age
 claude -p --model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer
 ```
 
-The reviewer runs only if the writer exited 0. `--bg` is not used: it cannot be combined with `-p` (https://code.claude.com/docs/en/cli-reference). `effort: high` is also in each agent file (https://code.claude.com/docs/en/sub-agents).
+Each is wrapped in `timeout --kill-after=30` (default 3600 s). The reviewer runs only if the writer exited 0. `--bg` is not used: it cannot be combined with `-p` (https://code.claude.com/docs/en/cli-reference). `effort: high` is also in each agent file (https://code.claude.com/docs/en/sub-agents).
+
+## Caps
+
+| Env var | Effect |
+|---|---|
+| `LAB_SEATS_TIMEOUT` | seconds per one-shot, default 3600; integer, baked into `run.sh` at launch. A timeout gives `writer-failed rc=124` or `reviewer-failed rc=124`. |
+| `LAB_SEATS_MAX_USD` | optional; adds `--max-budget-usd N` to both one-shots (print mode only). Unset = no budget cap. |
+
+There is no turn cap: `claude --help` (2.1.317) lists no `--max-turns`. Example:
+
+```
+cd /home/aj/projects/strix-halo-lab
+LAB_SEATS_TIMEOUT=1800 LAB_SEATS_MAX_USD=5 tools/lab-seats/launch.sh --dry-run --name caps-dry --task "confirm the caps"
+```
 
 ## Scratch (`/tmp/lab-seats/NAME/`, root overridable with `LAB_SEATS_ROOT`)
 
@@ -58,6 +72,7 @@ Loads no model and never starts the real `claude`. It asserts: no sudo in the la
 
 ## Limits
 
-- The reviewer's read-only rule is a prompt rule plus its tool list. The one-shot runs with `bypassPermissions`, so Bash can still write; only the agent file and `.claude/hooks/gpu-guard.sh` hold the line.
+- The reviewer's read-only rule is a prompt rule, not enforced, plus its tool list. The one-shot runs with `bypassPermissions`, so Bash can still write; only the agent file and `.claude/hooks/gpu-guard.sh` hold the line.
+- The writer's git rules (branch, named-path staging, push only if told) are prompt rules too; see `docs/review-roles.md`, Writer git rules.
 - A one-shot counts as host RAM in preflight headroom (alongside Ryzen Max Bot and Chrome). It loads no model.
 - Johnny's CIS `tools/relay/relay.sh` is not here and is not to be ported.

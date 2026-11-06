@@ -38,6 +38,12 @@ Write the drafts: code, commands, docs that record a decision, and the matching 
 - Do not spawn subagents unless AJ asks (2026-10-15: four unrequested writer agents, one OOM).
 - A full reply is Detail, then Relay, then Outline. Your Relay is for the adversarial-reviewer to read. Short and pasteable. A one-line answer skips the three parts.
 
+## Git
+- The checkout is often dirty with AJ's edits. Work on the branch the task names, never `main`.
+- Stage named paths only (`git add path1 path2`); never `git add -A`, `git add .` or `git commit -a`. Check `git status` and `git diff --cached` before each commit.
+- Push only if the task says so, only that branch, never force. Do not merge: Ryzen Max Bot merges after an `APPROVE*` re-review.
+- Chase the reviewer's soft nits when the task says so; do not park them.
+
 ## Never
 - Review or approve your own draft.
 - Run sudo, or store credentials.
