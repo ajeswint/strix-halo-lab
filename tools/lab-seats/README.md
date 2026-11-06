@@ -33,10 +33,12 @@ Each is wrapped in `timeout --kill-after=30` (default 3600 s). The reviewer runs
 
 | Env var | Effect |
 |---|---|
-| `LAB_SEATS_TIMEOUT` | seconds per one-shot, default 3600; integer, baked into `run.sh` at launch. A timeout gives `writer-failed rc=124` or `reviewer-failed rc=124`. |
+| `LAB_SEATS_TIMEOUT` | seconds per one-shot, default 3600 (an unmeasured default, not tuned from a real run); integer, baked into `run.sh` at launch. A timeout gives `writer-failed rc=124`, or `rc=137` if the process ignored SIGTERM and `--kill-after=30` sent SIGKILL (same for `reviewer-failed`). |
 | `LAB_SEATS_MAX_USD` | optional; adds `--max-budget-usd N` to both one-shots (print mode only). Unset = no budget cap. |
 
-There is no turn cap: `claude --help` (2.1.317) lists no `--max-turns`. Example:
+`--max-turns` is documented upstream (print mode only; https://code.claude.com/docs/en/cli-reference) but not shown in 2.1.317 `claude --help`; not wired, untested.
+
+A timeout signals the `claude` process only; descendants may survive. After rc 124 or 137, check `git status`, a stale `.git/index.lock`, a half-staged index and orphan processes before relaunching (details: `docs/review-roles.md`, One-shot caps). Example:
 
 ```
 cd /home/aj/projects/strix-halo-lab
