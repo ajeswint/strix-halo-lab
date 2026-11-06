@@ -7,7 +7,7 @@ Decisions already made. Do not report them as defects:
 - PyTorch from AMD's gfx1151 wheel index, never download.pytorch.org ROCm wheels. Installs into /data/envs/torch use `--index-strategy unsafe-best-match` and envs/torch-constraints.txt.
 - IOMMU stays on. GTT is capped at 108 GiB; the 64k DeepSeek server peaks near 86 GiB.
 - Set-and-forget: settings are applied once where they can reset. No polling loops or watchdogs unless a revert was observed.
-- DeepSeek V4 Flash is the background reviewer (this tool). The Claude Code `code-writer` / `adversarial-reviewer` seats (docs/review-roles.md, `.claude/agents/`) are draft seats run by hand; they are not a second copy of this reviewer and do not feed or replace it. Qwen3.6-35B-A3B is the small model for the loop. Models are started and stopped only through scripts/llmctl.py sessions.
+- DeepSeek V4 Flash is the background reviewer (this tool). The `code-writer` (Google Antigravity, Gemini 4 Argon) and `adversarial-reviewer` (Claude Code, Sonnet) seats (docs/review-roles.md, docs/antigravity-writer.md, `.claude/agents/`) are draft seats run by hand; they are not a second copy of this reviewer and do not feed or replace it. Qwen3.6-35B-A3B is the small model for the loop. Models are started and stopped only through scripts/llmctl.py sessions.
 - Experiments are pre-registered: a pre-run commit states the question, the bar and the cost before any result exists. A bar in a pre-run is a decision, not a defect.
 
 What is worth reporting: bugs, wrong claims in docs or comments, unsafe commands, broken reproducibility, data loss or security risk, and code that does not do what its README or comment says. If a file is not in the diff, say nothing about it.
