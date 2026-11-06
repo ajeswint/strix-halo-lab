@@ -24,11 +24,15 @@ Every full reply to AJ or to the other seat has three parts, in this order. A on
 2. **Relay** — written by the seat that is replying. The code-writer's Relay is for the adversarial-reviewer to read. The adversarial-reviewer's Relay is for the code-writer to read. Short, pasteable as-is.
 3. **Outline** — a nested outline of the Detail.
 
-The reviewer's one-shot puts the verdict on the first line, then those three parts. The verdict is exactly one of `APPROVE`, `APPROVE-WITH-NITS`, `REQUEST-CHANGES`. `APPROVE-WITH-NITS` does not block paste. Soft nits are chased, not parked (AJ's standing rule, 2026-11-06): the code-writer applies them in a follow-up one-shot on the same branch, and the reviewer re-reviews. `REQUEST-CHANGES` is blocking. Each blocking finding names the fix in words. The reviewer does not apply it.
+The reviewer's one-shot puts the verdict on the first line, then those three parts. The verdict is exactly one of `APPROVE`, `APPROVE-WITH-NITS`, `REQUEST-CHANGES`. `APPROVE-WITH-NITS` does not block paste. Soft nits are chased, not parked (AJ's standing rule; AJ confirmed in his own words 2026-11-05 CT: automate merges when the reviewer signs off with `APPROVE*`, and chase soft nits): the code-writer applies them in a follow-up one-shot on the same branch, and the reviewer re-reviews. `REQUEST-CHANGES` is blocking. Each blocking finding names the fix in words. The reviewer does not apply it. One-off, for the docs-nit chase of PR `lab/chase-docs-nits`: AJ said it is the last soft-nit chase; after it merges, further soft nits stay parked unless AJ asks again.
 
 The reviewer's no-write rule is a prompt rule, not enforced: the one-shot runs with `bypassPermissions`, so only the agent file's tool list and the gpu-guard hook hold the line.
 
-**Merge.** After the re-review's first line is `APPROVE` or `APPROVE-WITH-NITS` (any nits left are chased in the next change, not parked), Ryzen Max Bot merges the draft PR. The code-writer never merges. `REQUEST-CHANGES` stops the merge. AJ can still veto or revert.
+**Merge.** Ryzen Max Bot merges; the code-writer never merges. `REQUEST-CHANGES` stops the merge. AJ can still veto or revert.
+
+- A first-pass plain `APPROVE` (no nits) is enough for the bot to merge. No re-review is required.
+- A first-pass `APPROVE-WITH-NITS` is not yet mergeable: the code-writer chases the nits, then the reviewer re-reviews. After a chase, the re-review's first line `APPROVE` or `APPROVE-WITH-NITS` is enough to merge (any nits still left are chased in the next change, not parked).
+- The PRs are opened as drafts, and `gh pr merge` refuses a draft. The bot must mark it ready first: `gh pr ready` on the PR, then `gh pr merge`.
 
 ## Precedence
 
@@ -77,7 +81,9 @@ The checkout is often dirty with AJ's own edits (for example `.claude/settings.j
 
 ## One-shot caps
 
-`tools/lab-seats/launch.sh` wraps each one-shot in `timeout --kill-after=30` (default 3600 s; `LAB_SEATS_TIMEOUT` overrides). `LAB_SEATS_MAX_USD` optionally adds `--max-budget-usd` (print mode only; unset means none). `claude --help` (2.1.317) lists no `--max-turns`, so there is no turn cap. A timeout ends the run as `writer-failed rc=124` or `reviewer-failed rc=124`.
+`tools/lab-seats/launch.sh` wraps each one-shot in `timeout --kill-after=30` (default 3600 s; `LAB_SEATS_TIMEOUT` overrides). `LAB_SEATS_MAX_USD` optionally adds `--max-budget-usd` (print mode only; unset means none). `--max-turns` is documented upstream (print mode only; https://code.claude.com/docs/en/cli-reference) but not shown in 2.1.317 `claude --help`; not wired, untested.
+
+The 3600 s default is an unmeasured default: no real one-shot has been timed against it. A timeout ends the run as `writer-failed rc=124` or `reviewer-failed rc=124`; rc 137 means the process ignored SIGTERM and `--kill-after=30` sent SIGKILL. The signal targets the `claude` process only; its descendants are not guaranteed to die (a test with a TERM-ignoring parent left orphaned `sleep` children). After any timeout (rc 124 or 137), before relaunching: check `git status`, look for a stale `.git/index.lock` and a half-staged index (`git diff --cached`), and look for orphan processes (`pgrep -af claude`).
 
 ## Rules that still bind
 

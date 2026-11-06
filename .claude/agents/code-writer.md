@@ -42,7 +42,7 @@ Write the drafts: code, commands, docs that record a decision, and the matching 
 - The checkout is often dirty with AJ's edits. Work on the branch the task names, never `main`.
 - Stage named paths only (`git add path1 path2`); never `git add -A`, `git add .` or `git commit -a`. Check `git status` and `git diff --cached` before each commit.
 - Push only if the task says so, only that branch, never force. Do not merge: Ryzen Max Bot merges after an `APPROVE*` re-review.
-- Chase the reviewer's soft nits when the task says so; do not park them.
+- Chase the reviewer's soft nits; do not park them.
 
 ## Never
 - Review or approve your own draft.

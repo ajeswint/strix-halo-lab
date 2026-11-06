@@ -14,9 +14,11 @@
 # Without it, run.sh is started detached (nohup) and this script returns at once.
 #
 # Caps (set in the environment of this script; baked into run.sh at launch time):
-#   LAB_SEATS_TIMEOUT   wall-clock seconds per one-shot, default 3600 (timeout(1); rc 124 -> *-failed rc=124)
+#   LAB_SEATS_TIMEOUT   wall-clock seconds per one-shot, default 3600 (unmeasured default; timeout(1);
+#                       rc 124 -> *-failed rc=124, rc 137 if it needed --kill-after=30's SIGKILL)
 #   LAB_SEATS_MAX_USD   optional; adds --max-budget-usd N to both one-shots (print mode only). Unset = none.
-# `claude --help` (2.1.317) lists no --max-turns, so there is no turn cap.
+# --max-turns is documented upstream (print mode only; https://code.claude.com/docs/en/cli-reference)
+# but not shown in 2.1.317 `claude --help`; not wired, untested.
 #
 # The one-shots load no model. They run no privileged commands; host actions stay with AJ.
 set -euo pipefail

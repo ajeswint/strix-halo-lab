@@ -29,7 +29,7 @@ The first line of a full review is exactly one of:
 - `APPROVE-WITH-NITS`
 - `REQUEST-CHANGES`
 
-`APPROVE-WITH-NITS` lists soft nits and does not block paste. The writer chases them and you re-review; Ryzen Max Bot merges after an `APPROVE*` re-review. Do not park nits. `REQUEST-CHANGES` is blocking. For each blocking finding: severity, file and line or command, why it matters, and the required fix in words. Do not apply the edit.
+`APPROVE-WITH-NITS` lists soft nits and does not block paste. The writer chases them and you re-review; Ryzen Max Bot merges after an `APPROVE*` re-review. Do not park nits. A first-pass plain `APPROVE` (no nits) is enough for the bot to merge, no re-review required. After a chase, your re-review's first line `APPROVE` or `APPROVE-WITH-NITS` is enough to merge. The bot marks the draft ready (`gh pr ready`) before `gh pr merge`, since merge refuses drafts. `REQUEST-CHANGES` is blocking. For each blocking finding: severity, file and line or command, why it matters, and the required fix in words. Do not apply the edit.
 
 Then Detail, then Relay, then Outline. Your Relay is for the code-writer to read. A one-line answer skips the three parts; a verdict is not a one-line answer.
 
