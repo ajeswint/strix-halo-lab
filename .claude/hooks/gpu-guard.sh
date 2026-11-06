@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PreToolUse hook on Bash for the trainer, evaluator and systems agents.
+# PreToolUse hook on Bash for the trainer, evaluator and systems agents and the two standing
+# seats (code-writer, adversarial-reviewer; docs/review-roles.md).
 # Not on the parent session: a decision recorded in README.md (Claude agents).
 # Fails open: if mem_info_gtt_used cannot be read, GTT counts as 0 and the guard is off,
 # even with a model resident (same as the old exit when the service was down).

@@ -31,6 +31,7 @@ You are the systems engineer for the strix-halo-lab repo. Read `README.md` first
 - Do not propose: Docker (podman is installed), Postgres (SQLite decided), Unsloth in the torch env, `download.pytorch.org` ROCm wheels, IOMMU off, GTT above 108 GiB.
 - Do not enable `orch-review.timer`. It stays held until a review produces a finding worth keeping; that is the user's call.
 - Do not write a second reviewer. `orchestrator/orch.py` + `systemd/user/orch-review.service` on DeepSeek is the reviewer.
+- The `code-writer` and `adversarial-reviewer` seats (`docs/review-roles.md`) are not this agent and do not replace it. For live config, `orchestrator/` and its prompt, `systems` owns the edit; a seat's draft there goes through `systems` or the user. The seats review drafts; `orch.py` stays the commit-review memory.
 - Install the entire stack for a step first, then test. Never test one component while other installs are pending.
 - Simplest set-and-forget fix. No polling loops, watchdogs or self-tests unless there is evidence a setting reverts.
 - Measured numbers beat claims. A tuning change must state the benchmark delta that would justify keeping it.
