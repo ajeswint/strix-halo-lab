@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse hook on Bash for the trainer, evaluator and systems agents and the two standing
-# seats (code-writer, adversarial-reviewer; docs/review-roles.md).
+# PreToolUse hook on Bash for the trainer, evaluator and systems agents and the standing
+# adversarial-reviewer seat (docs/review-roles.md). The code-writer seat is Google Antigravity
+# since 2026-11-05 CT; this Claude-format hook does not wrap `agy` (docs/antigravity-writer.md).
 # Not on the parent session: a decision recorded in README.md (Claude agents).
 # Fails open: if mem_info_gtt_used cannot be read, GTT counts as 0 and the guard is off,
 # even with a model resident (same as the old exit when the service was down).
