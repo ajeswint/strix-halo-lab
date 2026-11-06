@@ -9,6 +9,8 @@ coin picks who answers first, at most 4 replies, graded only at the leaf.
   debate.py status --label L                    each task's state and the seat to invite next; no server
   debate.py report --label L [--regrade]        results/L.debate.summary.json from the replies; --regrade re-grades
                                                 every coded reply and exits 2 on a mismatch; no server
+  debate.py reparse --label L [--regrade]       read-only: parse() over the stored replies, lists every row whose verdict
+                                                or code now differs; writes nothing; --regrade grades the changed code
 
 Protocol (rounds R1-R4 = the paper code's rounds 0-3):
 - R1: the first speaker's own answer: short rationale, solution.py, CONFIDENCE. Every task gets a solo R1 from BOTH
@@ -86,6 +88,10 @@ REF_HEAD = ("Reference modules for other tasks of the same kind. Each one passed
 CODE_BLOCK = re.compile(r"```.*?(?:```|\Z)", re.S)
 VERDICT_RE = re.compile(r"^[\W_]*verdict[\W_]*(accept|reject)\b", re.I | re.M)
 CONF_RE = re.compile(r"^[\W_]*confidence[^\w.]*(\d*\.?\d+)", re.I | re.M)   # the separator never eats the "." of .9
+FENCED = re.compile(r"```(?:python|py)?[ \t]*\n(.*?)```", re.S)   # a code block's body: the pattern of run.extract
+# Lines read from the end of a code block's body (peel_trailer): stricter than VERDICT_RE/CONF_RE because it is code.
+TRAIL_VERDICT = re.compile(r"^[\s*_>\-]*verdict[\s*_]*:[\s*_]*(accept|reject)\b[^\n]*$", re.I)
+TRAIL_CONF = re.compile(r"^[\s*_>\-]*confidence[\s*_]*:[\s*_]*(\d*\.?\d+)[\s*_]*$", re.I)
 
 
 def visible(content):
@@ -93,14 +99,49 @@ def visible(content):
     return (content or "").rsplit("</think>", 1)[-1].strip()
 
 
+def peel_trailer(body):
+    """(code body, verdicts, confidences) of one fenced block. The VERDICT:/CONFIDENCE: lines that close the body
+    (only blank lines may follow them) are taken off and returned in order. Each needs its colon and sits alone on
+    its line, with no leading "#", so a comment in the code is never one; a body without such lines comes back as it
+    was."""
+    lines = body.split("\n")
+    end, v, c = len(lines), [], []
+    while end:
+        ln = lines[end - 1]
+        if m := TRAIL_VERDICT.match(ln):
+            v.append(m.group(1).lower())
+        elif m := TRAIL_CONF.match(ln):
+            c.append(m.group(1))
+        elif ln.strip():
+            break
+        end -= 1
+    if not v and not c:
+        return body, [], []
+    kept = "\n".join(lines[:end]).rstrip()
+    return (kept + "\n" if kept else ""), v[::-1], c[::-1]
+
+
 def parse(content):
     """(code, verdict, confidence) of a reply. The verdict and confidence lines are read outside code blocks; the
-    last of each counts. A confidence outside 0-1 is None, as is a missing one (the paper code used 0.6)."""
+    last of each counts. Only when the prose has none of one, the lines that close a code block's body stand in for
+    it (models write `VERDICT: reject` / `CONFIDENCE: 0.95` after the code but before the closing fence: v8, six
+    parse_fail stops). A `# VERDICT:` comment elsewhere in the code is never read. Those closing lines are cut from
+    the returned code (a verdict-only block is skipped for the block before it) so the grader never sees them.
+    A confidence outside 0-1 is None, as is a missing one (the paper code used 0.6)."""
     text = visible(content)
     prose = CODE_BLOCK.sub("", text)
     v, c = VERDICT_RE.findall(prose), CONF_RE.findall(prose)
+    code, tv, tc = None, [], []
+    for body in reversed(FENCED.findall(text)):
+        kept, bv, bc = peel_trailer(body)
+        tv, tc = bv + tv, bc + tc
+        if kept.strip() or not (bv or bc):
+            code = kept
+            break
+    c = c or tc
     conf = float(c[-1]) if c else None
-    return run.extract(text), (v[-1].lower() if v else None), (conf if conf is not None and conf <= 1.0 else None)
+    verdict = v[-1].lower() if v else (tv[-1] if tv else None)
+    return code, verdict, (conf if conf is not None and conf <= 1.0 else None)
 
 
 def coin(task_ids):
@@ -408,6 +449,55 @@ def status(root, label, log=print):
     return line
 
 
+def reparse(root, label, regrade=False, log=print):
+    """Read-only: parse() over a run's stored replies. Lists each row whose verdict is recovered or whose code block
+    changed, and what walk() would say with it; rows that only lose closing VERDICT/CONFIDENCE lines are counted, not
+    listed. Writes nothing and asks no model; --regrade grades the changed code with
+    the grader (stored grades are of the stored code). A recovered reject would owe later rounds that were never asked:
+    those tasks show as 'continues', not as a leaf. Returns (changed rows, parse_fail rows before, still after)."""
+    meta, rows = load(root, label)
+    tasks = {t["id"]: t for t in run.load_set(meta["set"])}
+    new = []
+    for r in rows:
+        code, verdict, conf = parse(r["content"])
+        nr = dict(r, code=code, verdict=verdict, confidence=conf)
+        if code != r["code"] and code is not None:
+            nr["fresh_pass"] = (agent.fresh_grade(code, tasks[r["task"]]["tests"])[0] if regrade else r["fresh_pass"])
+        new.append(nr)
+    pf = lambda r: r["round"] > 1 and (r["verdict"] is None or (r["verdict"] == "reject" and r["code"] is None))
+    before, after = sum(map(pf, rows)), sum(map(pf, new))
+    old_idx, new_idx = index(rows), index(new)
+    changed = [(o, n) for o, n in zip(rows, new) if (o["verdict"], o["code"]) != (n["verdict"], n["code"])]
+
+    def state(t, i):
+        st = walk(meta["first"][t], *i[t])
+        return f"R{st['round']} {st['stop']}" if st["leaf"] else f"continues ({st['next'][0]} R{st['next'][1]} owed)"
+
+    def kind(o, n):
+        if o["verdict"] != n["verdict"]:
+            return "verdict"
+        if n["code"] is None or not o["code"] or not o["code"].startswith(n["code"].rstrip("\n")):
+            return "block"      # a different code block (or none) is now the module
+        return "cut"            # the same module, closing VERDICT/CONFIDENCE lines taken off
+    kinds = [kind(o, n) for o, n in changed]
+    for (o, n), k in zip(changed, kinds):
+        t, so, sn = o["task"], state(o["task"], old_idx), state(o["task"], new_idx)
+        if k == "cut":
+            continue
+        g = (f"graded {'pass' if n['fresh_pass'] else 'fail'}" if regrade and n["code"] is not None
+             else "stored grade") + f" (stored {'pass' if o['fresh_pass'] else 'fail'})"
+        log(f"{t:28} {o['seat']:7} R{o['round']} {k:7} verdict {o['verdict']} -> {n['verdict']}, confidence "
+            f"{o['confidence']} -> {n['confidence']}, code {'none' if n['code'] is None else 'kept'}; {g}; "
+            f"task {so} -> {sn}")
+    regr = [(o, n) for o, n in changed if regrade and n["code"] is not None and o["code"] != n["code"]]
+    log(f"{label}: {len(changed)} of {len(rows)} rows differ (verdict {kinds.count('verdict')}, other block "
+        f"{kinds.count('block')}, closing lines cut only {kinds.count('cut')}); parse_fail-shaped rows {before} -> "
+        f"{after}" + (f"; regraded {len(regr)} changed modules, grade differs on "
+                      f"{sum(bool(o['fresh_pass']) != bool(n['fresh_pass']) for o, n in regr)}" if regrade else "")
+        + ". A re-parse, not a run: no result file is rewritten and no keep/drop follows from it.")
+    return changed, before, after
+
+
 def report(root, label, regrade=False, log=print):
     meta, rows = load(root, label)
     idx = index(rows)
@@ -502,6 +592,36 @@ def selftest():
     check("verdict: a line inside a code block is ignored",
           parse("```python\n# VERDICT: accept\nx = 1\n```\nVERDICT: reject")[1] == "reject")
     check("verdict: 'Verdict accepted' is not a verdict", parse("Verdict accepted by all.")[1] is None)
+    # the closing lines inside the fence (v8: six parse_fail stops)
+    body = "def f(x):\n    return x + 1\n"
+    for vd in ("accept", "reject"):
+        code_, v_, c_ = parse(f"Rationale.\n```python\n{body}\nVERDICT: {vd}\nCONFIDENCE: 0.95\n```")
+        check(f"in-fence: trailing VERDICT: {vd} and CONFIDENCE recovered, cut from the code",
+              (v_, c_, code_) == (vd, 0.95, body))
+    check("in-fence: markdown bold, case, and a closing fence on the verdict line",
+          parse("```python\n" + body + "**Verdict:** Reject\nconfidence: 0.5```")[:3] == (body, "reject", 0.5))
+    check("in-fence: prose outside the fence wins; the closing lines are still cut from the code",
+          parse("```python\n" + body + "VERDICT: reject\nCONFIDENCE: 0.9\n```\nVERDICT: accept\nCONFIDENCE: 0.3")
+          == (body, "accept", 0.3))
+    check("in-fence: confidence from prose, verdict from the fence",
+          parse("```python\n" + body + "VERDICT: accept\n```\nCONFIDENCE: 0.4") == (body, "accept", 0.4))
+    check("in-fence: a mid-code '# VERDICT:' comment is no verdict and stays in the code",
+          parse("```python\n# VERDICT: accept\n" + body + "```") == ("# VERDICT: accept\n" + body, None, None))
+    check("in-fence: a '# VERDICT:' comment as the last code line is no verdict either",
+          parse("```python\n" + body + "# VERDICT: accept\n```") == (body + "# VERDICT: accept\n", None, None))
+    check("in-fence: 'confidence = 0.5' (an assignment, no colon) is code",
+          parse("```python\nconfidence = 0.5\n```") == ("confidence = 0.5\n", None, None))
+    check("in-fence: a verdict above code lines is not closing, so it is not read",
+          parse("```python\nVERDICT: accept\n" + body + "```")[1] is None)
+    check("in-fence: reject with code extracts the module without the lines run.extract would keep",
+          run.extract("```python\n" + body + "VERDICT: reject\n```") != body
+          and parse("```python\n" + body + "VERDICT: reject\n```")[0] == body)
+    check("in-fence: a verdict-only fence after the code block is skipped for the block before it",
+          parse("```python\n" + body + "```\n```python\nVERDICT: reject\nCONFIDENCE: 0.7\n```") == (body, "reject", 0.7))
+    check("in-fence: a verdict-only fence and nothing else is a verdict with no code",
+          parse("```\nVERDICT: accept\n```") == (None, "accept", None))
+    check("in-fence: a reply without closing lines parses as before (run.extract's block, kept whole)",
+          parse("```python\n" + body + "```\nVERDICT: reject")[0] == run.extract("```python\n" + body + "```"))
     check("confidence: .9 parses, 85 is out of range", parse("CONFIDENCE: .9")[2] == 0.9 and parse("CONFIDENCE: 85")[2] is None)
     check("visible: a leaked trace before </think> is cut", visible("<think>TRACE</think>\nanswer") == "answer")
     resp = {"choices": [{"message": {"content": "c", "reasoning_content": "TRACE-MARKER " * 10}, "finish_reason": "stop"}],
@@ -519,6 +639,14 @@ def selftest():
     r1 = {"seat": "qwen32", "round": 1, "code": "A", "verdict": None}
     st = walk("qwen32", {"qwen32": r1}, {2: {"seat": "r1d32", "round": 2, "code": None, "verdict": "reject"}})
     check("walk: reject without code -> parse_fail, R1 stands", st["leaf"] and st["stop"] == "parse_fail" and st["standing"] is r1)
+
+    r1x = {"seat": "qwen32", "round": 1, "code": "A", "verdict": None}
+    rep = parse("```python\n" + body + "VERDICT: reject\n```")
+    st = walk("qwen32", {"qwen32": r1x}, {2: {"seat": "r1d32", "round": 2, "code": rep[0], "verdict": rep[1]}})
+    check("walk: a reject recovered from inside the fence is no parse_fail; the debate goes on", not st["leaf"] and st["next"] == ("qwen32", 3))
+    rep = parse("```python\n" + body + "VERDICT: accept\n```")
+    st = walk("qwen32", {"qwen32": r1x}, {2: {"seat": "r1d32", "round": 2, "code": rep[0], "verdict": rep[1]}})
+    check("walk: an accept recovered from inside the fence ends the debate, R1 stands", st["stop"] == "accept" and st["standing"] is r1x)
 
     # the protocol end to end: six v1 tasks, scripted seats, the real grader
     tasks = run.load_set("v1")[:6]
@@ -731,13 +859,13 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
-    ap.add_argument("cmd", nargs="?", choices=("step", "status", "report"))
+    ap.add_argument("cmd", nargs="?", choices=("step", "status", "report", "reparse"))
     ap.add_argument("--label")
     ap.add_argument("--set", choices=sorted(run.SETS))
     ap.add_argument("--tasks", help="comma-separated task ids (first step only; default all tasks of the set)")
     ap.add_argument("--parallel", type=int, default=1, help="tasks in flight; at most the server's slots")
     ap.add_argument("--api", default=run.API)
-    ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch")
+    ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch; reparse: grade the changed code")
     ap.add_argument("--retrieve", help="step, first step only: a memring retrieval export (memring.py debate --passes-out)")
     a = ap.parse_args()
     if a.selftest:
@@ -750,6 +878,9 @@ def main():
         return 0
     if a.cmd == "report":
         return report(root, a.label, a.regrade)[1]
+    if a.cmd == "reparse":
+        reparse(root, a.label, a.regrade)
+        return 0
     os.makedirs(root, exist_ok=True)
     alias = run.served_model(api=a.api)
     step(root, a.label, a.set, a.tasks.split(",") if a.tasks else None, alias, server_props(a.api),
