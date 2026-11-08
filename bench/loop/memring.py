@@ -134,6 +134,16 @@ FAMILIES = {"v5": {"v5_01_table_zone": "civil_time", "v5_02_leap_smear": "civil_
 DEBATE_SLOT = {"qwen32": 1, "r1d32": 3}
 PASSES_K = 3   # rows per (seat, family) in the debate retrieval export; retrieve()'s k
 
+# Verified coding-memory loop v1: v0-v8 are exposed (train); fresh evaluation sets (v9+) default to held_out.
+TRAIN_SETS = EXPOSED_SETS = frozenset({"v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"})
+SPLITS = {s: "train" for s in TRAIN_SETS}
+LESSON_K, LESSON_MAX_CHARS, LESSON_MAX_LINES = 3, 600, 6
+LESSON_HEAD = "Verified coding lessons from prior training tasks (general patterns and pitfalls; apply only where relevant to this spec):\n"
+# fresh_grade_fix_pair: a graded failure on a TRAIN task, then a later attempt in the same run that passes the visible
+# tests AND agent.fresh_grade (oracle seed swapped for FRESH_SEED). The lesson is the distilled fix; it is kept only
+# with that verdict attached. A rule that re-attempts with the lesson injected is not implemented in v1.
+VERIFICATION_RULES = frozenset({"fresh_grade_fix_pair"})
+
 # what each python mutator is predicted to do against the python guardian (docstring: Fuzzer)
 EXPECT = {"rename": "order", "reformat": "order", "inject_comment_oblique": "order",
           "deadcode": "leak", "deadcode_pass": "leak", "deadcode_def": "leak", "deadcode_str": "leak", "deadcode_import": "leak",
@@ -170,6 +180,17 @@ CREATE TABLE IF NOT EXISTS rows (id INTEGER PRIMARY KEY, kind TEXT, task_id TEXT
 CREATE INDEX IF NOT EXISTS rows_family ON rows (family, kind);
 CREATE TABLE IF NOT EXISTS retrievals (id INTEGER PRIMARY KEY, row_id INTEGER, task_id TEXT, turn INTEGER, outcome REAL);
 CREATE TRIGGER IF NOT EXISTS rows_append_only BEFORE UPDATE ON rows BEGIN SELECT RAISE(ABORT, 'rows are append-only'); END;
+"""
+LESSON_DDL = """
+CREATE TABLE IF NOT EXISTS lessons (id INTEGER PRIMARY KEY, task_id TEXT, task_set TEXT, split TEXT, family TEXT,
+  arm TEXT, model TEXT, created_at TEXT, fail_exc TEXT, verdict_json TEXT, grader_ver TEXT, lesson TEXT,
+  hash TEXT, nhash TEXT, seal TEXT, UNIQUE (model, nhash));
+CREATE INDEX IF NOT EXISTS lessons_family ON lessons (family, model);
+CREATE TABLE IF NOT EXISTS lesson_refusals (id INTEGER PRIMARY KEY, stage TEXT, task_id TEXT, task_set TEXT, split TEXT,
+  reason TEXT, created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')));
+CREATE TABLE IF NOT EXISTS lesson_retrievals (id INTEGER PRIMARY KEY, lesson_id INTEGER, target_task_id TEXT,
+  turn INTEGER, score REAL, outcome REAL, created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')));
+CREATE TRIGGER IF NOT EXISTS lessons_append_only BEFORE UPDATE ON lessons BEGIN SELECT RAISE(ABORT, 'lessons are append-only'); END;
 """
 
 
@@ -317,6 +338,226 @@ def nhash(content, attr=False):
         return sha(" ".join(content.split()))
 
 
+def set_split(set_name):
+    return SPLITS.get(set_name, "held_out")
+
+
+def require_held_out_eval_set(set_name, tasks=None):
+    if set_name in EXPOSED_SETS or set_split(set_name) != "held_out":
+        return False, f"set {set_name!r} has split='train' (exposed; v8 excluded from held_out)"
+    bad = next((t.get("id") for t in (tasks or ()) if t.get("split") != "held_out"), None)
+    return (False, f"task {bad!r} not held_out") if bad else (True, None)
+
+
+def task_family(task_id, set_name=None, prompt=""):
+    for m in ([FAMILIES[set_name]] if set_name in FAMILIES else []) + list(FAMILIES.values()):
+        if task_id in m:
+            return m[task_id]
+    txt = f"{task_id} {prompt}".lower()
+    if any(w in txt for w in ("parse", "format", "hex", "utf", "csv", "json", "xml", "ini", "url", "regex", "encode", "decode", "morse", "cidr", "clock", "luhn")):
+        return "formats"
+    if any(w in txt for w in ("prime", "mod", "gcd", "lcm", "euler", "goldbach", "pascal", "fraction", "rational", "digit", "radix", "base", "divisor", "collatz")):
+        return "number_theory"
+    if any(w in txt for w in ("graph", "tree", "path", "cycle", "edge", "vertex", "island", "polygon", "hull", "lattice", "segment", "point", "triangle", "manhattan", "knight")):
+        return "graphs_geometry"
+    return "simulation_dp"
+
+
+def lesson_nhash(text):
+    return sha(" ".join(re.findall(r"[a-z0-9_]+", (text or "").lower())))
+
+
+def _entry_names_of(code):
+    try:
+        return {n.name for n in ast.parse(code or "").body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name not in ("solve", "main")}
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+
+
+def verify_lesson_verdict(verdict):
+    if not isinstance(verdict, dict) or verdict.get("grader_ver") != GRADER_VER:
+        return False, "missing verdict or stale grader_ver"
+    if verdict.get("fail_passed") is not False or not verdict.get("fail_exc"):
+        return False, "lesson requires prior graded failure"
+    if verdict.get("passed") is not True or (verdict.get("fresh_pass") is not True and not verdict.get("no_fresh")):
+        return False, "lesson unverified: later attempt did not pass fresh_grade"
+    return (True, None) if verdict.get("verification_rule") in VERIFICATION_RULES else (False, "unknown verification_rule")
+
+
+_CODE_LINE_RE = re.compile(r"(```|^\s*(?:def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+\s+import|return\b|assert\b|raise\s+\w+\()|random\.seed\()", re.M)
+_TASK_ID_RE = re.compile(r"\b(?:v\d+_\d\d(?:_[a-z0-9_]+)?|\d\d_[a-z][a-z0-9_]+_[a-z0-9_]+)\b", re.I)
+_TRIVIAL_LINES = frozenset({"pass", "else:", "break", "continue", "return", "return true", "return false", "return none"})
+_ORACLE_MARKERS = ('file "<oracle>"', "traceback (most recent call last)", "@@loopgrade-ready@@", "oracle-sentinel", "loopgrade-")
+
+
+def leak_check(lesson, provenance, held_out_tasks=(), train_tasks=(), held_out_feedbacks=()):
+    """Return None if lesson and provenance satisfy all leak guards, else a refusal reason."""
+    if not isinstance(provenance, dict):
+        return "missing provenance dict"
+    miss = next((k for k in ("task_id", "task_set", "split", "arm", "model", "verdict") if not provenance.get(k)), None)
+    if miss or not (provenance.get("timestamp") or provenance.get("created_at")):
+        return f"missing provenance field {miss or 'timestamp'}"
+    tset, tid, split = provenance.get("task_set"), provenance.get("task_id") or "", provenance.get("split")
+    ho_ids = {t["id"] for t in (held_out_tasks or ()) if t.get("id")}
+    if split != "train" or tset not in TRAIN_SETS or set_split(tset) != "train" or tid in ho_ids or re.match(r"^v(?:9|[1-9]\d+)_\d\d_", tid):
+        return f"held-out provenance ({tid!r}, set={tset!r}, split={split!r})"
+    if any(t.get("id") == tid and t.get("split", "train") != "train" for t in (train_tasks or ())):
+        return f"task {tid!r} is marked non-train"
+    if not isinstance(lesson, str):
+        return "lesson must be a string"
+    txt = lesson.strip()
+    if not (15 <= len(txt) <= LESSON_MAX_CHARS) or len(txt.splitlines()) > LESSON_MAX_LINES:
+        return f"lesson size invalid (len={len(txt)}, lines={len(txt.splitlines())})"
+    if _CODE_LINE_RE.search(txt) or INJECTION_RE.search(txt) or _TASK_ID_RE.search(txt):
+        return "lesson contains code, task id, or instruction-like text"
+    low, norm_low = txt.lower(), " ".join(txt.lower().split())
+    for h in ho_ids:
+        parts = h.split("_", 2)
+        if h.lower() in low or (len(parts) == 3 and len(parts[2]) >= 5 and "_" in parts[2] and parts[2].lower() in low):
+            return f"leaks held-out task id/slug {h}"
+    for t in list(held_out_tasks or ()) + list(train_tasks or ()):
+        for fn in _entry_names_of(t.get("ref", "")):
+            if (len(fn) >= 4 or "_" in fn) and re.search(rf"\b{re.escape(fn.lower())}\b", low):
+                return f"leaks task entry-point identifier {fn}"
+        for field, label in (("ref", "reference solution"), ("tests", "test cases")):
+            body = (t.get(field) or "").strip()
+            if (len(body) >= 10 and " ".join(body.lower().split()) in norm_low) or any(
+                    len(s) >= 12 and s not in _TRIVIAL_LINES and not s.startswith("import ") and s in low
+                    for s in (ln.strip().lower() for ln in body.splitlines())):
+                return f"leaks {label} from {t.get('id')}"
+    for t in (held_out_tasks or ()):
+        p, words = t.get("prompt") or "", (t.get("prompt") or "").lower().split()
+        if any(len(s) >= 25 and s in norm_low for s in (" ".join(ln.lower().split()) for ln in p.splitlines())) or any(
+                len(" ".join(words[i:i + 6])) >= 30 and " ".join(words[i:i + 6]) in norm_low for i in range(max(0, len(words) - 5))):
+            return f"leaks held-out task text from {t.get('id')}"
+    if any(mk in low for mk in _ORACLE_MARKERS):
+        return "leaks raw grader/oracle traceback marker"
+    for fb in list(held_out_feedbacks or []) + [t[k] for t in (held_out_tasks or ()) for k in ("grader_feedback", "err") if t.get(k)]:
+        s_full = " ".join(str(fb or "").strip().lower().split())
+        if (len(s_full) >= 12 and s_full in norm_low) or any(
+                (len(s) >= 12 and s in low) or (":" in s and len(s.split(":", 1)[1].strip()) >= 12 and s.split(":", 1)[1].strip() in low)
+                for s in (ln.strip().lower() for ln in str(fb or "").splitlines())):
+            return "leaks held-out grader feedback"
+    return None
+
+
+def _distill_deterministic(fail_code, fail_err, pass_code, exc, family):
+    """One of a fixed set of pattern lessons. The graded failure's exception type decides first; code-diff features
+    only refine an AssertionError-class failure, so a ref that happens to reject bools does not label every task."""
+    fc, pc, low = fail_code or "", pass_code or "", (fail_err or "").lower()
+    if exc in ("timeout", "RecursionError", "MemoryError"):
+        return "Replace exponential branching or deep recursion with memoized states or iterative bottom-up dynamic programming."
+    if exc == "UnboundLocalError":
+        return "Declare nonlocal before rebinding an enclosing scope's cursor or state variable inside a nested helper."
+    if exc in ("IndexError", "KeyError", "ZeroDivisionError"):
+        return "Check for empty collections, single-element boundary cases, and zero denominators before indexing or dividing."
+    if exc == "ValueError":
+        return "Validate input types, structural formatting, and parameter bounds upfront, raising ValueError on invalid inputs."
+    if "bool" in low and "isinstance" in pc and "bool" in pc and "bool" not in fc:
+        return "In Python, bool is a subclass of int; explicitly reject isinstance(x, bool) before accepting int arguments."
+    if "nonlocal " in pc and "nonlocal " not in fc:
+        return "Declare nonlocal before rebinding an enclosing scope's cursor or state variable inside a nested helper."
+    if ("Fraction" in pc or "isqrt" in pc) and "/" in fc and "Fraction" not in fc and "isqrt" not in fc:
+        return "Use exact integer or rational arithmetic instead of floating-point division to avoid precision drift."
+    return {"formats": "Track delimiter, quoting, escaping, and line-termination state transitions explicitly in a single pass.",
+            "number_theory": "Handle small boundary cases (0, 1, negatives, prime powers) explicitly and reduce modulo at each step.",
+            "graphs_geometry": "Handle disconnected components, degenerate geometry, and lexicographic tie-breaking explicitly."
+            }.get(family, "Verify boundary conditions, tie-break ordering, and state updates at every step against the spec.")
+
+
+def distill_lesson(task, fail_code, fail_err, pass_code, ask=None):
+    if task.get("split", "train") != "train":
+        raise ValueError(f"refusing to distill lesson from non-train task {task.get('id')!r} (split={task.get('split')!r})")
+    exc, fam = exc_type(False, fail_err or ""), task_family(task.get("id", ""), prompt=task.get("prompt", ""))
+    if ask is not None:
+        p = (f"Distill one short generalizable coding lesson (1-2 sentences, plain prose, no code or task names) "
+             f"from a {fam} task that failed with {exc} and was fixed.")
+        try:
+            raw = ask(p)
+        except TypeError:
+            raw = ask(p, 0)
+        text = (raw.get("content", "") if isinstance(raw, dict) else str(raw or "")).rsplit("</think>", 1)[-1].strip()
+        text = re.sub(r"^[-*•\d.)\s]+", "", text).strip()
+        if text:
+            return text
+    return _distill_deterministic(fail_code, fail_err, pass_code, exc, fam)
+
+
+_STOPWORDS = frozenset("the and for that with from this into when only must each such than then else where "
+                       "write function functions return returns given input output list tuple dict int str bool float value values true false none raise error".split())
+
+
+def _lesson_tokens(text):
+    return {w for w in re.findall(r"[a-z][a-z0-9_]{2,}", (text or "").lower()) if w not in _STOPWORDS}
+
+
+def score_lesson(task, lesson_row, err=None):
+    fam = task_family(task.get("id", ""), prompt=task.get("prompt", ""))
+    score = (2.0 if lesson_row.get("family") == fam else 0.0) + (1.5 if err and exc_type(False, err) == lesson_row.get("fail_exc") else 0.0)
+    q_toks = _lesson_tokens((task.get("prompt") or "") + (" " + err if err else ""))
+    l_toks = _lesson_tokens(f"{lesson_row.get('lesson') or ''} {lesson_row.get('family') or ''} {lesson_row.get('fail_exc') or ''}")
+    if q_toks and l_toks:
+        score += 3.0 * len(q_toks & l_toks) / ((len(q_toks) * len(l_toks)) ** 0.5)
+    return round(score, 4)
+
+
+def lesson_block(lessons):
+    if not lessons:
+        return ""
+    return LESSON_HEAD + "\n".join(f"- [{r['family']} / {r['fail_exc']}] {r['lesson'].strip()}" for r in lessons) + "\n\n"
+
+
+def apply_memory(prompt, lessons, memory="off"):
+    if memory == "off":
+        return prompt
+    if memory != "on":
+        raise ValueError(f"--memory must be 'on' or 'off', got {memory!r}")
+    return lesson_block(lessons) + prompt
+
+
+def _lesson_prov(d, verdict=None):
+    return {"task_id": d.get("task_id"), "task_set": d.get("task_set"), "split": d.get("split"), "family": d.get("family"),
+            "arm": d.get("arm"), "model": d.get("model"), "timestamp": d.get("timestamp") or d.get("created_at"),
+            "verdict": verdict if verdict is not None else d.get("verdict")}
+
+
+def _rank_lessons(cands, k):
+    cands.sort(key=lambda x: (-x["score"], x["task_id"], x["id"]))
+    picked, seen = [], set()
+    for c in cands:
+        if c["task_id"] not in seen and len(picked) < k:
+            seen.add(c["task_id"])
+            picked.append(c)
+    return picked
+
+
+def load_lesson_export(path, held_out_tasks=(), train_tasks=(), held_out_feedbacks=()):
+    with open(path) as f:
+        d = json.load(f)
+    if d.get("grader") != GRADER_VER:
+        raise ValueError(f"{path}: grader {d.get('grader')!r} != {GRADER_VER!r}")
+    clean = []
+    for r in d.get("lessons", ()):
+        why = leak_check(r.get("lesson", ""), _lesson_prov(r), held_out_tasks, train_tasks, held_out_feedbacks)
+        ok_v, why_v = verify_lesson_verdict(r.get("verdict"))
+        if why or not ok_v or r.get("grader_ver") != GRADER_VER or r.get("hash") != sha((r.get("lesson") or "").strip()):
+            raise ValueError(f"{path}: lesson {r.get('id')} refused: {why or why_v or 'hash/grader_ver mismatch'}")
+        clean.append(dict(r))
+    return {"grader": d["grader"], "k": int(d.get("k", LESSON_K)), "lessons": clean}
+
+
+def retrieve_from_export(bundle, task, k=LESSON_K, model=None, err=None, held_out_tasks=(), train_tasks=(), held_out_feedbacks=()):
+    ho_tasks = list(held_out_tasks or ()) + ([task] if task and task.get("split") == "held_out" else [])
+    cands = []
+    for i, r in enumerate(bundle.get("lessons", ())):
+        if (model and r.get("model") != model) or (task and r.get("task_id") == task.get("id")):
+            continue
+        if verify_lesson_verdict(r.get("verdict"))[0] and r.get("grader_ver") == GRADER_VER \
+                and leak_check(r.get("lesson", ""), _lesson_prov(r), ho_tasks, train_tasks, held_out_feedbacks) is None:
+            cands.append(dict(r, id=r.get("id", i + 1), score=score_lesson(task or {}, r, err=err)))
+    return _rank_lessons(cands, k)
+
+
 class Ring:
     def __init__(self, root, slots=(1, 2, 3, 4), live_canaries=False, seed=0, fuzz=False, regrade=None, keep_names=None,
                  exc_rule=False, norm_attr=False):
@@ -336,6 +577,8 @@ class Ring:
             self.key = f.read()
         self.buf = self._db("buffer.db", BUFFER_DDL)
         self.slots = {n: self._db(f"slot{n}.db", SLOT_DDL) for n in slots}
+        self.lessons_db = self._db("lessons.db", LESSON_DDL)
+        self.train_tasks, self.held_out_tasks, self.held_out_feedbacks = [], [], []
 
     def _db(self, name, ddl):
         db = sqlite3.connect(os.path.join(self.root, name), isolation_level=None)
@@ -669,6 +912,127 @@ class Ring:
         for rid in bad:
             db.execute("DELETE FROM rows WHERE id = ?", (rid,))
         return bad
+
+    # ---- verified coding-memory lesson store (v1) ----------------------------------------------------------
+
+    def register_tasks(self, train_tasks=(), held_out_tasks=(), held_out_feedbacks=()):
+        for dst, src in ((self.train_tasks, train_tasks), (self.held_out_tasks, held_out_tasks)):
+            seen = {t["id"] for t in dst if t.get("id")}
+            dst.extend(t for t in (src or ()) if t.get("id") not in seen)
+        self.held_out_feedbacks.extend(held_out_feedbacks or ())
+
+    def _lesson_mac(self, task_id, task_set, split, family, arm, model, h, verdict, grader_ver=GRADER_VER):
+        msg = json.dumps([task_id, task_set, split, family, arm, model, h, verdict, grader_ver], sort_keys=True).encode()
+        return hmac.new(self.key, msg, "sha256").hexdigest()
+
+    def seal_lesson(self, lesson, provenance, grader_ver=GRADER_VER):
+        fam = provenance.get("family") or task_family(provenance.get("task_id", ""), provenance.get("task_set"))
+        return self._lesson_mac(provenance.get("task_id"), provenance.get("task_set"), provenance.get("split"),
+                                fam, provenance.get("arm"), provenance.get("model"), sha(lesson.strip()),
+                                provenance.get("verdict"), grader_ver)
+
+    def _log_lesson_refusal(self, stage, provenance, reason):
+        p = provenance or {}
+        self.lessons_db.execute("INSERT INTO lesson_refusals (stage, task_id, task_set, split, reason) VALUES (?,?,?,?,?)",
+                                (stage, p.get("task_id"), p.get("task_set"), p.get("split"), reason))
+        return None, reason
+
+    def admit_lesson(self, lesson, provenance, seal=None):
+        if not isinstance(provenance, dict):
+            return self._log_lesson_refusal("write", {}, "missing provenance dict")
+        why_leak = leak_check(lesson, provenance, self.held_out_tasks, self.train_tasks, self.held_out_feedbacks)
+        verdict = provenance.get("verdict")
+        ok_v, why_v = verify_lesson_verdict(verdict)
+        if why_leak or not ok_v:
+            return self._log_lesson_refusal("write", provenance, why_leak or why_v)
+        txt, fam = lesson.strip(), provenance.get("family") or task_family(provenance["task_id"], provenance["task_set"])
+        prov = dict(provenance, family=fam)
+        if not hmac.compare_digest(seal or "", self.seal_lesson(txt, prov, verdict.get("grader_ver", GRADER_VER))):
+            return self._log_lesson_refusal("write", prov, "lesson seal invalid")
+        h, nh = sha(txt), lesson_nhash(txt)
+        if self.lessons_db.execute("SELECT 1 FROM lessons WHERE model = ? AND nhash = ? LIMIT 1", (prov["model"], nh)).fetchone():
+            return self._log_lesson_refusal("write", prov, "duplicate lesson")
+        cur = self.lessons_db.execute(
+            "INSERT INTO lessons (task_id, task_set, split, family, arm, model, created_at, fail_exc, verdict_json, "
+            "grader_ver, lesson, hash, nhash, seal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (prov["task_id"], prov["task_set"], prov["split"], fam, prov["arm"], prov["model"],
+             prov.get("timestamp") or prov.get("created_at"), verdict["fail_exc"], json.dumps(verdict, sort_keys=True),
+             GRADER_VER, txt, h, nh, seal))
+        return cur.lastrowid, None
+
+    def distill_and_admit(self, task, fail_row, pass_row, task_set, arm, model, ask=None, timestamp=None,
+                          verification_rule="fresh_grade_fix_pair"):
+        split, tid = task.get("split", set_split(task_set)), task.get("id", "")
+        base_prov = {"task_id": tid, "task_set": task_set, "split": split, "arm": arm, "model": model,
+                     "timestamp": timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        if split != "train" or task_set not in TRAIN_SETS or set_split(task_set) != "train":
+            return self._log_lesson_refusal("write", base_prov, f"held-out provenance: {tid!r} ({task_set!r}, {split!r})")
+        self.register_tasks(train_tasks=[task])
+        fp = bool(fail_row.get("passed") or fail_row.get("fresh_pass"))
+        fe = fail_row.get("err") or fail_row.get("fresh_err") or ""
+        pass_ok = bool(pass_row.get("passed", True) and (pass_row.get("fresh_pass", pass_row.get("passed")) or pass_row.get("no_fresh")))
+        verdict = {"fail_passed": fp, "fail_exc": exc_type(fp, fe) if not fp else "", "fail_err_sha": sha(fe)[:12],
+                   "passed": bool(pass_row.get("passed", pass_row.get("fresh_pass"))),
+                   "fresh_pass": bool(pass_row.get("fresh_pass", pass_ok)), "no_fresh": bool(pass_row.get("no_fresh", False)),
+                   "verification_rule": verification_rule, "grader_ver": GRADER_VER}
+        ok_v, why_v = verify_lesson_verdict(verdict)
+        if not ok_v:
+            return self._log_lesson_refusal("write", dict(base_prov, verdict=verdict), why_v)
+        lesson = distill_lesson(task, fail_row.get("code") or "", fe, pass_row.get("code") or "", ask=ask)
+        prov = dict(base_prov, family=task_family(tid, task_set, task.get("prompt", "")), verdict=verdict)
+        return self.admit_lesson(lesson, prov, self.seal_lesson(lesson, prov))
+
+    def retrieve_lessons(self, task, k=LESSON_K, model=None, err=None, turn=0, log_retrieval=True):
+        q = "SELECT * FROM lessons" + (" WHERE model = ?" if model else "") + " ORDER BY id ASC"
+        rows = self.lessons_db.execute(q, (model,) if model else ()).fetchall()
+        ho_tasks = list(self.held_out_tasks) + ([task] if task and task.get("split") == "held_out" else [])
+        cands = []
+        for r in rows:
+            d = dict(r)
+            verdict = json.loads(d["verdict_json"])
+            prov = _lesson_prov(d, verdict)
+            if task and d["task_id"] == task.get("id"):
+                self._log_lesson_refusal("retrieve", prov, f"same task_id {d['task_id']!r} as target task")
+                continue
+            why_leak = leak_check(d["lesson"], prov, ho_tasks, self.train_tasks, self.held_out_feedbacks)
+            ok_v, why_v = verify_lesson_verdict(verdict)
+            if why_leak or not ok_v or d["grader_ver"] != GRADER_VER:
+                self._log_lesson_refusal("retrieve", prov, why_leak or why_v or "stale grader_ver")
+                continue
+            want_seal = self._lesson_mac(d["task_id"], d["task_set"], d["split"], d["family"], d["arm"],
+                                         d["model"], d["hash"], verdict, d["grader_ver"])
+            if d["hash"] != sha(d["lesson"].strip()) or not hmac.compare_digest(d["seal"] or "", want_seal):
+                self._log_lesson_refusal("retrieve", prov, "lesson seal or hash mismatch")
+                continue
+            cands.append(dict(d, timestamp=d["created_at"], verdict=verdict, score=score_lesson(task or {}, d, err=err)))
+        picked = _rank_lessons(cands, k)
+        if log_retrieval and task and task.get("id"):
+            for c in picked:
+                self.lessons_db.execute("INSERT INTO lesson_retrievals (lesson_id, target_task_id, turn, score) VALUES (?,?,?,?)",
+                                        (c["id"], task["id"], turn, c["score"]))
+        return picked
+
+    def record_lesson_outcome(self, target_task_id, solved):
+        self.lessons_db.execute("UPDATE lesson_retrievals SET outcome = ? WHERE target_task_id = ? AND outcome IS NULL",
+                                (1.0 if solved else 0.0, target_task_id))
+
+    def prune_lessons(self):
+        bad = [r[0] for r in self.lessons_db.execute(
+            "SELECT lesson_id FROM lesson_retrievals WHERE outcome IS NOT NULL GROUP BY lesson_id "
+            "HAVING COUNT(*) >= ? AND AVG(outcome) < ?", (PRUNE_MIN_RETRIEVALS, PRUNE_THRESHOLD))]
+        for lid in bad:
+            self.lessons_db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
+        return bad
+
+    def export_lessons(self, out_path=None, model=None):
+        valid = self.retrieve_lessons({"id": "__export__", "prompt": "", "split": "held_out"}, k=10**6, model=model, log_retrieval=False)
+        valid.sort(key=lambda x: (x["model"], x["family"], x["task_id"], x["id"]))
+        keys = ("id", "task_id", "task_set", "split", "family", "arm", "model", "timestamp", "fail_exc", "verdict", "grader_ver", "lesson", "hash")
+        bundle = {"grader": GRADER_VER, "k": LESSON_K, "count": len(valid), "lessons": [{k: r[k] for k in keys} for r in valid]}
+        if out_path:
+            with open(out_path, "w") as f:
+                json.dump(bundle, f, indent=1)
+        return bundle
 
     def ingest(self, slot, family_of, turns, verdicts):
         """Seal and admit loop turn rows (agent.py jsonl rows). verdicts[i] = (passed, err) straight from run.grade.
@@ -1086,6 +1450,52 @@ def debate_corpus(a):
     return 2 if mism else 0
 
 
+def lessons_distill(a):
+    import concurrent.futures as cf
+    if a.set not in TRAIN_SETS or set_split(a.set) != "train":
+        raise SystemExit(f"refusing lessons-distill on non-train set {a.set!r}")
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import agent, run
+    run.load_set(a.set)
+    by_id, files, ring = {t["id"]: t for t in run.TASKS}, [a.jsonl] + a.more, Ring(a.root)
+    ring.register_tasks(train_tasks=run.TASKS)
+    admitted, refused, mism, pool = [], {}, [], cf.ThreadPoolExecutor(a.parallel)
+    for fp in files:
+        groups = {}
+        for r in (json.loads(l) for l in open(fp)):
+            if r.get("code") is not None and r.get("verdict") != "accept":
+                groups.setdefault((r["task"], r.get("episode", 0)), []).append(r)
+        for (tid, _), grp in sorted(groups.items()):
+            task = by_id[tid]
+            fails = [r for r in grp if not r.get("fresh_pass", r.get("passed"))]
+            passes = [r for r in grp if r.get("fresh_pass", r.get("passed"))]
+            if not (fails and passes) or grp.index(fails[0]) > grp.index(passes[-1]):
+                continue
+            f_row, p_row = fails[0], passes[-1]
+            (fp1, fe1, n1), (fp2, fe2, n2) = list(pool.map(lambda r: agent.fresh_grade(r["code"], task["tests"]), (f_row, p_row)))
+            if fp1 != bool(f_row.get("fresh_pass", f_row.get("passed"))) or fp2 != bool(p_row.get("fresh_pass", p_row.get("passed"))):
+                mism.append(tid)
+                continue
+            arm, model = a.arm or ("debate" if "seat" in p_row else "loop"), a.model or p_row.get("seat") or "train"
+            lid, why = ring.distill_and_admit(
+                task, {"code": f_row["code"], "passed": fp1, "err": fe1, "fresh_pass": fp1, "no_fresh": n1},
+                {"code": p_row["code"], "passed": fp2, "err": fe2, "fresh_pass": fp2, "no_fresh": n2},
+                task_set=a.set, arm=arm, model=model)
+            if lid is not None:
+                admitted.append({"id": lid, "task_id": tid, "model": model})
+            else:
+                refused[why] = refused.get(why, 0) + 1
+    pool.shutdown()
+    res = {"files": [os.path.basename(p) for p in files], "set": a.set, "split": set_split(a.set), "root": a.root,
+           "grader": GRADER_VER, "admitted": len(admitted), "lessons": admitted, "refused": refused, "regrade_mismatch": mism}
+    if a.lessons_out and not mism:
+        ring.export_lessons(a.lessons_out)
+    print(json.dumps(res, indent=1))
+    if a.out:
+        json.dump(res, open(a.out, "w"), indent=1)
+    return 2 if mism else 0
+
+
 def selftest():
     fails = []
 
@@ -1290,6 +1700,20 @@ def selftest():
         check("passes: pass rows only, one per task (its first row), tasks in id order, at most k, family only",
               [(r["task_id"], r["content"]) for r in got] == [("t1", "a = 1"), ("t3", "c = 3"), ("t4", "e = 4")]
               and len(ring.passes(1, "fam", k=10)) == 4 and ring.passes(1, "none") == [])
+        t_tr = {"id": "v8_01_pack_varints", "prompt": "Write `pack_varints(nums)`.", "tests": "assert pack_varints([0]) == b'\\x00'\n",
+                "ref": "def pack_varints(nums):\n    if isinstance(nums, bool):\n        raise ValueError('bool')\n    return b''\n", "split": "train"}
+        t_ho = {"id": "v9_01_secret_holdout", "prompt": "Write `secret_holdout(xs)`.", "tests": "assert secret_holdout([1]) == ['+']\n",
+                "ref": "def secret_holdout(xs):\n    return [str(x * 99991) for x in xs]\n", "split": "held_out"}
+        ring.register_tasks(train_tasks=[t_tr], held_out_tasks=[t_ho])
+        f_r, p_r = {"code": "def pack_varints(n): return b''\n", "passed": False, "err": "ValueError: x", "fresh_pass": False}, {"code": t_tr["ref"], "passed": True, "err": "", "fresh_pass": True}
+        lid, why = ring.distill_and_admit(t_tr, f_r, p_r, task_set="v8", arm="loop", model="qwen32", timestamp="2026-11-07T00:00:00Z")
+        got_l = ring.retrieve_lessons(t_ho, k=3, model="qwen32")
+        check("lessons: v8 excluded from held_out; verified train admitted; held_out/unverified refused; off byte-identical",
+              not require_held_out_eval_set("v8")[0] and require_held_out_eval_set("v9", [t_ho])[0] and lid is not None and why is None
+              and ring.distill_and_admit(t_ho, f_r, p_r, task_set="v9", arm="loop", model="qwen32")[0] is None
+              and ring.distill_and_admit(t_tr, f_r, f_r, task_set="v8", arm="loop", model="qwen32")[0] is None
+              and len(got_l) == 1 and apply_memory(t_ho["prompt"], got_l, "off") == t_ho["prompt"]
+              and LESSON_HEAD in apply_memory(t_ho["prompt"], got_l, "on"))
     print("selftest", "FAILED: " + ", ".join(fails) if fails else "passed")
     return 1 if fails else 0
 
@@ -1304,10 +1728,12 @@ def _raises(f):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", nargs="?", choices=["report", "replay", "llm-guard", "debate"])
+    ap.add_argument("cmd", nargs="?", choices=["report", "replay", "llm-guard", "debate", "lessons-distill"])
     ap.add_argument("jsonl", nargs="?")
     ap.add_argument("more", nargs="*", help="debate: further debate.py jsonl files of the same set")
     ap.add_argument("--passes-out", help="debate: write the retrieval export (passes(), PASSES_K per seat and family) here")
+    ap.add_argument("--lessons-out", help="lessons-distill: write verified training lessons export JSON here")
+    ap.add_argument("--arm", help="lessons-distill: arm label for provenance (default: loop or debate)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--root", default="/data/ring")
     ap.add_argument("--set")
@@ -1338,6 +1764,10 @@ def main():
         if not (a.jsonl and a.set):
             ap.error("debate needs JSONL and --set")
         return debate_corpus(a)
+    if a.cmd == "lessons-distill":
+        if not (a.jsonl and a.set):
+            ap.error("lessons-distill needs JSONL and --set")
+        return lessons_distill(a)
     if a.cmd == "llm-guard":
         if not (a.roots and a.set and a.out):
             ap.error("llm-guard needs --roots, --set and --out")

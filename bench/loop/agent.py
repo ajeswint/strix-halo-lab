@@ -70,15 +70,17 @@ def fresh_grade(code, tests):
     return passed, err, ft is None
 
 
-def turn_prompt(task_prompt, code, err):
+def turn_prompt(task_prompt, code, err, memory="off", lessons=()):
     if code is None and err is None:
-        return task_prompt
-    if code is None:
-        return (task_prompt + "\n\nYour previous answer contained no code block; it ran out of tokens "
+        base = task_prompt
+    elif code is None:
+        base = (task_prompt + "\n\nYour previous answer contained no code block; it ran out of tokens "
                 "before writing code. Keep the reasoning shorter and write the complete module.")
-    return (task_prompt + "\n\nYour previous solution:\n```python\n" + code + "\n```\n\n"
-            "It failed the tests with:\n```\n" + err.strip() + "\n```\n\n"
-            "Find the cause and write a corrected complete module.")
+    else:
+        base = (task_prompt + "\n\nYour previous solution:\n```python\n" + code + "\n```\n\n"
+                "It failed the tests with:\n```\n" + err.strip() + "\n```\n\n"
+                "Find the cause and write a corrected complete module.")
+    return base if memory == "off" else memring.apply_memory(base, lessons, memory=memory)
 
 
 def stored_failure(path, task_id):
@@ -95,7 +97,7 @@ def stored_failure(path, task_id):
     return last["code"], last["err"]
 
 
-def episode(task, ep, k, ask, start=None):
+def episode(task, ep, k, ask, start=None, memory="off", lessons=(), lesson_retriever=None):
     """Up to k turns. start = (code, err) of a stored failure (fix mode). Returns (turn rows, stop reason)."""
     code, err = start if start else (None, None)
     seen_code, rows = set(), []
@@ -104,14 +106,18 @@ def episode(task, ep, k, ask, start=None):
     seed0 = FIX_SEED_BASE if start else 1000   # loop seeds are disjoint from run.py's 0-15
     for turn in range(k):
         seed = seed0 + ep * 10 + turn
-        r = ask(turn_prompt(task["prompt"], code, err), seed)
+        ls = (lesson_retriever(task, err, turn) if lesson_retriever else lessons) if memory == "on" else ()
+        r = ask(turn_prompt(task["prompt"], code, err, memory=memory, lessons=ls), seed)
         new = run.extract(r["content"])
         passed, new_err = run.grade(new, task["tests"]) if new else (False, "no code block")
-        rows.append({"task": task["id"], "episode": ep, "turn": turn, "seed": seed, "passed": passed,
-                     "err": "" if passed else new_err, "finish": r["finish"],
-                     "completion_tokens": r["usage"].get("completion_tokens"),
-                     "prompt_tokens": r["usage"].get("prompt_tokens"), "reasoning_chars": r["reasoning_chars"],
-                     "gen_s": r["gen_s"], "code": new})
+        row = {"task": task["id"], "episode": ep, "turn": turn, "seed": seed, "passed": passed,
+               "err": "" if passed else new_err, "finish": r["finish"],
+               "completion_tokens": r["usage"].get("completion_tokens"),
+               "prompt_tokens": r["usage"].get("prompt_tokens"), "reasoning_chars": r["reasoning_chars"],
+               "gen_s": r["gen_s"], "code": new}
+        if memory == "on":
+            row["lessons_retrieved"] = [x["task_id"] for x in ls]
+        rows.append(row)
         if passed:
             return rows, "pass"
         h = hashlib.sha256((new or "").encode()).hexdigest()
@@ -156,13 +162,13 @@ def load_plans(path):
     return {r["task"]: r for r in map(json.loads, open(path))}
 
 
-def solve_task(task, k, e, budget, ask, start=None, tokens0=0):
+def solve_task(task, k, e, budget, ask, start=None, tokens0=0, memory="off", lessons=(), lesson_retriever=None):
     rows, eps, tokens = [], [], tokens0
     for ep in range(e):
         if tokens >= budget:
             eps.append({"episode": ep, "stop": "task_budget"})
             break
-        er, stop = episode(task, ep, k, ask, start)
+        er, stop = episode(task, ep, k, ask, start, memory=memory, lessons=lessons, lesson_retriever=lesson_retriever)
         rows += er
         tokens += sum(r["completion_tokens"] or 0 for r in er)
         rec = {"episode": ep, "turns": len(er), "stop": stop, "tokens": sum(r["completion_tokens"] or 0 for r in er)}
@@ -176,6 +182,18 @@ def solve_task(task, k, e, budget, ask, start=None, tokens0=0):
     return rows, {"task": task["id"], "solved": solved, "visible_pass": any(x["stop"] == "pass" for x in eps),
                   "episodes": eps, "turns": len(rows), "completion_tokens": tokens,
                   "no_fresh": fresh_tests(task["tests"]) is None}
+
+
+def distill_episode_lesson(ring, task, rows, summary, task_set, model, arm="loop", ask=None):
+    """Distill and admit a lesson into `ring` if `rows` had a graded failure followed by a fresh-seed verified pass on a train task."""
+    coded_fails = [r for r in rows if r.get("code") is not None and not r.get("passed")]
+    if not coded_fails:
+        return None, "no prior graded failure"
+    last = rows[-1] if rows else {}
+    fp = bool(summary.get("solved"))
+    p_row = {"code": last.get("code"), "passed": bool(last.get("passed")), "fresh_pass": fp,
+             "no_fresh": bool(summary.get("no_fresh", False))}
+    return ring.distill_and_admit(task, coded_fails[0], p_row, task_set=task_set, arm=arm, model=model, ask=ask)
 
 
 def server_ask(model):
@@ -309,6 +327,22 @@ def selftest():
         kinds = [r[0] for r in ring.buf.execute("SELECT kind FROM buffer ORDER BY id")]
         check("ring: 2 coded turns admitted as fail then pass, the no-code turn skipped",
               got == {"admitted": 2, "skipped_no_code": 1, "refused": {}} and kinds == ["fail", "pass"])
+        # 9. verified coding-memory loop v1: distill on train fail->pass, refuse held_out, --memory off byte-identical
+        lid, why = distill_episode_lesson(ring, t, rows, s, "v1", "qwen32", arm="loop")
+        check("memory: distill_episode_lesson admits verified train lesson", lid is not None and why is None)
+        ho_t = {"id": "v9_01_holdout", "prompt": "Write `holdout_fn(x)`.", "tests": t["tests"], "ref": t["ref"], "split": "held_out"}
+        check("memory: distill_episode_lesson refuses held-out task",
+              distill_episode_lesson(ring, ho_t, rows, s, "v9", "qwen32", arm="loop")[0] is None)
+        solve_task(ho_t, 4, 1, 10**9, fake([bad, t["ref"]]))
+        p_base = list(fake.prompts)
+        solve_task(ho_t, 4, 1, 10**9, fake([bad, t["ref"]]), memory="off", lesson_retriever=lambda tk, er, tr: ring.retrieve_lessons(tk, k=3))
+        p_off = list(fake.prompts)
+        r_on, _ = solve_task(ho_t, 4, 1, 10**9, fake([bad, t["ref"]]), memory="on", lesson_retriever=lambda tk, er, tr: ring.retrieve_lessons(tk, k=3, err=er, turn=tr))
+        p_on = list(fake.prompts)
+        check("memory: --memory off prompts are byte-identical to today's path", p_off == p_base)
+        check("memory: --memory on prepends verified lessons and logs lessons_retrieved",
+              all(p.endswith(b) and memring.LESSON_HEAD in p for p, b in zip(p_on, p_base))
+              and r_on[0]["lessons_retrieved"] == [t["id"]])
     print(f"selftest {'OK' if ok else 'FAILED'}")
     return 0 if ok else 1
 
@@ -317,7 +351,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--regrade", metavar="JSONL")
-    ap.add_argument("--set", default="v1", choices=sorted(run.SETS))
+    ap.add_argument("--set", default="v1")
     ap.add_argument("--tasks", help="comma-separated task ids; default all")
     ap.add_argument("--label")
     ap.add_argument("--model", help="default: the one model the server serves; a different name is refused")
@@ -333,9 +367,18 @@ def main():
     ap.add_argument("--plan-from", metavar="PLANS_JSONL", help="plan mode: append each task's plan to its prompt; plan tokens count against the budget")
     ap.add_argument("--ring", metavar="ROOT", help="measure-only memring: admit every coded turn, flush once at the end")
     ap.add_argument("--ring-slot", type=int, help="slot of the model writing (with --ring)")
+    ap.add_argument("--memory", choices=("off", "on"), default="off", help="inject top-k verified training lessons when 'on'")
+    ap.add_argument("--memory-root", help="Ring root containing lessons.db for --memory on or --distill-lessons")
+    ap.add_argument("--lessons", help="frozen lesson export JSON for --memory on")
+    ap.add_argument("--memory-k", type=int, default=3, help="top-k lessons to retrieve when --memory on")
+    ap.add_argument("--distill-lessons", action="store_true", help="distill verified lessons from train (fail->pass) tasks into --memory-root")
     a = ap.parse_args()
     if a.ring and (a.ring_slot is None or a.set not in memring.FAMILIES):
         ap.error("--ring needs --ring-slot and a set with a family map in memring.FAMILIES")
+    if a.memory == "on" and not (a.memory_root or a.lessons):
+        ap.error("--memory on requires --memory-root or --lessons")
+    if a.distill_lessons and (not a.memory_root or memring.set_split(a.set) != "train"):
+        ap.error("--distill-lessons requires --memory-root and a training set (v0-v8)")
     run.load_set(a.set)
     run.API = a.api
     if a.fix_from and not a.tasks:
@@ -375,21 +418,38 @@ def main():
     tests_by_id = {t["id"]: t["tests"] for t in run.TASKS}
     ring = memring.Ring(a.ring, regrade=lambda items: [run.grade(c, tests_by_id[tid]) for tid, c in items]) if a.ring else None
     ring_in = {"admitted": 0, "skipped_no_code": 0, "refused": {}}
+    ho_tasks = run.TASKS if memring.set_split(a.set) == "held_out" else ()
+    tr_tasks = run.TASKS if memring.set_split(a.set) == "train" else ()
+    lesson_bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho_tasks, train_tasks=tr_tasks) if a.lessons else None
+    mem_ring = memring.Ring(a.memory_root) if a.memory_root else None
+    if mem_ring:
+        mem_ring.register_tasks(train_tasks=tr_tasks, held_out_tasks=ho_tasks)
+    retriever = None
+    if a.memory == "on":
+        if lesson_bundle is not None:
+            retriever = lambda tk, er, tr: memring.retrieve_from_export(
+                lesson_bundle, tk, k=a.memory_k, model=a.model, err=er, held_out_tasks=ho_tasks, train_tasks=tr_tasks)
+        else:
+            retriever = lambda tk, er, tr: mem_ring.retrieve_lessons(tk, k=a.memory_k, model=a.model, err=er, turn=tr, log_retrieval=False)
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
-    tasks_out = []
+    tasks_out, rows_with_lessons = [], 0
     with open(base + ".jsonl", "w") as f, cf.ThreadPoolExecutor(a.parallel) as ex:
         def go(t):
             p = plans.get(t["id"])
             rows, s = solve_task(with_plan(t, p["plan"]) if p else t, a.k, a.e, a.task_budget, ask, starts.get(t["id"]),
-                                 p["completion_tokens"] if p else 0)
+                                 p["completion_tokens"] if p else 0, memory=a.memory, lesson_retriever=retriever)
             if p:
                 s.update(plan_tokens=p["completion_tokens"], plan_empty=not p["plan"].strip())
             return rows, s
         for rows, s in ex.map(go, run.TASKS):
             for r in rows:
                 f.write(json.dumps(r) + "\n")
+                rows_with_lessons += bool(r.get("lessons_retrieved"))
             f.flush()
+            if a.distill_lessons and mem_ring:
+                t_obj = next(x for x in run.TASKS if x["id"] == s["task"])
+                distill_episode_lesson(mem_ring, t_obj, rows, s, a.set, a.model, arm="fix" if a.fix_from else "loop")
             if ring:   # passed/err are this process's run.grade results for exactly this code
                 got = ring.ingest(a.ring_slot, memring.FAMILIES[a.set].__getitem__, rows,
                                   [(r["passed"], r["err"]) for r in rows])
@@ -413,6 +473,11 @@ def main():
         "wall_s": round(time.time() - t0, 1), "gtt_peak_gib": round(gtt_peak, 2),
         "per_task": sorted(tasks_out, key=lambda s: s["task"]),
     }
+    if a.memory == "on":
+        summary["memory"] = {"mode": "on", "k": a.memory_k, "lessons": os.path.basename(a.lessons) if a.lessons else None,
+                             "lessons_sha256": hashlib.sha256(open(a.lessons, "rb").read()).hexdigest() if a.lessons else None,
+                             "memory_root": a.memory_root,
+                             "rows_with_lessons": rows_with_lessons}
     if ring:
         summary["ring"] = {"root": a.ring, "slot": a.ring_slot, "ingest": ring_in, "flush": ring.flush()}
     if a.gtt_baseline is not None:

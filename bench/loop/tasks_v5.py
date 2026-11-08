@@ -18,8 +18,8 @@ v5_06 group_infer, v5_07 branch_influence, v5_08 pruned_phis, v5_09 sigfig_sci, 
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 
 task("v5_01_table_zone", r'''

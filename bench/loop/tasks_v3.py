@@ -14,8 +14,8 @@ modules that would trivialize a task.
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 
 task("v3_01_ini_interp", r'''

@@ -25,12 +25,23 @@ sys.path.insert(0, HERE)
 import importlib  # noqa: E402
 
 SETS = {"v0": "tasks", "v1": "tasks_v1", "v2": "tasks_v2", "v3": "tasks_v3", "v4": "tasks_v4", "v5": "tasks_v5", "v6": "tasks_v6", "v7": "tasks_v7", "v8": "tasks_v8"}
+TRAIN_SETS = frozenset(SETS)   # v0-v8 are already exposed; any unseen evaluation set (v9+) defaults to held_out
+SPLITS = {k: "train" for k in TRAIN_SETS}
 TASKS = []  # filled by load_set()
+
+
+def set_split(name):
+    return SPLITS.get(name, "held_out")
 
 
 def load_set(name):
     global TASKS
-    TASKS = importlib.import_module(SETS[name]).TASKS
+    TASKS = importlib.import_module(SETS.get(name, f"tasks_{name}")).TASKS
+    sp = set_split(name)
+    for t in TASKS:
+        t.setdefault("split", sp)
+        if t["split"] != sp:   # a v9+ file must not tag a task train, and v0-v8 can never be held_out
+            raise ValueError(f"{t['id']}: split={t['split']!r}, but set {name!r} is {sp!r}")
     return TASKS
 
 
@@ -459,10 +470,18 @@ def selftest():
     return 0 if ok else 1
 
 
+def task_prompt(task, memory="off", lessons=()):
+    """Prompt for `task`; when memory=='off' returns task['prompt'] byte-identically."""
+    if memory == "off":
+        return task["prompt"]
+    import memring
+    return memring.apply_memory(task["prompt"], lessons, memory=memory)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
-    ap.add_argument("--set", default="v0", choices=sorted(SETS))
+    ap.add_argument("--set", default="v0")
     ap.add_argument("--label")
     ap.add_argument("--model", help="default: the one model the server serves; a different name is refused")
     ap.add_argument("-n", type=int, default=4)
@@ -470,6 +489,10 @@ def main():
     ap.add_argument("--tasks", help="comma-separated task ids; default all tasks in the set")
     ap.add_argument("--parallel", type=int, default=4, help="concurrent requests; match the server's -np")
     ap.add_argument("--gtt-baseline", type=float, help="idle GTT used in GiB, from preflight before the server started")
+    ap.add_argument("--memory", choices=("off", "on"), default="off", help="inject top-k verified training lessons when 'on'")
+    ap.add_argument("--memory-root", help="Ring root containing lessons.db when --memory on")
+    ap.add_argument("--lessons", help="frozen lesson export JSON when --memory on")
+    ap.add_argument("--memory-k", type=int, default=3, help="top-k lessons to retrieve per task when --memory on")
     a = ap.parse_args()
     load_set(a.set)
     if a.tasks:
@@ -482,8 +505,23 @@ def main():
         return selftest()
     if not a.label:
         ap.error("--label required")
+    if a.memory == "on" and not (a.memory_root or a.lessons):
+        ap.error("--memory on requires --memory-root or --lessons")
     a.model = served_model(a.model)
     server = server_info()
+    lesson_of = {}
+    if a.memory == "on":
+        import memring
+        ho = TASKS if set_split(a.set) == "held_out" else ()
+        if a.lessons:
+            bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho)
+            for t in TASKS:
+                lesson_of[t["id"]] = memring.retrieve_from_export(bundle, t, k=a.memory_k, model=a.model, held_out_tasks=ho)
+        else:
+            ring = memring.Ring(a.memory_root)
+            ring.register_tasks(held_out_tasks=ho)
+            for t in TASKS:
+                lesson_of[t["id"]] = ring.retrieve_lessons(t, k=a.memory_k, model=a.model)
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
     out = os.path.join(HERE, "results", f"{a.label}.jsonl")
     seeds = range(a.seed_start, a.seed_start + a.n)
@@ -494,13 +532,17 @@ def main():
 
     def one(job):
         t, seed = job
-        r = ask(a.model, t["prompt"], seed)
+        ls = lesson_of.get(t["id"], ())
+        r = ask(a.model, task_prompt(t, a.memory, ls), seed)
         code = extract(r["content"])
         passed, err = grade(code, t["tests"]) if code else (False, "no code block")
-        return {"task": t["id"], "seed": seed, "passed": passed, "err": "" if passed else err,
-                "finish": r["finish"], "completion_tokens": r["usage"].get("completion_tokens"),
-                "prompt_tokens": r["usage"].get("prompt_tokens"), "reasoning_chars": r["reasoning_chars"],
-                "gen_s": r["gen_s"], "code": code}
+        row = {"task": t["id"], "seed": seed, "passed": passed, "err": "" if passed else err,
+               "finish": r["finish"], "completion_tokens": r["usage"].get("completion_tokens"),
+               "prompt_tokens": r["usage"].get("prompt_tokens"), "reasoning_chars": r["reasoning_chars"],
+               "gen_s": r["gen_s"], "code": code}
+        if a.memory == "on":
+            row["lessons_retrieved"] = [x["task_id"] for x in ls]
+        return row
 
     with open(out, "w") as f, cf.ThreadPoolExecutor(a.parallel) as ex:
         for row in ex.map(one, jobs):

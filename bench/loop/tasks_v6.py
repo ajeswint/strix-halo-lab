@@ -22,8 +22,8 @@ v6_30 replay_editor_log.
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 task("v6_01_wire_records", r'''
 Write `wiredecode(data)` that strictly decodes a protobuf-style wire message into a list of records. `data` must be a

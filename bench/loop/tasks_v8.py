@@ -21,8 +21,8 @@ v8_27 stair_ways, v8_28 lcs_smallest, v8_29 matrix_chain, v8_30 ledger_events.
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 
 # --- formats ---
