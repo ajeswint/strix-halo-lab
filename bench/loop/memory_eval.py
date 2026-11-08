@@ -15,8 +15,9 @@ server llmctl already started.
 Matched budget: both arms get the same --set, --tasks, --model, -k, -e, --task-budget, --parallel and --api, and
 agent.py's sampling seeds are fixed by (episode, turn) (1000 + 10 * episode + turn); `read` re-checks all of these
 from both summaries and every jsonl row, so a pair of arms run any other way is INVALID, not KEEP. The arms
-differ only by `--memory on --lessons L --memory-k K`. The prereg pins the lesson export, the task file and the
-grader by sha256 / GRADER_VER, so a changed input is refused instead of measured.
+differ only by `--memory on --lessons L --memory-k K`. The prereg pins the lesson export, the task file, the
+harness files (HARNESS: agent.py, run.py, memring.py, memory_eval.py) and the grader by sha256 / GRADER_VER, so a
+changed input or harness is refused instead of measured.
 """
 import argparse, hashlib, json, math, os, subprocess, sys
 
@@ -39,12 +40,17 @@ READ_RULE = (f"Paired per task on the held-out set (solved = agent.py summary pe
              f"Otherwise INCONCLUSIVE (no keep; only a fresh held-out set can settle it, never a rerun of this one). "
              f"The exact two-sided sign test on gains vs losses is reported, not used for the verdict.")
 MATCH_KEYS = ("set", "tasks", "model", "k", "e", "task_budget", "parallel", "api")
+HARNESS = ("agent.py", "run.py", "memring.py", "memory_eval.py")   # sha256-pinned in the prereg, re-checked by `run`
 LOOP_SEED_BASE = 1000   # agent.episode: seed = 1000 + 10 * episode + turn outside fix mode (fix mode is not legal here)
 
 
 def sha256_file(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
+
+
+def harness_sha256():
+    return {f: sha256_file(os.path.join(HERE, f)) for f in HARNESS}
 
 
 def task_file(set_name):
@@ -104,7 +110,8 @@ def build_prereg(a):
           "lessons": os.path.relpath(os.path.abspath(a.lessons), os.path.dirname(os.path.dirname(HERE))),
           "lessons_sha256": sha256_file(a.lessons), "lessons_key": os.path.abspath(a.lessons_key),
           "lessons_key_id": bundle["key_id"], "lessons_for_model": sum(l["model"] == a.model for l in bundle["lessons"]),
-          "memory_k": a.memory_k, "grader": memring.GRADER_VER, "arm_order": ["off", "on"],
+          "memory_k": a.memory_k, "grader": memring.GRADER_VER, "harness_sha256": harness_sha256(),
+          "arm_order": ["off", "on"],
           "read_rule_version": READ_RULE_VERSION, "read_rule": READ_RULE}
     pr["commands"] = {arm: arm_cmd(pr, arm) for arm in pr["arm_order"]}
     return pr
@@ -132,6 +139,10 @@ def recheck(pr):
                          ("grader", pr["grader"], memring.GRADER_VER), ("read rule", pr["read_rule"], READ_RULE)):
         if want != got:
             return f"{k} changed since the prereg ({str(want)[:12]} -> {str(got)[:12]})"
+    now, pinned = harness_sha256(), pr.get("harness_sha256") or {}
+    changed = sorted(f for f in HARNESS if pinned.get(f) != now[f])
+    if changed:
+        return f"harness changed since the prereg (or not pinned): {', '.join(changed)}"
     return None
 
 
@@ -197,6 +208,8 @@ def read(pr, off, on, off_rows=None, on_rows=None):
             "gains": gains, "losses": losses, "net": net, "keep_line": line,
             "sign_test_p": round(sign_test_p(len(gains), len(losses)), 4),
             "tokens": {"off": off.get("completion_tokens_total"), "on": on.get("completion_tokens_total")},
+            "turns": {"off": off.get("turns_total"), "on": on.get("turns_total")},
+            "wall_s": {"off": off.get("wall_s"), "on": on.get("wall_s")},
             "read_rule_version": pr["read_rule_version"]}
 
 

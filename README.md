@@ -1668,8 +1668,13 @@ held-out eval: `docs/memory-loop-v1.md`. Implementation only, nothing run on a m
 - `--memory on|off` on `run.py`, `agent.py`, `debate.py`; off (default) is byte-identical to main `01c02e2`
   (`bench/loop/test_memory_loop.py`, `TestMainParity`).
 - Eval: `bench/loop/memory_eval.py check|run|report`, memory off vs on on a held-out set, matched model, K, E, budget,
-  parallel, api and per-row seeds; KEEP at net >= max(3, ceil(0.1 N)), DROP at net <= 0, else INCONCLUSIVE. No v9
-  task file exists; it needs a fresh one (explicit `family` per task, ids not in v0-v8) and AJ's yes for the GPU stage.
+  parallel, api and per-row seeds; KEEP at net >= max(3, ceil(0.1 N)), DROP at net <= 0, else INCONCLUSIVE.
+- v9 held-out set (2026-11-07, CPU only, frozen): `bench/loop/tasks_v9.py`, 30 tasks (formats 8, number_theory 7,
+  graphs_geometry 7, simulation_dp 8), unseen to the evaluated local models in this lab (authors/reviewers have seen
+  it; no pretraining claim). Novelty audit vs all 240 v0-v8 tasks: `docs/v9-novelty-audit.md` (0 hard flags, 8
+  reviewed vocabulary overlaps). Protocol and GPU session plan: `docs/memory-eval-v9-protocol.md`. **Blocker:** no
+  stored agent.py trajectory exists for `qwen3-32b` or `r1-distill-qwen-32b`, so no same-model lesson export and no
+  prereg; unblocking needs one train-only K4E4 run per model on v8 (AJ's go; estimate in the protocol doc).
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

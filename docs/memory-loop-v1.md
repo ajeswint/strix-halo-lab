@@ -5,7 +5,8 @@ AJ approved 2026-11-07 CT, after the CRAwDAD v8 baseline (archived read-only at
 distill a short, generalizable lesson from a graded failure that was later fixed on a TRAINING task, keep it only with
 the verdict that verified the fix, and inject the top-k lessons into prompts for new tasks behind `--memory on|off`.
 Implementation only. Nothing here has been run on a model; the eval below is written and executable, not run.
-There is no v9 (or later) task file; no held-out comparison can start until one is written (section 4).
+The v9 held-out set now exists (2026-11-07, `bench/loop/tasks_v9.py`, frozen); its protocol, novelty audit and the
+lesson-corpus blocker are in `docs/memory-eval-v9-protocol.md` and `docs/v9-novelty-audit.md`.
 
 **What "verified" means here, and only this:** a lesson is admitted only if the same model's trajectory on a train
 task had a graded failure and then a later attempt that passed the visible tests and `agent.fresh_grade` (oracle seed
@@ -142,8 +143,8 @@ loop without them, at the same budget?
 - **Pre-registration.** `memory_eval.py check --set v9 --model M --lessons L.json --label P` validates (held-out set,
   every task tagged held-out, export passes the leak guards against the whole v9 set) and writes
   `results/P.prereg.json`: tasks, task-file sha256, lessons sha256, seal key path and `key_id`, grader version, budget,
-  arm order, both exact commands, and the read rule text. It does not hash `agent.py`/`memring.py`/`memory_eval.py`:
-  a harness edit after `check` is not detected. Commit and push it before any GPU stage. Written once; a new plan needs a new label.
+  arm order, both exact commands, and the read rule text. It also pins `harness_sha256` of `agent.py`, `run.py`,
+  `memring.py` and `memory_eval.py` (added 2026-11-07); `run` refuses if any changed. Commit and push it before any GPU stage. Written once; a new plan needs a new label.
 - **Run** (needs AJ's separate yes; preflight first; inside an llmctl session):
   `scripts/llmctl.py run -- python3 bench/loop/memory_eval.py run --label P`. It re-checks every sha256 and the read rule
   against the prereg and refuses on any change, refuses if an arm's results already exist, then runs both arms and
@@ -168,7 +169,7 @@ loop without them, at the same budget?
 
 ## 5. Tests (CPU only)
 
-`python3 bench/loop/test_memory_loop.py -v` (40 tests, about 3 s; `TestMainParity` and the agent episode test need
+`python3 bench/loop/test_memory_loop.py -v` (44 tests, about 3 s; v9 set: `bench/loop/test_tasks_v9.py`, 12 tests, about 21 s; `TestMainParity` and the agent episode test need
 `bwrap`) plus the module selftests
 (`run.py`, `agent.py`, `memring.py`, `debate.py --selftest`). Stub models only; grading goes through `run.grade`'s
 sandbox as in every selftest.

@@ -31,7 +31,7 @@ KEPT 2026-10-15 (README "v6 pipeline" sections: Qwen loop 24/30, DeepSeek fixer 
 - `fresh SET LABEL` (session 1): `SET` is registered in `run.SETS`, no stored `results/*.jsonl` row is a task of `SET` (a stored arm is a finished measurement; rerunning one is a new pre-run, not this procedure), and the label is new (`agent.py` overwrites an existing label's files).
 - `ready S1 LABEL` (session 2): session 1's fix files exist and are non-empty (its `select` exited 0), and the DeepSeek label is new.
 
-The blocks below use v9. No v9 exists today (v0-v5 are finished measurements, v6 is spent, v7 was the CRAwDAD debate set and is now the retrieval corpus, v8 is held out for the retrieval test), so both refuse at the gate before any load. A real run first registers a new set (`bench/loop/tasks_vN.py` plus its `SETS` line, as v6 was) and changes `SET`.
+The blocks below use v9, which since 2026-11-07 is the memory-loop held-out set (`bench/loop/tasks_v9.py`, not in `run.SETS`, reserved for `docs/memory-eval-v9-protocol.md`): never run this procedure on it. `fresh` refuses a set outside `run.SETS`, so both blocks refuse at the gate before any load. A real run first registers a new set (`bench/loop/tasks_vN.py` plus its `SETS` line, as v6 was) and changes `SET`.
 
 Session 1, Qwen loop, then the selector. `bye` sits inside the group that runs only after a successful `invite`, so a gate refusal or a refused invite never ends someone else's session:
 

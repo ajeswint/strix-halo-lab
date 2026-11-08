@@ -506,6 +506,43 @@ class TestMemoryEval(Base):
         self.assertEqual(rec["verdict"], "INCONCLUSIVE")
         self.assertEqual(rc, 0)
 
+    def test_prereg_pins_harness_and_run_refuses_a_change(self):
+        self.check()
+        with open(os.path.join(self.results, "ev.prereg.json")) as f:
+            pr = json.load(f)
+        self.assertEqual(sorted(pr["harness_sha256"]), sorted(memory_eval.HARNESS))
+        self.assertEqual(pr["harness_sha256"], memory_eval.harness_sha256())
+        self.assertIsNone(memory_eval.recheck(pr))
+        for f in memory_eval.HARNESS:
+            bad = dict(pr, harness_sha256=dict(pr["harness_sha256"], **{f: "0" * 64}))
+            self.assertIn(f, memory_eval.recheck(bad))
+        self.assertIn("not pinned", memory_eval.recheck({k: v for k, v in pr.items() if k != "harness_sha256"}))
+        calls = []
+        orig_h, orig_c = memory_eval.harness_sha256, memory_eval.subprocess.call
+        memory_eval.harness_sha256 = lambda: dict(orig_h(), **{"agent.py": "1" * 64})
+        memory_eval.subprocess.call = lambda c: calls.append(c) or 0
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                self.main("run", "--label", "ev")
+        finally:
+            memory_eval.harness_sha256, memory_eval.subprocess.call = orig_h, orig_c
+        self.assertIn("harness changed", str(cm.exception))
+        self.assertEqual(calls, [])
+
+    def test_report_carries_cost_fields(self):
+        tasks = ["v99_01_t", "v99_02_t"]
+        pr = {"set": "v99", "tasks": tasks, "model": "m", "k": 4, "e": 4, "task_budget": 10, "parallel": 4,
+              "api": "http://x", "lessons_sha256": "L", "memory_k": 3, "read_rule_version": memory_eval.READ_RULE_VERSION}
+        rows = [{"task": t, "episode": 0, "turn": 0, "seed": 1000} for t in tasks]
+        base = {"set": "v99", "tasks": 2, "model": "m", "k": 4, "e": 4, "task_budget": 10, "parallel": 4, "api": "http://x",
+                "per_task": [{"task": t, "solved": False} for t in tasks]}
+        off = dict(base, completion_tokens_total=100, turns_total=8, wall_s=12.5)
+        on = dict(base, completion_tokens_total=90, turns_total=7, wall_s=11.0,
+                  memory={"lessons_sha256": "L", "k": 3, "rows_with_lessons": 2})
+        rec = memory_eval.read(pr, off, on, rows, rows)
+        self.assertEqual((rec["tokens"], rec["turns"], rec["wall_s"]),
+                         ({"off": 100, "on": 90}, {"off": 8, "on": 7}, {"off": 12.5, "on": 11.0}))
+
     def test_read_rule(self):
         tasks = [f"v99_{i:02d}_t" for i in range(1, 31)]
         pr = {"set": "v99", "tasks": tasks, "model": "m", "k": 4, "e": 4, "task_budget": 100, "parallel": 4,
