@@ -1,0 +1,646 @@
+{
+ "label": "agent-v8-qwen3-32b-k4e4-np4",
+ "set": "v8",
+ "model": "qwen3-32b",
+ "server": {
+  "build_info": "b11669-620d2225c",
+  "model_path": "/data/models/Qwen3-32B-Q4_K_M.gguf",
+  "model_alias": "qwen3-32b"
+ },
+ "tasks": 30,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "plan_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 30,
+ "visible_pass": 30,
+ "completion_tokens_total": 431404,
+ "turns_total": 59,
+ "wall_s": 13930.9,
+ "gtt_peak_gib": 36.15,
+ "per_task": [
+  {
+   "task": "v8_01_hex_color",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8562,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8562,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_02_morse_text",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 14869,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 14869,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_03_case_convert",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7917,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7917,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_04_money_text",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 17652
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8569,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 26221,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_05_cidr_range",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 14321,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 14321,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_06_clock_12h",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 5954,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 5954,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_07_luhn_digits",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 13580,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 13580,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_08_query_pairs",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 25867
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8825,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 5,
+   "completion_tokens": 34692,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_09_digit_persistence",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8305,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8305,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_10_euler_phi",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7433,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7433,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_11_goldbach_pairs",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8493,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8493,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_12_pascal_mod",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6168,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6168,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_13_primitive_triples",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8446,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8446,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_14_happy_count",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8443,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8443,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_15_egyptian_greedy",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8504,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8504,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_16_two_color",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8502,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8502,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_17_lattice_segment",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8134,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8134,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_18_closest_pair",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7849,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7849,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_19_euler_trail",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 17400
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 31416
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 17931,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 8,
+   "completion_tokens": 66747,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_20_triangle_kind",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 8406,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 8406,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_21_manhattan_center",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 16054
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8114,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 24168,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_22_tree_centers",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 18265,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 18265,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_23_robot_walk",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "pass",
+     "tokens": 18077,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 4,
+   "completion_tokens": 18077,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_24_elevator_scan",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 17202
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8510,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 25712,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_25_josephus_order",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 4391,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 4391,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_26_max_subarray",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8449,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8449,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_27_stair_ways",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_code",
+     "tokens": 17220
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8593,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 25813,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_28_lcs_smallest",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8675,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8675,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_29_matrix_chain",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8158,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8158,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_30_ledger_events",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8150,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8150,
+   "no_fresh": false
+  }
+ ]
+}

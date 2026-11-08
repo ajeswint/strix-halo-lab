@@ -1,0 +1,685 @@
+{
+ "label": "agent-v8-r1-distill-qwen-32b-k4e4-np4",
+ "set": "v8",
+ "model": "r1-distill-qwen-32b",
+ "server": {
+  "build_info": "b11669-620d2225c",
+  "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+  "model_alias": "r1-distill-qwen-32b"
+ },
+ "tasks": 30,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "plan_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 27,
+ "visible_pass": 27,
+ "completion_tokens_total": 565958,
+ "turns_total": 85,
+ "wall_s": 19728.8,
+ "gtt_peak_gib": 36.27,
+ "per_task": [
+  {
+   "task": "v8_01_hex_color",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 7334,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 7334,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_02_morse_text",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 14646
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 15547
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 21417
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 17734
+    }
+   ],
+   "turns": 9,
+   "completion_tokens": 69344,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_03_case_convert",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 10908,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 10908,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_04_money_text",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8862,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8862,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_05_cidr_range",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 10091,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 10091,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_06_clock_12h",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 17934,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 17934,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_07_luhn_digits",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 8243,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 8243,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_08_query_pairs",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7135,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7135,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_09_digit_persistence",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6483,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6483,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_10_euler_phi",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 5452,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 5452,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_11_goldbach_pairs",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 5001,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 5001,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_12_pascal_mod",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 5686,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 5686,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_13_primitive_triples",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8622,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8622,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_14_happy_count",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7218,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7218,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_15_egyptian_greedy",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6945,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6945,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_16_two_color",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 10811
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6099,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 16910,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_17_lattice_segment",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6823,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6823,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_18_closest_pair",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6346,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6346,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_19_euler_trail",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18090
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18197
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 30076
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18104
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 84467,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_20_triangle_kind",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6633,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 6633,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_21_manhattan_center",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 13653
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 13919
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 10293
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 15105
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 52970,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_22_tree_centers",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 29659
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 13965
+    },
+    {
+     "episode": 2,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9005,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 7,
+   "completion_tokens": 52629,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_23_robot_walk",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 12537,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 12537,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_24_elevator_scan",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 27293
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 13547,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 6,
+   "completion_tokens": 40840,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_25_josephus_order",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 5326,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 5326,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_26_max_subarray",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 20898
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 23076
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 16672,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 8,
+   "completion_tokens": 60646,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_27_stair_ways",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9041,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9041,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_28_lcs_smallest",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7785,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7785,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_29_matrix_chain",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9052,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9052,
+   "no_fresh": false
+  },
+  {
+   "task": "v8_30_ledger_events",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8695,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8695,
+   "no_fresh": false
+  }
+ ]
+}

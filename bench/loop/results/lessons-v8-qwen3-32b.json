@@ -1,0 +1,133 @@
+{
+ "grader": "grade-65b662df4ba4",
+ "k": 3,
+ "key_id": "aedd9503994d4db6",
+ "count": 5,
+ "lessons": [
+  {
+   "id": 1,
+   "task_id": "v8_02_morse_text",
+   "task_set": "v8",
+   "split": "train",
+   "family": "formats",
+   "arm": "loop",
+   "model": "qwen3-32b",
+   "timestamp": "2026-11-08T18:09:07Z",
+   "fail_exc": "KeyError",
+   "verdict": {
+    "fail_err_sha": "d120a0d44dde",
+    "fail_exc": "KeyError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Check for empty collections, single-element boundary cases, and zero denominators before indexing or dividing.",
+   "hash": "bfb060f30a53138398ca402b6bc3a360b522d5b29676822b3a8b4d0ce626d608",
+   "seal": "c3d0386f49a738cb0193ff0a44055347c24b3e5caedcdda79064c646d79da5cc"
+  },
+  {
+   "id": 2,
+   "task_id": "v8_04_money_text",
+   "task_set": "v8",
+   "split": "train",
+   "family": "formats",
+   "arm": "loop",
+   "model": "qwen3-32b",
+   "timestamp": "2026-11-08T18:09:07Z",
+   "fail_exc": "AssertionError",
+   "verdict": {
+    "fail_err_sha": "8ae0692a3f94",
+    "fail_exc": "AssertionError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Track delimiter, quoting, escaping, and line-termination state transitions explicitly in a single pass.",
+   "hash": "6a1f5c2f6a2773c12b7dda4c71bb479ecf91bcc3cf4883df75988708902f681c",
+   "seal": "68c32cf2c1ebe884f52aa454d3437c1979591ba5dafbedce6dcced0e0455b0b5"
+  },
+  {
+   "id": 3,
+   "task_id": "v8_19_euler_trail",
+   "task_set": "v8",
+   "split": "train",
+   "family": "graphs_geometry",
+   "arm": "loop",
+   "model": "qwen3-32b",
+   "timestamp": "2026-11-08T18:09:07Z",
+   "fail_exc": "AssertionError",
+   "verdict": {
+    "fail_err_sha": "fe24425529f0",
+    "fail_exc": "AssertionError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Handle disconnected components, degenerate geometry, and lexicographic tie-breaking explicitly.",
+   "hash": "ac34192da4bc315867aea12ba60ab14bd6ad60380f9a2ef40d870725f050a183",
+   "seal": "d2858a57f69a74b98b4fbef3dfd404211b7590dba8c87cd4c84ef6ad4f25f3e3"
+  },
+  {
+   "id": 4,
+   "task_id": "v8_22_tree_centers",
+   "task_set": "v8",
+   "split": "train",
+   "family": "graphs_geometry",
+   "arm": "loop",
+   "model": "qwen3-32b",
+   "timestamp": "2026-11-08T18:09:09Z",
+   "fail_exc": "MemoryError",
+   "verdict": {
+    "fail_err_sha": "2b5ae51f1dbe",
+    "fail_exc": "MemoryError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Replace exponential branching or deep recursion with memoized states or iterative bottom-up dynamic programming.",
+   "hash": "4e8393f90524cbea088f8f710cb470bc1a0e824b2dea4bef535b9e2853566737",
+   "seal": "d2ac8e4b0e7cbf325247cd4965fdaa6f8b99236344aee8d22e9d719b448eb5b4"
+  },
+  {
+   "id": 5,
+   "task_id": "v8_23_robot_walk",
+   "task_set": "v8",
+   "split": "train",
+   "family": "simulation_dp",
+   "arm": "loop",
+   "model": "qwen3-32b",
+   "timestamp": "2026-11-08T18:09:09Z",
+   "fail_exc": "AssertionError",
+   "verdict": {
+    "fail_err_sha": "9ef9627d9578",
+    "fail_exc": "AssertionError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Verify boundary conditions, tie-break ordering, and state updates at every step against the spec.",
+   "hash": "967f24f8f304dd486c922b52587411722bcfa9c696328ed5ec6f0bd53065adcd",
+   "seal": "8b017e929470e3d329d433160d2d0396067295c27cdf92f4ba29e99be79b13df"
+  }
+ ]
+}
