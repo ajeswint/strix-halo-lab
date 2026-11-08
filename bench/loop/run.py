@@ -492,6 +492,7 @@ def main():
     ap.add_argument("--memory", choices=("off", "on"), default="off", help="inject top-k verified training lessons when 'on'")
     ap.add_argument("--memory-root", help="Ring root containing lessons.db when --memory on")
     ap.add_argument("--lessons", help="frozen lesson export JSON when --memory on")
+    ap.add_argument("--lessons-key", help="seal.key that wrote --lessons (default memring.DEFAULT_SEAL_KEY)")
     ap.add_argument("--memory-k", type=int, default=3, help="top-k lessons to retrieve per task when --memory on")
     a = ap.parse_args()
     load_set(a.set)
@@ -514,7 +515,8 @@ def main():
         import memring
         ho = TASKS if set_split(a.set) == "held_out" else ()
         if a.lessons:
-            bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho)
+            bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho,
+                                                key=memring.read_seal_key(a.lessons_key or memring.DEFAULT_SEAL_KEY))
             for t in TASKS:
                 lesson_of[t["id"]] = memring.retrieve_from_export(bundle, t, k=a.memory_k, model=a.model, held_out_tasks=ho)
         else:

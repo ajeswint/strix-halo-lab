@@ -1657,15 +1657,19 @@ Stated before any GPU session (2026-11-05 CT, measure skill steps 1-6). Reopens 
 Approved by AJ 2026-11-07 CT, after the archived CRAwDAD v8 baseline. Design, leak guards and the pre-registered
 held-out eval: `docs/memory-loop-v1.md`. Implementation only, nothing run on a model.
 
-- Lessons: distilled from a graded failure then fresh-grade-verified fix on a TRAINING task, stored with provenance
-  and verdict in `lessons.db` under a memring Ring root (`memring.py lessons-distill`, `agent.py --distill-lessons`).
+- Lessons: distilled from a graded failure then a later fresh-grade pass in the same model's trajectory on a
+  TRAINING task ("verified" = that CPU re-grade, nothing more), stored with provenance and verdict in `lessons.db`
+  under a memring Ring root (`memring.py lessons-distill --model ALIAS`, `agent.py --distill-lessons`). HMAC seal =
+  integrity against unsigned edits given a trusted `seal.key`, not proof of the recorded facts; `leak_check` is a
+  lexical backstop, not paraphrase protection.
 - Split: v0-v8 are `train` (all exposed; **v8 is not a valid holdout**); held-out sets are fresh v9+ files tagged
   `held_out`, committed before any model sees them, spent after one eval. Writes and retrievals sourced from held-out
   are refused in code.
 - `--memory on|off` on `run.py`, `agent.py`, `debate.py`; off (default) is byte-identical to main `01c02e2`
   (`bench/loop/test_memory_loop.py`, `TestMainParity`).
-- Eval: `bench/loop/memory_eval.py check|run|report`, memory off vs on on v9, matched model, K, E, budget and seeds;
-  KEEP at net >= max(3, ceil(0.1 N)), DROP at net <= 0, else INCONCLUSIVE. Needs v9 tasks and AJ's yes for the GPU stage.
+- Eval: `bench/loop/memory_eval.py check|run|report`, memory off vs on on a held-out set, matched model, K, E, budget,
+  parallel, api and per-row seeds; KEEP at net >= max(3, ceil(0.1 N)), DROP at net <= 0, else INCONCLUSIVE. No v9
+  task file exists; it needs a fresh one (explicit `family` per task, ids not in v0-v8) and AJ's yes for the GPU stage.
 
 ## Model lifecycle: llmctl sessions (2026-10-07)
 

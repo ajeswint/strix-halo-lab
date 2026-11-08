@@ -22,7 +22,7 @@ MAIN_REF = "01c02e2"   # main when the memory loop branched; --memory off must r
 
 HO_ENTRY = "kth_covered_point"
 HO_TASK = {
-    "id": "v99_01_interval_kth", "split": "held_out",
+    "id": "v99_01_interval_kth", "split": "held_out", "family": "graphs_geometry",
     "prompt": (f"Write `{HO_ENTRY}(intervals, queries)` in Python 3. Given a list of closed integer intervals and "
                "1-based rank queries, return for each query the k-th smallest integer covered by at least two distinct "
                "intervals, or None if fewer than k such integers exist."),
@@ -64,8 +64,11 @@ class Base(unittest.TestCase):
         self.v8 = run.load_set("v8")
         self.v7 = run.load_set("v7")
         self.ring.register_tasks(train_tasks=self.v7 + self.v8, held_out_tasks=[HO_TASK], held_out_feedbacks=[HO_FEEDBACK])
+        self.key = self.ring.key
+        self.key_path = os.path.join(self.tmp, "ring", "seal.key")
 
     def tearDown(self):
+        self.ring.close()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def prov(self, **kw):
@@ -88,8 +91,8 @@ class TestSplit(Base):
             self.assertFalse(memring.require_held_out_eval_set(s)[0], s)
         self.assertIn("v8", memring.EXPOSED_SETS)
         self.assertEqual(run.set_split("v9"), "held_out")
-        self.assertTrue(memring.require_held_out_eval_set("v9", [HO_TASK])[0])
-        self.assertFalse(memring.require_held_out_eval_set("v9", [dict(HO_TASK, split="train")])[0])
+        self.assertTrue(memring.require_held_out_eval_set("v99", [HO_TASK])[0])
+        self.assertFalse(memring.require_held_out_eval_set("v99", [dict(HO_TASK, split="train")])[0])
 
     def test_load_set_refuses_a_mis_tagged_task(self):
         d = os.path.join(self.tmp, "mods")
@@ -202,9 +205,9 @@ class TestLeakGuards(Base):
         exp = os.path.join(self.tmp, "lessons.json")
         self.ring.export_lessons(exp)
         ho2 = dict(HO_TASK, id="v99_02_token_stream", grader_feedback="AssertionError: " + CLEAN)
-        self.assertEqual(len(memring.retrieve_from_export(memring.load_lesson_export(exp), ho2, k=3)), 0)
+        self.assertEqual(len(memring.retrieve_from_export(memring.load_lesson_export(exp, key=self.key), ho2, k=3)), 0)
         with self.assertRaises(ValueError):
-            memring.load_lesson_export(exp, held_out_tasks=[ho2])
+            memring.load_lesson_export(exp, held_out_tasks=[ho2], key=self.key)
         self.ring.register_tasks(held_out_tasks=[ho2])
         self.assertEqual(self.ring.retrieve_lessons(ho2, k=3, model="qwen32"), [])
 
@@ -219,7 +222,7 @@ class TestLeakGuards(Base):
             with open(p, "w") as f:
                 json.dump(bad, f)
             with self.assertRaises(ValueError, msg=edit):
-                memring.load_lesson_export(p, held_out_tasks=[HO_TASK])
+                memring.load_lesson_export(p, held_out_tasks=[HO_TASK], key=self.key)
             self.assertEqual(memring.retrieve_from_export(bad, HO_TASK, k=3), [], edit)
 
 
@@ -248,7 +251,7 @@ class TestRetrieval(Base):
         self.fill()
         exp = os.path.join(self.tmp, "lessons.json")
         self.ring.export_lessons(exp)
-        b = memring.load_lesson_export(exp, held_out_tasks=[HO_TASK])
+        b = memring.load_lesson_export(exp, held_out_tasks=[HO_TASK], key=self.key)
         live = [r["task_id"] for r in self.ring.retrieve_lessons(HO_TASK, k=3, model="qwen32", log_retrieval=False)]
         frozen = [r["task_id"] for r in memring.retrieve_from_export(b, HO_TASK, k=3, model="qwen32")]
         self.assertEqual(live, frozen)
@@ -423,7 +426,7 @@ class TestMemoryEval(Base):
 
     def check(self, label="ev", **kw):
         args = ["check", "--label", label, "--set", kw.get("set", "v99"), "--model", kw.get("model", "qwen32"),
-                "--lessons", kw.get("lessons", self.lessons)]
+                "--lessons", kw.get("lessons", self.lessons), "--lessons-key", self.key_path]
         return self.main(*args)
 
     def test_refuses_train_sets_and_empty_memory(self):
@@ -480,8 +483,12 @@ class TestMemoryEval(Base):
             solved = {"off": {"v99_01_interval_kth": False, "v99_02_other": True},
                       "on": {"v99_01_interval_kth": True, "v99_02_other": True}}[arm]
             s = {"set": "v99", "tasks": 2, "model": "qwen32", "k": 4, "e": 4, "task_budget": pr["task_budget"],
+                 "parallel": pr["parallel"], "api": pr["api"], "fix_from": None, "plan_from": None,
                  "server": {"build_info": "b"}, "completion_tokens_total": 100,
                  "per_task": [{"task": k, "solved": v} for k, v in solved.items()]}
+            with open(os.path.join(self.results, f"ev-{arm}.jsonl"), "w") as f:
+                for k in solved:
+                    f.write(json.dumps({"task": k, "episode": 0, "turn": 0, "seed": 1000}) + "\n")
             if arm == "on":
                 s["memory"] = {"mode": "on", "k": pr["memory_k"], "lessons_sha256": pr["lessons_sha256"], "rows_with_lessons": 3}
             os.makedirs(self.results, exist_ok=True)
@@ -501,17 +508,19 @@ class TestMemoryEval(Base):
 
     def test_read_rule(self):
         tasks = [f"v99_{i:02d}_t" for i in range(1, 31)]
-        pr = {"set": "v99", "tasks": tasks, "model": "m", "k": 4, "e": 4, "task_budget": 100, "lessons_sha256": "L",
-              "memory_k": 3, "read_rule_version": memory_eval.READ_RULE_VERSION}
+        pr = {"set": "v99", "tasks": tasks, "model": "m", "k": 4, "e": 4, "task_budget": 100, "parallel": 4,
+              "api": "http://x", "lessons_sha256": "L", "memory_k": 3, "read_rule_version": memory_eval.READ_RULE_VERSION}
+        rows = [{"task": t, "episode": ep, "turn": tn, "seed": 1000 + 10 * ep + tn} for t in tasks for ep in (0, 1) for tn in (0, 1)]
 
         def summ(solved, mem=True):
-            s = {"set": "v99", "tasks": 30, "model": "m", "k": 4, "e": 4, "task_budget": 100, "server": {"b": 1},
-                 "per_task": [{"task": t, "solved": t in solved} for t in tasks]}
+            s = {"set": "v99", "tasks": 30, "model": "m", "k": 4, "e": 4, "task_budget": 100, "parallel": 4,
+                 "api": "http://x", "server": {"b": 1}, "per_task": [{"task": t, "solved": t in solved} for t in tasks]}
             if mem:
                 s["memory"] = {"mode": "on", "k": 3, "lessons_sha256": "L", "rows_with_lessons": 5}
             return s
+        self.pr, self.rows, self.summ, self.tasks30 = pr, rows, summ, tasks
         base = set(tasks[:10])
-        read = lambda on: memory_eval.read(pr, summ(base, mem=False), on)
+        read = lambda on: memory_eval.read(pr, summ(base, mem=False), on, rows, rows)
         self.assertEqual(read(summ(base | set(tasks[10:13])))["verdict"], "KEEP")          # net +3 = line at N=30
         self.assertEqual(read(summ(base | set(tasks[10:12])))["verdict"], "INCONCLUSIVE")  # net +2
         self.assertEqual(read(summ(base))["verdict"], "DROP")                             # net 0
@@ -525,9 +534,223 @@ class TestMemoryEval(Base):
         bad = summ(base | set(tasks[10:13]))
         bad["memory"]["lessons_sha256"] = "X"
         self.assertEqual(read(bad)["verdict"], "INVALID")
-        self.assertEqual(memory_eval.read(pr, summ(base, mem=True), summ(base))["verdict"], "INVALID")  # off ran with memory
-        self.assertEqual(memory_eval.read(pr, None, summ(base))["verdict"], "INVALID")
+        self.assertEqual(memory_eval.read(pr, summ(base, mem=True), summ(base), rows, rows)["verdict"], "INVALID")  # off ran with memory
+        self.assertEqual(memory_eval.read(pr, None, summ(base), rows, rows)["verdict"], "INVALID")
         self.assertAlmostEqual(memory_eval.sign_test_p(3, 0), 0.25)
+
+
+# --- regressions for the b260184 REQUEST-CHANGES blockers --------------------------------------------------------
+
+class TestB1Family(Base):
+    """Blocker 1: no substring family guess; unknown family earns no +2; held-out tasks carry an explicit family."""
+
+    def test_no_guess_for_ids_outside_the_map(self):
+        for t in self.v7 + self.v8:
+            self.assertIsNone(memring.task_family(t["id"].replace(t["id"][:2], "v9", 1)), t["id"])
+        # the reviewer's misfires: "ini" in "minimum", "mod" in "modulo"/"module", "base" in "1-based"
+        self.assertIsNone(memring.task_family("v99_01_interval_kth"))
+        self.assertEqual(memring.task_family("v99_01_interval_kth", explicit="graphs_geometry"), "graphs_geometry")
+        self.assertIsNone(memring.task_family("v99_01_interval_kth", explicit="made_up"))
+        self.assertEqual(memring.task_family("v7_09_paint_posts"), "simulation_dp")   # map wins
+
+    def test_unknown_family_gets_no_same_family_bonus(self):
+        row = {"family": "number_theory", "fail_exc": "ValueError", "lesson": "zzz qqq"}
+        no_fam = dict(HO_TASK, family=None, prompt="Write a Python module with 1-based minimum modulo ranks.")
+        self.assertEqual(memring.score_lesson(no_fam, row), 0.0)
+        self.assertEqual(memring.score_lesson(dict(no_fam, family="number_theory"), row), 2.0)
+
+    def test_held_out_gate_requires_explicit_family(self):
+        ok, why = memring.require_held_out_eval_set("v99", [dict(HO_TASK, family=None)])
+        self.assertFalse(ok)
+        self.assertIn("explicit family", why)
+
+    def test_unlabeled_train_lesson_never_matches(self):
+        t0 = run.load_set("v0")[0]   # v0 has no family map
+        lid, why = self.ring.distill_and_admit(dict(t0), fail_row(), pass_row(t0), "v0", "loop", "qwen32")
+        self.assertIsNotNone(lid, why)
+        row = dict(self.ring.lessons_db.execute("SELECT * FROM lessons WHERE id = ?", (lid,)).fetchone())
+        self.assertEqual(row["family"], memring.UNLABELED)
+        self.assertFalse(any(r["family"] == HO_TASK["family"] for r in self.ring.retrieve_lessons(HO_TASK, k=3)))
+
+
+class TestB2LessonsDistill(Base):
+    """Blocker 2: lessons-distill pairs a later pass of the same model's trajectory only."""
+
+    QW, R1 = "qwen3-32b", "r1-distill-qwen-32b"
+
+    def setUp(self):
+        super().setUp()
+        self.t = self.v8[0]
+        self.bad = "def f(x):\n    return 0\n"
+        self._fg = agent.fresh_grade
+        agent.fresh_grade = lambda code, tests: (code == self.t["ref"], "" if code == self.t["ref"] else "ValueError: x", False)
+
+    def tearDown(self):
+        agent.fresh_grade = self._fg
+        super().tearDown()
+
+    def distill(self, rows, model=QW, summary_model=None, name="x"):
+        jp = os.path.join(self.tmp, name + ".jsonl")
+        with open(jp, "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        if summary_model:
+            with open(os.path.join(self.tmp, name + ".summary.json"), "w") as f:
+                json.dump({"set": "v8", "model": summary_model}, f)
+        a = type("A", (), dict(set="v8", model=model, jsonl=jp, more=[], root=os.path.join(self.tmp, "dring"),
+                               parallel=1, arm=None, lessons_out=None, out=None))()
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = memring.lessons_distill(a)
+        return rc, json.loads(buf.getvalue())
+
+    def agent_row(self, ep, turn, ok):
+        return {"task": self.t["id"], "episode": ep, "turn": turn, "seed": 1000 + 10 * ep + turn, "passed": ok,
+                "code": self.t["ref"] if ok else self.bad}
+
+    def test_debate_mixed_seats_not_paired(self):
+        rows = [{"task": self.t["id"], "seat": "qwen32", "model": self.QW, "round": 1, "code": self.bad, "fresh_pass": False},
+                {"task": self.t["id"], "seat": "r1d32", "model": self.R1, "round": 1, "code": self.t["ref"], "fresh_pass": True}]
+        rc, res = self.distill(rows, model=self.QW)
+        self.assertEqual((rc, res["admitted"]), (0, 0))
+        rc, res = self.distill(rows, model=self.R1, name="y")
+        self.assertEqual(res["admitted"], 0)
+
+    def test_cross_episode_fix_admitted_under_served_alias(self):
+        rows = [self.agent_row(0, 0, False), self.agent_row(0, 1, False), self.agent_row(1, 0, True)]
+        rc, res = self.distill(rows, summary_model=self.QW)
+        self.assertEqual((rc, res["admitted"]), (0, 1), res)
+        self.assertEqual(res["lessons"][0]["model"], self.QW)
+        db = memring.Ring(os.path.join(self.tmp, "dring"))
+        self.assertEqual([r[0] for r in db.lessons_db.execute("SELECT model FROM lessons")], [self.QW])
+        db.close()
+
+    def test_pass_before_fail_not_paired(self):
+        rows = [self.agent_row(0, 0, True), self.agent_row(1, 0, False)]
+        self.assertEqual(self.distill(rows, summary_model=self.QW)[1]["admitted"], 0)
+
+    def test_refusals(self):
+        run_rows = [{"task": self.t["id"], "seed": 0, "passed": False, "code": self.bad},
+                    {"task": self.t["id"], "seed": 1, "passed": True, "code": self.t["ref"]}]
+        with self.assertRaises(SystemExit) as cm:   # run.py samples: no trajectory
+            self.distill(run_rows, summary_model=self.QW)
+        self.assertIn("independent samples", str(cm.exception))
+        with self.assertRaises(SystemExit) as cm:   # agent rows without a summary naming the model
+            self.distill([self.agent_row(0, 0, False), self.agent_row(0, 1, True)], name="nosum")
+        self.assertIn("no run summary", str(cm.exception))
+        with self.assertRaises(SystemExit) as cm:   # no --model: never "train"
+            self.distill([self.agent_row(0, 0, False), self.agent_row(0, 1, True)], model=None, summary_model=self.QW)
+        self.assertIn("--model", str(cm.exception))
+        rc, res = self.distill([self.agent_row(0, 0, False), self.agent_row(0, 1, True)], summary_model=self.R1, name="r1")
+        self.assertEqual((res["admitted"], res["rows_of_other_models"]), (0, 2))
+
+
+class TestB4Seal(Base):
+    """Blocker 4: fail_exc and created_at are sealed; the export carries the seal and is verified on load."""
+
+    def setUp(self):
+        super().setUp()
+        self.lid, why = self.admit(CLEAN, self.prov())
+        self.assertIsNotNone(self.lid, why)
+        self.exp = os.path.join(self.tmp, "lessons.json")
+        self.b = self.ring.export_lessons(self.exp)
+
+    def test_column_edits_not_retrieved(self):
+        db = self.ring.lessons_db
+        db.execute("DROP TRIGGER lessons_append_only")
+        self.assertEqual(len(self.ring.retrieve_lessons(self.v8[5], k=3, model="qwen32")), 1)
+        for col, val in (("fail_exc", "IndexError"), ("created_at", "2020-01-01T00:00:00Z")):
+            old = db.execute(f"SELECT {col} FROM lessons WHERE id = ?", (self.lid,)).fetchone()[0]
+            db.execute(f"UPDATE lessons SET {col} = ? WHERE id = ?", (val, self.lid))
+            self.assertEqual(self.ring.retrieve_lessons(self.v8[5], k=3, model="qwen32"), [], col)
+            db.execute(f"UPDATE lessons SET {col} = ? WHERE id = ?", (old, self.lid))
+
+    def test_export_carries_seal_and_load_verifies(self):
+        self.assertTrue(self.b["lessons"][0]["seal"])
+        self.assertEqual(self.b["key_id"], memring.key_id(self.key))
+        self.assertEqual(len(memring.load_lesson_export(self.exp, key=self.key)["lessons"]), 1)
+        with self.assertRaises(ValueError):
+            memring.load_lesson_export(self.exp)                       # no key, no load
+        with self.assertRaises(ValueError):
+            memring.load_lesson_export(self.exp, key=b"x" * 32)        # another ring's key
+        for edit in ({"family": "graphs_geometry", "fail_exc": "KeyError"}, {"fail_exc": "IndexError"},
+                     {"timestamp": "2020-01-01T00:00:00Z"}, {"family": "number_theory"}, {"seal": "00" * 32}):
+            bad = json.loads(json.dumps(self.b))
+            bad["lessons"][0].update(edit)
+            p = os.path.join(self.tmp, "bad.json")
+            with open(p, "w") as f:
+                json.dump(bad, f)
+            with self.assertRaises(ValueError, msg=edit):
+                memring.load_lesson_export(p, key=self.key)
+
+
+class TestB5ReadMatched(TestMemoryEval):
+    """Blocker 5: read() matches parallel and api and checks every row's seed."""
+
+    def test_parallel_api_and_seeds(self):
+        self.test_read_rule()   # sets self.pr/rows/summ
+        pr, rows, summ, tasks = self.pr, self.rows, self.summ, self.tasks30
+        base, win = set(tasks[:10]), set(tasks[:13])
+        self.assertEqual(memory_eval.read(pr, summ(base, False), summ(win), rows, rows)["verdict"], "KEEP")
+        for key, val in (("parallel", 8), ("api", "http://y")):
+            on = summ(win)
+            on[key] = val
+            self.assertEqual(memory_eval.read(pr, summ(base, False), on, rows, rows)["verdict"], "INVALID", key)
+        bad_rows = [dict(r, seed=r["seed"] + 1) if r["task"] == tasks[0] else r for r in rows]
+        rec = memory_eval.read(pr, summ(base, False), summ(win), rows, bad_rows)
+        self.assertEqual(rec["verdict"], "INVALID")
+        self.assertTrue(any("seed" in w for w in rec["why"]))
+        self.assertEqual(memory_eval.read(pr, summ(base, False), summ(win), rows, None)["verdict"], "INVALID")
+        fix = summ(win)
+        fix["fix_from"] = "x.jsonl"
+        self.assertEqual(memory_eval.read(pr, summ(base, False), fix, rows, rows)["verdict"], "INVALID")
+
+
+class TestB6HeldOutGate(Base):
+    """Blocker 6: a known train id, or a train-set prefix, is never held-out under a new module name."""
+
+    def test_gate(self):
+        good = dict(HO_TASK, id="v97_01_new_thing")
+        self.assertTrue(memring.require_held_out_eval_set("v97", [good])[0])
+        for t, want in ((dict(good, id="v8_01_hex_color"), "already exists"),
+                        (dict(good, id="v8_99_brand_new"), "prefix"),
+                        (dict(good, id="01_add"), "prefix")):
+            ok, why = memring.require_held_out_eval_set("v97", [t])
+            self.assertFalse(ok, t["id"])
+            self.assertIn(want, why)
+
+    def test_memory_eval_refuses_train_id_in_new_module(self):
+        d = os.path.join(self.tmp, "mods97")
+        os.makedirs(d)
+        with open(os.path.join(d, "tasks_v97.py"), "w") as f:
+            f.write("TASKS = " + repr([dict(self.v8[0], split="held_out", family="formats")]) + "\n")
+        sys.path.insert(0, d)
+        try:
+            exp = os.path.join(self.tmp, "l.json")
+            self.admit(CLEAN, self.prov(task_id=self.v8[3]["id"]))
+            self.ring.export_lessons(exp)
+            why, _, _ = memory_eval.validate("v97", "qwen32", exp, key_path=self.key_path)
+            self.assertIn("already exists", why or "")
+        finally:
+            sys.path.remove(d)
+            sys.modules.pop("tasks_v97", None)
+
+
+class TestB7Threads(Base):
+    """Blocker 7: --memory-root retrieval works from the agent's thread pool (no shared sqlite connection)."""
+
+    def test_pool_retrieval(self):
+        import concurrent.futures as cf
+        for idx, err in ((0, "ValueError: x"), (8, "timeout")):
+            t = self.v8[idx]
+            self.assertIsNotNone(self.ring.distill_and_admit(t, fail_row(err), pass_row(t), "v8", "loop", "qwen32")[0])
+        with cf.ThreadPoolExecutor(1) as ex:   # the bug this guards: the ring's connection is thread-bound
+            with self.assertRaises(Exception):
+                ex.submit(self.ring.retrieve_lessons, HO_TASK, 3).result()
+        retr = agent.build_retriever("on", 3, "qwen32", mem_ring=self.ring, ho_tasks=[HO_TASK])
+        with cf.ThreadPoolExecutor(4) as ex:
+            got = list(ex.map(lambda i: retr(HO_TASK, None, i), range(8)))
+        self.assertTrue(all(len(g) == 2 for g in got))
+        self.assertIsNone(agent.build_retriever("off", 3, "qwen32", mem_ring=self.ring))
 
 
 if __name__ == "__main__":

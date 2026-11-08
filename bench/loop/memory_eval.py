@@ -13,7 +13,8 @@ server llmctl already started.
   scripts/llmctl.py run -- python3 bench/loop/memory_eval.py run --label P
 
 Matched budget: both arms get the same --set, --tasks, --model, -k, -e, --task-budget, --parallel and --api, and
-agent.py's sampling seeds are fixed by (episode, turn) (1000 + 10 * episode + turn), so they match too. The arms
+agent.py's sampling seeds are fixed by (episode, turn) (1000 + 10 * episode + turn); `read` re-checks all of these
+from both summaries and every jsonl row, so a pair of arms run any other way is INVALID, not KEEP. The arms
 differ only by `--memory on --lessons L --memory-k K`. The prereg pins the lesson export, the task file and the
 grader by sha256 / GRADER_VER, so a changed input is refused instead of measured.
 """
@@ -26,17 +27,19 @@ import memring  # noqa: E402
 
 RESULTS = os.path.join(HERE, "results")   # agent.py writes its arms here too
 
-READ_RULE_VERSION = "memloop-v1-rule-1"
+READ_RULE_VERSION = "memloop-v1-rule-2"
 NET_MIN_ABS, NET_MIN_FRAC = 3, 0.10   # KEEP needs net >= max(3, ceil(0.10 * N))
 READ_RULE = (f"Paired per task on the held-out set (solved = agent.py summary per_task.solved, the fresh-seed grade). "
              f"gains = on solved and off not; losses = off solved and on not; net = gains - losses. "
-             f"INVALID if the arms are not matched (set, tasks, model, k, e, task_budget, parallel, server build, "
-             f"model file), the lesson export or task file sha256 differs from the prereg, an arm is incomplete, "
+             f"INVALID if the arms are not matched (set, tasks, model, k, e, task_budget, parallel, api, server build, "
+             f"model file), either arm ran fix or plan mode, any jsonl row's seed differs from 1000 + 10*episode + turn, "
+             f"the lesson export or task file sha256 differs from the prereg, an arm is incomplete, "
              f"or memory-on injected lessons on 0 rows. "
              f"KEEP if net >= max({NET_MIN_ABS}, ceil({NET_MIN_FRAC} * N)). DROP if net <= 0. "
              f"Otherwise INCONCLUSIVE (no keep; only a fresh held-out set can settle it, never a rerun of this one). "
              f"The exact two-sided sign test on gains vs losses is reported, not used for the verdict.")
-MATCH_KEYS = ("set", "tasks", "model", "k", "e", "task_budget")
+MATCH_KEYS = ("set", "tasks", "model", "k", "e", "task_budget", "parallel", "api")
+LOOP_SEED_BASE = 1000   # agent.episode: seed = 1000 + 10 * episode + turn outside fix mode (fix mode is not legal here)
 
 
 def sha256_file(path):
@@ -54,7 +57,7 @@ def paths(label):
     return {"prereg": base + ".prereg.json", "off": f"{label}-off", "on": f"{label}-on", "report": base + ".report.json"}
 
 
-def validate(set_name, model, lessons, task_ids=None):
+def validate(set_name, model, lessons, task_ids=None, key_path=None):
     """Refusal reason or None, plus the held-out tasks and the lesson bundle. No server, no model."""
     ok, why = memring.require_held_out_eval_set(set_name)
     if not ok:
@@ -72,7 +75,8 @@ def validate(set_name, model, lessons, task_ids=None):
     if not ok:
         return why, None, None
     try:
-        bundle = memring.load_lesson_export(lessons, held_out_tasks=run.load_set(set_name))
+        bundle = memring.load_lesson_export(lessons, held_out_tasks=run.load_set(set_name),
+                                            key=memring.read_seal_key(key_path or memring.DEFAULT_SEAL_KEY))
     except (OSError, ValueError) as e:
         return f"lesson export refused: {e}", None, None
     if not any(l.get("model") == model for l in bundle["lessons"]):
@@ -85,19 +89,21 @@ def arm_cmd(pr, arm):
          "--model", pr["model"], "-k", str(pr["k"]), "-e", str(pr["e"]), "--task-budget", str(pr["task_budget"]),
          "--parallel", str(pr["parallel"]), "--api", pr["api"], "--label", paths(pr["label"])[arm]]
     if arm == "on":
-        c += ["--memory", "on", "--lessons", repo_path(pr["lessons"]), "--memory-k", str(pr["memory_k"])]
+        c += ["--memory", "on", "--lessons", repo_path(pr["lessons"]), "--lessons-key", pr["lessons_key"],
+              "--memory-k", str(pr["memory_k"])]
     return c
 
 
 def build_prereg(a):
-    why, tasks, bundle = validate(a.set, a.model, a.lessons, a.tasks.split(",") if a.tasks else None)
+    why, tasks, bundle = validate(a.set, a.model, a.lessons, a.tasks.split(",") if a.tasks else None, a.lessons_key)
     if why:
         raise SystemExit(why)
     pr = {"label": a.label, "set": a.set, "split": memring.set_split(a.set), "tasks": [t["id"] for t in tasks],
           "task_file_sha256": sha256_file(task_file(a.set)), "model": a.model, "k": a.k, "e": a.e,
           "task_budget": a.task_budget, "parallel": a.parallel, "api": a.api,
           "lessons": os.path.relpath(os.path.abspath(a.lessons), os.path.dirname(os.path.dirname(HERE))),
-          "lessons_sha256": sha256_file(a.lessons), "lessons_for_model": sum(l["model"] == a.model for l in bundle["lessons"]),
+          "lessons_sha256": sha256_file(a.lessons), "lessons_key": os.path.abspath(a.lessons_key),
+          "lessons_key_id": bundle["key_id"], "lessons_for_model": sum(l["model"] == a.model for l in bundle["lessons"]),
           "memory_k": a.memory_k, "grader": memring.GRADER_VER, "arm_order": ["off", "on"],
           "read_rule_version": READ_RULE_VERSION, "read_rule": READ_RULE}
     pr["commands"] = {arm: arm_cmd(pr, arm) for arm in pr["arm_order"]}
@@ -118,7 +124,7 @@ def load_prereg(label):
 
 def recheck(pr):
     """Re-validate a stored prereg against the files on disk now. Refusal reason or None."""
-    why, tasks, _ = validate(pr["set"], pr["model"], repo_path(pr["lessons"]), pr["tasks"])
+    why, tasks, _ = validate(pr["set"], pr["model"], repo_path(pr["lessons"]), pr["tasks"], pr["lessons_key"])
     if why:
         return why
     for k, want, got in (("task file", pr["task_file_sha256"], sha256_file(task_file(pr["set"]))),
@@ -136,8 +142,22 @@ def sign_test_p(gains, losses):
     return min(1.0, 2 * sum(math.comb(n, i) for i in range(x + 1)) / 2 ** n)
 
 
-def read(pr, off, on):
-    """Apply the pre-registered rule to two agent.py summaries. Returns the verdict record."""
+def seed_problems(name, rows, tasks):
+    """Every jsonl row must carry seed == LOOP_SEED_BASE + 10 * episode + turn, and cover only prereg tasks."""
+    if not rows:
+        return [f"{name}: jsonl missing or empty"]
+    bad = []
+    for i, r in enumerate(rows):
+        ep, turn = r.get("episode"), r.get("turn")
+        if not (isinstance(ep, int) and isinstance(turn, int)) or r.get("seed") != LOOP_SEED_BASE + 10 * ep + turn:
+            bad.append(f"{name}: row {i} ({r.get('task')}) seed {r.get('seed')!r} != {LOOP_SEED_BASE} + 10*{ep!r} + {turn!r}")
+        elif r.get("task") not in tasks:
+            bad.append(f"{name}: row {i} task {r.get('task')!r} not in the prereg")
+    return bad[:5] + ([f"{name}: {len(bad) - 5} more row problems"] if len(bad) > 5 else [])
+
+
+def read(pr, off, on, off_rows=None, on_rows=None):
+    """Apply the pre-registered rule to two agent.py summaries and their jsonl rows. Returns the verdict record."""
     bad = []
     for name, s in (("off", off), ("on", on)):
         if s is None:
@@ -145,13 +165,16 @@ def read(pr, off, on):
     if bad:
         return {"verdict": "INVALID", "why": bad}
     want = {"set": pr["set"], "tasks": len(pr["tasks"]), "model": pr["model"], "k": pr["k"], "e": pr["e"],
-            "task_budget": pr["task_budget"]}
-    for name, s in (("off", off), ("on", on)):
+            "task_budget": pr["task_budget"], "parallel": pr.get("parallel"), "api": pr.get("api")}
+    for name, s, rows in (("off", off, off_rows), ("on", on, on_rows)):
         for k in MATCH_KEYS:
             if s.get(k) != want[k]:
                 bad.append(f"{name}: {k}={s.get(k)!r}, prereg {want[k]!r}")
+        if s.get("fix_from") or s.get("plan_from"):
+            bad.append(f"{name}: ran fix or plan mode")
         if sorted(t["task"] for t in s.get("per_task", ())) != sorted(pr["tasks"]):
             bad.append(f"{name}: per_task does not cover the prereg tasks")
+        bad += seed_problems(name, rows, set(pr["tasks"]))
     if (off.get("server") or {}) != (on.get("server") or {}):
         bad.append("server build / model file differs between arms")
     if "memory" in off:
@@ -177,6 +200,14 @@ def read(pr, off, on):
             "read_rule_version": pr["read_rule_version"]}
 
 
+def load_rows(label):
+    p = os.path.join(RESULTS, label + ".jsonl")
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        return [json.loads(l) for l in f if l.strip()]
+
+
 def load_summary(label):
     p = os.path.join(RESULTS, label + ".summary.json")
     if not os.path.exists(p):
@@ -193,6 +224,7 @@ def main(argv=None):
     ap.add_argument("--tasks", help="comma-separated held-out task ids; default all")
     ap.add_argument("--model")
     ap.add_argument("--lessons", help="frozen lesson export (memring.py lessons-distill --lessons-out)")
+    ap.add_argument("--lessons-key", default=memring.DEFAULT_SEAL_KEY, help="seal.key of the ring that wrote --lessons")
     ap.add_argument("-k", type=int, default=4)
     ap.add_argument("-e", type=int, default=4)
     ap.add_argument("--task-budget", type=int, default=16 * run.MAX_TOKENS)
@@ -226,7 +258,7 @@ def main(argv=None):
             rc = subprocess.call(arm_cmd(pr, arm))
             if rc:
                 raise SystemExit(f"{arm} arm exited {rc}; no report")
-    rec = read(pr, load_summary(P["off"]), load_summary(P["on"]))
+    rec = read(pr, load_summary(P["off"]), load_summary(P["on"]), load_rows(P["off"]), load_rows(P["on"]))
     with open(P["report"], "w") as f:
         json.dump(rec, f, indent=1)
     print(json.dumps(rec, indent=1))

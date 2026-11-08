@@ -196,6 +196,17 @@ def distill_episode_lesson(ring, task, rows, summary, task_set, model, arm="loop
     return ring.distill_and_admit(task, coded_fails[0], p_row, task_set=task_set, arm=arm, model=model, ask=ask)
 
 
+def build_retriever(memory, k, model, lesson_bundle=None, mem_ring=None, ho_tasks=(), tr_tasks=()):
+    """Per-turn lesson retriever for solve_task, or None when memory is off. Call on the main thread: with a ring
+    (--memory-root) the seal-verified lessons of `model` are snapshotted here, because sqlite3 connections are bound
+    to the thread that opened them and retrieval runs inside the task pool. Lessons distilled later are not seen."""
+    if memory != "on":
+        return None
+    bundle = lesson_bundle if lesson_bundle is not None else mem_ring.export_lessons(model=model)
+    return lambda tk, er, tr: memring.retrieve_from_export(bundle, tk, k=k, model=model, err=er,
+                                                           held_out_tasks=ho_tasks, train_tasks=tr_tasks)
+
+
 def server_ask(model):
     def ask(prompt, seed):
         return run.ask(model, prompt, seed)
@@ -370,6 +381,7 @@ def main():
     ap.add_argument("--memory", choices=("off", "on"), default="off", help="inject top-k verified training lessons when 'on'")
     ap.add_argument("--memory-root", help="Ring root containing lessons.db for --memory on or --distill-lessons")
     ap.add_argument("--lessons", help="frozen lesson export JSON for --memory on")
+    ap.add_argument("--lessons-key", default=memring.DEFAULT_SEAL_KEY, help="seal.key that wrote --lessons (verified on load)")
     ap.add_argument("--memory-k", type=int, default=3, help="top-k lessons to retrieve when --memory on")
     ap.add_argument("--distill-lessons", action="store_true", help="distill verified lessons from train (fail->pass) tasks into --memory-root")
     a = ap.parse_args()
@@ -420,17 +432,12 @@ def main():
     ring_in = {"admitted": 0, "skipped_no_code": 0, "refused": {}}
     ho_tasks = run.TASKS if memring.set_split(a.set) == "held_out" else ()
     tr_tasks = run.TASKS if memring.set_split(a.set) == "train" else ()
-    lesson_bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho_tasks, train_tasks=tr_tasks) if a.lessons else None
+    lesson_bundle = memring.load_lesson_export(a.lessons, held_out_tasks=ho_tasks, train_tasks=tr_tasks,
+                                               key=memring.read_seal_key(a.lessons_key)) if a.lessons else None
     mem_ring = memring.Ring(a.memory_root) if a.memory_root else None
     if mem_ring:
         mem_ring.register_tasks(train_tasks=tr_tasks, held_out_tasks=ho_tasks)
-    retriever = None
-    if a.memory == "on":
-        if lesson_bundle is not None:
-            retriever = lambda tk, er, tr: memring.retrieve_from_export(
-                lesson_bundle, tk, k=a.memory_k, model=a.model, err=er, held_out_tasks=ho_tasks, train_tasks=tr_tasks)
-        else:
-            retriever = lambda tk, er, tr: mem_ring.retrieve_lessons(tk, k=a.memory_k, model=a.model, err=er, turn=tr, log_retrieval=False)
+    retriever = build_retriever(a.memory, a.memory_k, a.model, lesson_bundle, mem_ring, ho_tasks, tr_tasks)
     t0 = time.time()
     gtt = run.GttPeak(); gtt.start()
     tasks_out, rows_with_lessons = [], 0
