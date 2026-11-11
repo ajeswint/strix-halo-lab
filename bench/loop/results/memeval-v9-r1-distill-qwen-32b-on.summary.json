@@ -1,0 +1,813 @@
+{
+ "label": "memeval-v9-r1-distill-qwen-32b-on",
+ "set": "v9",
+ "model": "r1-distill-qwen-32b",
+ "server": {
+  "build_info": "b11669-620d2225c",
+  "model_path": "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+  "model_alias": "r1-distill-qwen-32b"
+ },
+ "tasks": 30,
+ "k": 4,
+ "e": 4,
+ "task_budget": 196608,
+ "fresh_seed": 104729,
+ "sampling": {
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20
+ },
+ "api": "http://127.0.0.1:8081",
+ "fix_from": null,
+ "plan_from": null,
+ "reasoning_budget": 8192,
+ "max_tokens": 12288,
+ "parallel": 4,
+ "solved": 21,
+ "visible_pass": 21,
+ "completion_tokens_total": 1379154,
+ "turns_total": 174,
+ "wall_s": 46067.6,
+ "gtt_peak_gib": 36.84,
+ "per_task": [
+  {
+   "task": "v9_01_perm_mode",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 36377
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 28174
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19140
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19405
+    }
+   ],
+   "turns": 11,
+   "completion_tokens": 103096,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_02_size_units",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 30746
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 28094
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 37160
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 27683
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 123683,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_03_tab_stops",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 13631,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 13631,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_04_quoted_printable",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9183,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9183,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_05_header_params",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 25305
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 22980
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 28802
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 37830
+    }
+   ],
+   "turns": 15,
+   "completion_tokens": 114917,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_06_flatten_keys",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "pass",
+     "tokens": 26134,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 4,
+   "completion_tokens": 26134,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_07_page_ranges",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 32133
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18883
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 17113
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 22129
+    }
+   ],
+   "turns": 11,
+   "completion_tokens": 90258,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_08_outline_numbers",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 27928
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 14351,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 6,
+   "completion_tokens": 42279,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_09_zeckendorf",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19030
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 27489
+    },
+    {
+     "episode": 2,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9255,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 6,
+   "completion_tokens": 55774,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_10_aliquot_chain",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7252,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7252,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_11_primitive_root",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8900,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8900,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_12_factorial_zeros",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7774,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7774,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_13_lucky_sieve",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8984,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8984,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_14_consecutive_sums",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 8810,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 8810,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_15_gaussian_gcd",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 20660,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 20660,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_16_lca_queries",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18796
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 22081
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 20268
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 25507
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 86652,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_17_key_maze",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7984,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 7984,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_18_eq_constraints",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19216
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 17794,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 4,
+   "completion_tokens": 37010,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_19_func_graph_tails",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 18094,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 18094,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_20_grid_line",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 15615
+    },
+    {
+     "episode": 1,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 7180,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 22795,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_21_rdp_simplify",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 24978
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18797
+    },
+    {
+     "episode": 2,
+     "turns": 4,
+     "stop": "repeat_error",
+     "tokens": 29256
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_code",
+     "tokens": 18571
+    }
+   ],
+   "turns": 12,
+   "completion_tokens": 91602,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_22_polar_order",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 19859
+    },
+    {
+     "episode": 1,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 26972
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 19595
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 27073
+    }
+   ],
+   "turns": 13,
+   "completion_tokens": 93499,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_23_egg_drop",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 27354
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18430
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18741
+    },
+    {
+     "episode": 3,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 25438,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 89963,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_24_interleave_count",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 9366,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 1,
+   "completion_tokens": 9366,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_25_turmite_walk",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18855
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18991
+    },
+    {
+     "episode": 2,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18770
+    },
+    {
+     "episode": 3,
+     "turns": 4,
+     "stop": "max_turns",
+     "tokens": 30629
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 87245,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_26_sandpile_topple",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 20210,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 3,
+   "completion_tokens": 20210,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_27_snake_game",
+   "solved": false,
+   "visible_pass": false,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 25454
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_code",
+     "tokens": 18346
+    },
+    {
+     "episode": 2,
+     "turns": 3,
+     "stop": "repeat_error",
+     "tokens": 29069
+    },
+    {
+     "episode": 3,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 15919
+    }
+   ],
+   "turns": 10,
+   "completion_tokens": 88788,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_28_tax_lots",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "pass",
+     "tokens": 11529,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 2,
+   "completion_tokens": 11529,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_29_jump_reach",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 18330
+    },
+    {
+     "episode": 1,
+     "turns": 2,
+     "stop": "repeat_error",
+     "tokens": 16659
+    },
+    {
+     "episode": 2,
+     "turns": 1,
+     "stop": "pass",
+     "tokens": 6464,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 5,
+   "completion_tokens": 41453,
+   "no_fresh": false
+  },
+  {
+   "task": "v9_30_dice_totals",
+   "solved": true,
+   "visible_pass": true,
+   "episodes": [
+    {
+     "episode": 0,
+     "turns": 3,
+     "stop": "repeat_code",
+     "tokens": 15792
+    },
+    {
+     "episode": 1,
+     "turns": 3,
+     "stop": "pass",
+     "tokens": 15837,
+     "fresh_pass": true,
+     "fresh_err": "",
+     "no_fresh": false
+    }
+   ],
+   "turns": 6,
+   "completion_tokens": 31629,
+   "no_fresh": false
+  }
+ ],
+ "memory": {
+  "mode": "on",
+  "k": 3,
+  "lessons": "lessons-v8-r1-distill-qwen-32b.json",
+  "lessons_sha256": "68feb87fbbdbd4dcc04ece102579665772272b5510d246b9bc87567d1d36b4fe",
+  "memory_root": null,
+  "rows_with_lessons": 174
+ }
+}

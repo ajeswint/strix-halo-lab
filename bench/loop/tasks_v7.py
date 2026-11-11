@@ -22,8 +22,8 @@ v7_28 life_board, v7_29 stack_machine, v7_30 wrap_cost.
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 task("v7_01_packbits", r'''
 Write two functions for the PackBits run-length format: `packbits_decode(data)` and `packbits_encode(data)`. Both take

@@ -1,0 +1,66 @@
+{
+ "set": "v9",
+ "written": "2026-11-07",
+ "status": "dataset frozen; prereg NOT written (blocked: no same-model train lesson export, docs/memory-eval-v9-protocol.md section 3)",
+ "frozen_files_sha256": {
+  "tasks_v9.py": "b797ea212824c456cdcf286a00e78c578bc0365a6021931b98179b8979d3b240",
+  "tasks_v9_mutants.py": "09c948e772a3279aab321a630f29905d78e1e0bd2fee8ece6367d952350c9ce1",
+  "novelty_audit.py": "e443e816a61e064cd838f04099db87470efcd4d11c9dcf2b8b38ea28e6f212a7"
+ },
+ "grader": "grade-65b662df4ba4",
+ "read_rule_version": "memloop-v1-rule-2",
+ "harness_sha256_at_freeze": {
+  "agent.py": "ac25782d72778a711f80d089bff4a58f383eb57920b7d3489eb3ecf61fcee816",
+  "run.py": "94195eb930caaebbc3ae9361ba8a9522319e99f21dd493ae7873f5db7babb3f4",
+  "memring.py": "4a3fbfbbdd43fb8f90ca15a43c2717eedc0f6897bc91a26f915c0496f93dbc0e",
+  "memory_eval.py": "f19d8c4b12dd4de7a28e89fe0dcec9fa69d86f5084d3ccabe37998655501a362"
+ },
+ "harness_note": "informational: memory_eval check pins the harness again at prereg time; that prereg value is the one `run` enforces",
+ "run_constants": {
+  "MAX_TOKENS": 12288,
+  "REASONING_BUDGET": 8192,
+  "SAMPLING": {
+   "temperature": 0.6,
+   "top_p": 0.95,
+   "top_k": 20
+  },
+  "seed_rule": "1000 + 10*episode + turn (agent.episode)",
+  "fresh_seed": 104729
+ },
+ "planned_preregs": {
+  "memeval-v9-qwen3-32b": {
+   "set": "v9",
+   "tasks": "all 30",
+   "model": "qwen3-32b",
+   "k": 4,
+   "e": 4,
+   "task_budget": 196608,
+   "parallel": 4,
+   "api": "http://127.0.0.1:8081",
+   "memory_k": 3,
+   "lessons": "bench/loop/results/lessons-v8-qwen3-32b.json",
+   "lessons_key": "/data/ring-memloop-v9/seal.key",
+   "arm_order": [
+    "off",
+    "on"
+   ]
+  },
+  "memeval-v9-r1-distill-qwen-32b": {
+   "set": "v9",
+   "tasks": "all 30",
+   "model": "r1-distill-qwen-32b",
+   "k": 4,
+   "e": 4,
+   "task_budget": 196608,
+   "parallel": 4,
+   "api": "http://127.0.0.1:8081",
+   "memory_k": 3,
+   "lessons": "bench/loop/results/lessons-v8-r1-distill-qwen-32b.json",
+   "lessons_key": "/data/ring-memloop-v9/seal.key",
+   "arm_order": [
+    "off",
+    "on"
+   ]
+  }
+ }
+}

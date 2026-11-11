@@ -52,6 +52,13 @@ def check(tasks, exclude):
         m = ID_RE.match(t["id"])
         if not m:
             errs.append("id does not match v<S>_<NN>_<name>")
+        sp = t.get("split")
+        if sp not in ("train", "held_out"):
+            errs.append(f"split={sp!r} (need 'train' or 'held_out')")
+        else:   # --file has no set name: the id's v<S> prefix names it (a v9+ part file must tag held_out)
+            sname = exclude or (f"v{int(m.group(1))}" if m else None)
+            if sname and sp != run.set_split(sname):
+                errs.append(f"split={sp!r} does not match set_split({sname!r})={run.set_split(sname)!r}")
         seeds = agent.SEED_RE.findall(t["tests"])
         if len(seeds) != 1:
             errs.append(f"{len(seeds)} random.seed lines (need exactly 1)")

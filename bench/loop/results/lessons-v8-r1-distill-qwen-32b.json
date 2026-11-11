@@ -1,0 +1,108 @@
+{
+ "grader": "grade-65b662df4ba4",
+ "k": 3,
+ "key_id": "aedd9503994d4db6",
+ "count": 4,
+ "lessons": [
+  {
+   "id": 6,
+   "task_id": "v8_01_hex_color",
+   "task_set": "v8",
+   "split": "train",
+   "family": "formats",
+   "arm": "loop",
+   "model": "r1-distill-qwen-32b",
+   "timestamp": "2026-11-08T18:09:09Z",
+   "fail_exc": "AttributeError",
+   "verdict": {
+    "fail_err_sha": "f0ba3333bca7",
+    "fail_exc": "AttributeError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Track delimiter, quoting, escaping, and line-termination state transitions explicitly in a single pass.",
+   "hash": "6a1f5c2f6a2773c12b7dda4c71bb479ecf91bcc3cf4883df75988708902f681c",
+   "seal": "d7de55d792ceeb0b24bc2ba6a07433c8dbc39ed87cc0dd14056261c8f0e0714f"
+  },
+  {
+   "id": 7,
+   "task_id": "v8_03_case_convert",
+   "task_set": "v8",
+   "split": "train",
+   "family": "formats",
+   "arm": "loop",
+   "model": "r1-distill-qwen-32b",
+   "timestamp": "2026-11-08T18:09:09Z",
+   "fail_exc": "ValueError",
+   "verdict": {
+    "fail_err_sha": "d7db0cb94e56",
+    "fail_exc": "ValueError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Validate input types, structural formatting, and parameter bounds upfront, raising ValueError on invalid inputs.",
+   "hash": "b508a896108a84420601c654605d83c6c6b2380eb86913d8a9daef58eecfbbc3",
+   "seal": "b466545bb83160aef98e303b2736b0d79a05913aec14da2cdcaba6a8d3cd6484"
+  },
+  {
+   "id": 8,
+   "task_id": "v8_16_two_color",
+   "task_set": "v8",
+   "split": "train",
+   "family": "graphs_geometry",
+   "arm": "loop",
+   "model": "r1-distill-qwen-32b",
+   "timestamp": "2026-11-08T18:09:10Z",
+   "fail_exc": "AssertionError",
+   "verdict": {
+    "fail_err_sha": "fe24425529f0",
+    "fail_exc": "AssertionError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Handle disconnected components, degenerate geometry, and lexicographic tie-breaking explicitly.",
+   "hash": "ac34192da4bc315867aea12ba60ab14bd6ad60380f9a2ef40d870725f050a183",
+   "seal": "114f2d1e0523edeadd3842487ffcdde3b4f1d5051e411fd9e8e666242134de29"
+  },
+  {
+   "id": 9,
+   "task_id": "v8_23_robot_walk",
+   "task_set": "v8",
+   "split": "train",
+   "family": "simulation_dp",
+   "arm": "loop",
+   "model": "r1-distill-qwen-32b",
+   "timestamp": "2026-11-08T18:09:10Z",
+   "fail_exc": "TypeError",
+   "verdict": {
+    "fail_err_sha": "0506bde3d45e",
+    "fail_exc": "TypeError",
+    "fail_passed": false,
+    "fresh_pass": true,
+    "grader_ver": "grade-65b662df4ba4",
+    "no_fresh": false,
+    "passed": true,
+    "verification_rule": "fresh_grade_fix_pair"
+   },
+   "grader_ver": "grade-65b662df4ba4",
+   "lesson": "Verify boundary conditions, tie-break ordering, and state updates at every step against the spec.",
+   "hash": "967f24f8f304dd486c922b52587411722bcfa9c696328ed5ec6f0bd53065adcd",
+   "seal": "e25e2173a3005172658276a3dcd91d964de5ae499609cc0d6160be6d29cee330"
+  }
+ ]
+}

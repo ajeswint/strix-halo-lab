@@ -1,0 +1,182 @@
+{
+ "v8_01_hex_color": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_02_morse_text": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_03_case_convert": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_04_money_text": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_05_cidr_range": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_06_clock_12h": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_07_luhn_digits": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_08_query_pairs": {
+  "samples": 5,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_09_digit_persistence": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_10_euler_phi": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_11_goldbach_pairs": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_12_pascal_mod": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_13_primitive_triples": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_14_happy_count": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_15_egyptian_greedy": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_16_two_color": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_17_lattice_segment": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_18_closest_pair": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_19_euler_trail": {
+  "samples": 8,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_20_triangle_kind": {
+  "samples": 2,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_21_manhattan_center": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_22_tree_centers": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_23_robot_walk": {
+  "samples": 4,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_24_elevator_scan": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_25_josephus_order": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_26_max_subarray": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_27_stair_ways": {
+  "samples": 3,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_28_lcs_smallest": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_29_matrix_chain": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ },
+ "v8_30_ledger_events": {
+  "samples": 1,
+  "visible": 1,
+  "fresh": 1,
+  "no_fresh": false
+ }
+}

@@ -196,12 +196,16 @@ def ref_block(refs):
     return REF_HEAD + body + f"\n{FENCE}\n\n"
 
 
-def protocol(retrieval):
-    """PROTOCOL for the plain debate; with retrieval, a hash that also binds the block layout and the export."""
-    if not retrieval:
+def protocol(retrieval, memory=None):
+    """PROTOCOL for the plain debate; with retrieval or memory='on', a hash that also binds the block layout and export."""
+    if not retrieval and (not memory or memory.get("mode", "off") == "off"):
         return PROTOCOL
-    return hashlib.sha256(json.dumps([PROTOCOL, ref_block([{"task_id": "T", "content": "C"}]),
-                                      retrieval["sha256"]]).encode()).hexdigest()[:12]
+    parts = [PROTOCOL]
+    if retrieval:
+        parts.extend([ref_block([{"task_id": "T", "content": "C"}]), retrieval["sha256"]])
+    if memory and memory.get("mode") == "on":
+        parts.extend([memring.LESSON_HEAD, memory["sha256"], memory["k"]])
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:12]
 
 
 def load_refs(path):
@@ -211,6 +215,18 @@ def load_refs(path):
     exp = json.loads(data)
     return ({"file": os.path.relpath(os.path.abspath(path), HERE), "sha256": hashlib.sha256(data).hexdigest(),
              "corpus_set": exp["set"], "k": exp["k"]}, exp["slots"])
+
+
+def load_lessons_meta(path, k, held_out_tasks=(), train_tasks=(), key_path=None):
+    """(meta entry, bundle) of a verified training lesson export (memring.py lessons-distill --lessons-out); every
+    lesson's seal is checked against key_path (default memring.DEFAULT_SEAL_KEY)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    key_path = key_path or memring.DEFAULT_SEAL_KEY
+    bundle = memring.load_lesson_export(path, held_out_tasks=held_out_tasks, train_tasks=train_tasks,
+                                        key=memring.read_seal_key(key_path))
+    return ({"mode": "on", "file": os.path.relpath(os.path.abspath(path), HERE),
+             "sha256": hashlib.sha256(data).hexdigest(), "k": k, "key": os.path.abspath(key_path)}, bundle)
 
 
 def solo_prompt(task):
@@ -271,8 +287,12 @@ def load(root, label):
     mp, rp, _ = paths(root, label)
     if not os.path.exists(mp):
         raise SystemExit(f"{mp}: no such run (the first step writes it)")
-    meta = json.load(open(mp))
-    rows = [json.loads(l) for l in open(rp)] if os.path.exists(rp) else []
+    with open(mp) as f:
+        meta = json.load(f)
+    rows = []
+    if os.path.exists(rp):
+        with open(rp) as f:
+            rows = [json.loads(l) for l in f]
     return meta, rows
 
 
@@ -309,9 +329,12 @@ def owed(meta, idx, seat):
     return out
 
 
-def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print, retrieve=None):
-    """Ask every reply the served seat owes. Returns the number of replies asked. retrieve: a retrieval export, first
-    step only (the meta fixes it, by sha256, for the rest of the run)."""
+def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print, retrieve=None,
+         memory=None, lessons=None, memory_k=3, lessons_key=None):
+    """Ask every reply the served seat owes. Returns the number of replies asked. retrieve / lessons: exports fixed on
+    the first step (the meta fixes them, by sha256, for the rest of the run)."""
+    if memory not in (None, "off", "on"):
+        raise ValueError(f"invalid memory mode: {memory!r}")
     if alias not in SEATS:
         raise SystemExit(f"served model {alias!r} is not a debate seat ({sorted(SEATS)})")
     seat = SEATS[alias]
@@ -320,7 +343,7 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
     if parallel > (server.get("total_slots") or 1):
         raise SystemExit(f"--parallel {parallel} > the server's {server.get('total_slots')} slots")
     mp, rp, _ = paths(root, label)
-    refs = None
+    refs, mem, lesson_bundle, ho_t, tr_t = None, None, None, (), ()
     if os.path.exists(mp):
         meta, rows = load(root, label)
         for k, want in (("set", set_name), ("tasks", task_ids)):
@@ -328,13 +351,29 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 raise SystemExit(f"{mp}: {k} is {meta[k]}, this step asked for {want}")
         if retrieve is not None:
             raise SystemExit(f"{mp}: --retrieve is for a run's first step; the meta already fixes it")
+        if lessons is not None:
+            raise SystemExit(f"{mp}: --lessons is for a run's first step; the meta already fixes it")
         ret = meta.get("retrieval")
         if ret:
             info, refs = load_refs(os.path.join(HERE, ret["file"]))
             if info["sha256"] != ret["sha256"]:
                 raise SystemExit(f"{ret['file']} changed since the run started (sha256 {info['sha256'][:12]})")
-        if meta["protocol"] != protocol(ret):
-            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {protocol(ret)} (prompts or constants changed mid-run)")
+        mem = meta.get("memory")
+        if memory is not None and (memory == "on") != bool(mem and mem.get("mode") == "on"):
+            raise SystemExit(f"{mp}: memory is {'on' if mem else 'off'}, this step asked for {memory}")
+        if mem and mem.get("mode") == "on":
+            s_tasks = run.load_set(meta["set"])
+            ho_t = s_tasks if run.set_split(meta["set"]) == "held_out" else ()
+            tr_t = s_tasks if run.set_split(meta["set"]) == "train" else ()
+            try:
+                minfo, lesson_bundle = load_lessons_meta(os.path.join(HERE, mem["file"]), mem["k"],
+                                                         held_out_tasks=ho_t, train_tasks=tr_t, key_path=mem.get("key"))
+            except ValueError as e:
+                raise SystemExit(str(e))
+            if minfo["sha256"] != mem["sha256"]:
+                raise SystemExit(f"{mem['file']} changed since the run started (sha256 {minfo['sha256'][:12]})")
+        if meta["protocol"] != protocol(ret, mem):
+            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {protocol(ret, mem)} (prompts or constants changed mid-run)")
         if meta["build"] != server.get("build_info"):
             raise SystemExit(f"{mp}: server build {meta['build']}, the served one is {server.get('build_info')}")
         prev = meta["seats"].get(seat)
@@ -343,7 +382,10 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
     else:
         if set_name is None:
             raise SystemExit("the first step of a run needs --set")
-        all_ids = [t["id"] for t in run.load_set(set_name)]
+        if lessons is not None and memory != "on":
+            raise SystemExit("--lessons requires --memory on")
+        s_tasks = run.load_set(set_name)
+        all_ids = [t["id"] for t in s_tasks]
         task_ids = task_ids or all_ids
         unknown = set(task_ids) - set(all_ids)
         if unknown:
@@ -357,12 +399,27 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 raise SystemExit(f"the retrieval export was built from {set_name}, the set this run measures")
             if sorted(refs) != sorted(ORDER):
                 raise SystemExit(f"the retrieval export covers {sorted(refs)}, not both seats")
+        if memory == "on":
+            if lessons is None:
+                raise SystemExit("--memory on requires --lessons on the first step")
+            ho_t = s_tasks if run.set_split(set_name) == "held_out" else ()
+            tr_t = s_tasks if run.set_split(set_name) == "train" else ()
+            try:
+                mem, lesson_bundle = load_lessons_meta(lessons, memory_k, held_out_tasks=ho_t, train_tasks=tr_t,
+                                                       key_path=lessons_key)
+            except ValueError as e:
+                raise SystemExit(str(e))
+            if any(l.get("task_set") == set_name or l.get("task_id") in set(task_ids)
+                   for l in lesson_bundle["lessons"]):
+                raise SystemExit(f"the lesson export contains lessons from {set_name}, the set this run measures")
         meta = {"label": label, "set": set_name, "tasks": task_ids, "first": coin(task_ids), "coin_seed": COIN_SEED,
-                "protocol": protocol(ret), "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
+                "protocol": protocol(ret, mem), "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
                 "sampling": run.SAMPLING, "seed_base": SEED_BASE, "fresh_seed": agent.FRESH_SEED,
                 "build": server.get("build_info"), "seats": {}}
         if ret:
             meta["retrieval"] = ret
+        if mem:
+            meta["memory"] = mem
         rows = []
     meta["seats"].setdefault(seat, {"model": alias, "model_path": server.get("model_path"), "n_ctx": server.get("n_ctx")})
     save_meta(mp, meta)
@@ -389,6 +446,13 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                     prompt = debate_prompt(task, seat, rnd, entries)
                 got = refs[seat].get(memring.FAMILIES[meta["set"]][tid], []) if refs else []
                 prompt = ref_block(got) + prompt
+                l_got = []
+                if lesson_bundle is not None:
+                    t_obj = dict(task, task_set=meta["set"])
+                    # one namespace: the served alias, as lessons-distill and agent.py record it; no fallback
+                    l_got = memring.retrieve_from_export(lesson_bundle, t_obj, k=mem["k"], model=alias,
+                                                         held_out_tasks=ho_t, train_tasks=tr_t)
+                    prompt = memring.apply_memory(prompt, l_got, memory="on")
             try:
                 r = ask(prompt, SEED_BASE + rnd)
             except BaseException:
@@ -404,6 +468,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                    "confidence": conf, "think_leak": "</think>" in (r["content"] or "")}
             if refs:
                 row["retrieved"] = [x["task_id"] for x in got]
+            if lesson_bundle is not None:
+                row["lessons_retrieved"] = [x["task_id"] for x in l_got]
             if code is not None:
                 t0 = time.monotonic()
                 fp, ferr, nf = agent.fresh_grade(code, task["tests"])
@@ -562,7 +628,9 @@ def report(root, label, regrade=False, log=print):
                              for k, d in sorted(by_round.items())}}
 
     summary = {"label": label, "set": meta["set"], "tasks": len(meta["tasks"]), "complete": complete,
-               "protocol": meta["protocol"], "retrieval": meta.get("retrieval"), "build": meta["build"], "seats": meta["seats"],
+               "protocol": meta["protocol"], "retrieval": meta.get("retrieval"),
+               **({"memory": meta["memory"]} if "memory" in meta else {}),
+               "build": meta["build"], "seats": meta["seats"],
                "reasoning_budget": meta["reasoning_budget"], "max_tokens": meta["max_tokens"],
                "sampling": meta["sampling"], "fresh_seed": meta["fresh_seed"],
                "first_counts": {s: sum(v == s for v in meta["first"].values()) for s in ORDER},
@@ -850,6 +918,54 @@ def selftest():
                 json.dump(exp, f)
             check("refused: --retrieve on a set without a family map",
                   refused(lambda: step(root, "z", "v2", None, alias["qwen32"], srv, fake("qwen32"), log=quiet, retrieve=ep)))
+            # the memory arm: --memory off vs --memory on with verified lesson export
+            check("memory off: protocol hash is plain PROTOCOL",
+                  protocol(None, None) == PROTOCOL and protocol(None, {"mode": "off"}) == PROTOCOL)
+            lp = os.path.join(root, "lessons.json")
+            mring = memring.Ring(os.path.join(root, "memring"))
+            v0_t = dict(run.load_set("v0")[0], task_set="v0")
+            mkey = os.path.join(root, "memring", "seal.key")
+            mring.distill_and_admit(v0_t, {"passed": False, "err": "IndexError: list index out of range"},
+                                    {"passed": True, "fresh_pass": True, "code": v0_t["ref"]}, "v0", "agent", alias["qwen32"])
+            mring.export_lessons(lp)
+            calls.clear()
+            step(root, "moff", "v1", ids[:2], alias["qwen32"], dict(srv, model_path="/m/qwen32"),
+                 fake("qwen32"), log=quiet, memory="off")
+            off_prompts = {tid: p for s, tid, rnd, p in calls if rnd == 1}
+            calls.clear()
+            step(root, "mon", "v1", ids[:2], alias["qwen32"], dict(srv, model_path="/m/qwen32"),
+                 fake("qwen32"), log=quiet, memory="on", lessons=lp, memory_k=2, lessons_key=mkey)
+            on_prompts = {tid: p for s, tid, rnd, p in calls if rnd == 1}
+            check("memory off: solo prompts are byte-identical to plain solo_prompt",
+                  all(off_prompts[tid] == solo_prompt(next(t for t in tasks if t["id"] == tid)) for tid in ids[:2]))
+            check("memory on: lesson header injected before solo prompt and protocol hash updated",
+                  all(on_prompts[tid].startswith(memring.LESSON_HEAD) and on_prompts[tid].endswith(off_prompts[tid])
+                      for tid in ids[:2])
+                  and load(root, "mon")[0]["protocol"] != PROTOCOL)
+            check("refused: --memory on without --lessons",
+                  refused(lambda: step(root, "merr", "v1", ids[:2], alias["qwen32"], srv, fake("qwen32"),
+                                       log=quiet, memory="on")))
+            bad_lp = os.path.join(root, "bad_lessons.json")
+            bad_exp = json.load(open(lp))
+            bad_exp["lessons"][0].update(task_id=ids[0], task_set="v1")
+            with open(bad_lp, "w") as f:
+                json.dump(bad_exp, f)
+            check("refused: lesson export containing lessons from the measured set",
+                  refused(lambda: step(root, "merr2", "v1", ids[:2], alias["qwen32"], srv, fake("qwen32"),
+                                       log=quiet, memory="on", lessons=bad_lp, lessons_key=mkey)))
+            # no cross-seat fallback: an export holding only the other seat's lesson injects nothing into this seat
+            r1_lp = os.path.join(root, "r1_lessons.json")
+            v0_t2 = dict(run.load_set("v0")[1], task_set="v0")
+            mring.distill_and_admit(v0_t2, {"passed": False, "err": "ValueError: bad"},
+                                    {"passed": True, "fresh_pass": True, "code": v0_t2["ref"]}, "v0", "agent", alias["r1d32"])
+            mring.export_lessons(r1_lp, model=alias["r1d32"])
+            calls.clear()
+            step(root, "mr1", "v1", ids[:2], alias["qwen32"], dict(srv, model_path="/m/qwen32"),
+                 fake("qwen32"), log=quiet, memory="on", lessons=r1_lp, memory_k=2, lessons_key=mkey)
+            r1_prompts = {tid: p for s, tid, rnd, p in calls if rnd == 1}
+            check("memory on: the other seat's lessons are never injected (no model=None fallback)",
+                  all(r1_prompts[tid] == off_prompts[tid] for tid in ids[:2])
+                  and all(r.get("lessons_retrieved") == [] for r in load(root, "mr1")[1] if r.get("round") == 1))
     finally:
         memring.FAMILIES.pop("v1", None)
     print(f"selftest {'OK' if ok else 'FAILED'} (protocol {PROTOCOL})")
@@ -867,6 +983,10 @@ def main():
     ap.add_argument("--api", default=run.API)
     ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch; reparse: grade the changed code")
     ap.add_argument("--retrieve", help="step, first step only: a memring retrieval export (memring.py debate --passes-out)")
+    ap.add_argument("--memory", choices=("off", "on"), default=None, help="lesson memory injection (default: off)")
+    ap.add_argument("--lessons", help="step, first step only: a memring lesson export (memring.py lessons-distill --lessons-out)")
+    ap.add_argument("--memory-k", type=int, default=3, help="top-k lessons retrieved when --memory on")
+    ap.add_argument("--lessons-key", help="step, first step only: seal.key that wrote --lessons (default memring.DEFAULT_SEAL_KEY)")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
@@ -884,7 +1004,8 @@ def main():
     os.makedirs(root, exist_ok=True)
     alias = run.served_model(api=a.api)
     step(root, a.label, a.set, a.tasks.split(",") if a.tasks else None, alias, server_props(a.api),
-         server_ask(alias, a.api), a.parallel, retrieve=a.retrieve)
+         server_ask(alias, a.api), a.parallel, retrieve=a.retrieve,
+         memory=a.memory, lessons=a.lessons, memory_k=a.memory_k, lessons_key=a.lessons_key)
     return 0
 
 

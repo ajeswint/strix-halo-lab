@@ -1652,6 +1652,30 @@ Stated before any GPU session (2026-11-05 CT, measure skill steps 1-6). Reopens 
     python3 bench/loop/debate.py report --label crawdad-v8-r2 --regrade
     ```
 
+## Verified coding-memory loop v1 (2026-11-07, no GPU)
+
+Approved by AJ 2026-11-07 CT, after the archived CRAwDAD v8 baseline. Design, leak guards and the pre-registered
+held-out eval: `docs/memory-loop-v1.md`. Implementation only, nothing run on a model.
+
+- Lessons: distilled from a graded failure then a later fresh-grade pass in the same model's trajectory on a
+  TRAINING task ("verified" = that CPU re-grade, nothing more), stored with provenance and verdict in `lessons.db`
+  under a memring Ring root (`memring.py lessons-distill --model ALIAS`, `agent.py --distill-lessons`). HMAC seal =
+  integrity against unsigned edits given a trusted `seal.key`, not proof of the recorded facts; `leak_check` is a
+  lexical backstop, not paraphrase protection.
+- Split: v0-v8 are `train` (all exposed; **v8 is not a valid holdout**); held-out sets are fresh v9+ files tagged
+  `held_out`, committed before any model sees them, spent after one eval. Writes and retrievals sourced from held-out
+  are refused in code.
+- `--memory on|off` on `run.py`, `agent.py`, `debate.py`; off (default) is byte-identical to main `01c02e2`
+  (`bench/loop/test_memory_loop.py`, `TestMainParity`).
+- Eval: `bench/loop/memory_eval.py check|run|report`, memory off vs on on a held-out set, matched model, K, E, budget,
+  parallel, api and per-row seeds; KEEP at net >= max(3, ceil(0.1 N)), DROP at net <= 0, else INCONCLUSIVE.
+- v9 held-out set (2026-11-07, CPU only, frozen): `bench/loop/tasks_v9.py`, 30 tasks (formats 8, number_theory 7,
+  graphs_geometry 7, simulation_dp 8), unseen to the evaluated local models in this lab (authors/reviewers have seen
+  it; no pretraining claim). Novelty audit vs all 240 v0-v8 tasks: `docs/v9-novelty-audit.md` (0 hard flags, 8
+  reviewed vocabulary overlaps). Protocol and GPU session plan: `docs/memory-eval-v9-protocol.md`. **Blocker:** no
+  stored agent.py trajectory exists for `qwen3-32b` or `r1-distill-qwen-32b`, so no same-model lesson export and no
+  prereg; unblocking needs one train-only K4E4 run per model on v8 (AJ's go; estimate in the protocol doc).
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.

@@ -16,8 +16,8 @@ Tasks 11-30 are appended at the marker below with seeds 4011-4030; the first 10 
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 
 task("v4_01_json_patch", r'''

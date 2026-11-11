@@ -1,0 +1,43 @@
+{
+ "files": [
+  "agent-v8-qwen3-32b-k4e4-np4.jsonl"
+ ],
+ "set": "v8",
+ "split": "train",
+ "root": "/data/ring-memloop-v9",
+ "model": "qwen3-32b",
+ "grader": "grade-65b662df4ba4",
+ "admitted": 5,
+ "lessons": [
+  {
+   "id": 1,
+   "task_id": "v8_02_morse_text",
+   "model": "qwen3-32b"
+  },
+  {
+   "id": 2,
+   "task_id": "v8_04_money_text",
+   "model": "qwen3-32b"
+  },
+  {
+   "id": 3,
+   "task_id": "v8_19_euler_trail",
+   "model": "qwen3-32b"
+  },
+  {
+   "id": 4,
+   "task_id": "v8_22_tree_centers",
+   "model": "qwen3-32b"
+  },
+  {
+   "id": 5,
+   "task_id": "v8_23_robot_walk",
+   "model": "qwen3-32b"
+  }
+ ],
+ "refused": {
+  "duplicate lesson": 7
+ },
+ "rows_of_other_models": 0,
+ "regrade_mismatch": []
+}

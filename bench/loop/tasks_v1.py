@@ -12,8 +12,8 @@ inputs, so expected values are not hand-computed.
 T = []
 
 
-def task(id, prompt, tests, ref):
-    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip()})
+def task(id, prompt, tests, ref, split="train"):
+    T.append({"id": id, "prompt": prompt.strip(), "tests": tests.strip(), "ref": ref.strip(), "split": split})
 
 
 task("v1_01_regex_match", r'''

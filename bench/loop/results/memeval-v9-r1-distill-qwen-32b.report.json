@@ -1,0 +1,30 @@
+{
+ "verdict": "DROP",
+ "n": 30,
+ "off_solved": 21,
+ "on_solved": 21,
+ "gains": [
+  "v9_15_gaussian_gcd",
+  "v9_30_dice_totals"
+ ],
+ "losses": [
+  "v9_22_polar_order",
+  "v9_25_turmite_walk"
+ ],
+ "net": 0,
+ "keep_line": 3,
+ "sign_test_p": 1.0,
+ "tokens": {
+  "off": 1440639,
+  "on": 1379154
+ },
+ "turns": {
+  "off": 180,
+  "on": 174
+ },
+ "wall_s": {
+  "off": 49104.7,
+  "on": 46067.6
+ },
+ "read_rule_version": "memloop-v1-rule-2"
+}

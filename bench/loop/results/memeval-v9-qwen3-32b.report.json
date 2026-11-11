@@ -1,0 +1,29 @@
+{
+ "verdict": "INCONCLUSIVE",
+ "n": 30,
+ "off_solved": 25,
+ "on_solved": 26,
+ "gains": [
+  "v9_08_outline_numbers",
+  "v9_25_turmite_walk"
+ ],
+ "losses": [
+  "v9_17_key_maze"
+ ],
+ "net": 1,
+ "keep_line": 3,
+ "sign_test_p": 1.0,
+ "tokens": {
+  "off": 1031226,
+  "on": 1012679
+ },
+ "turns": {
+  "off": 131,
+  "on": 136
+ },
+ "wall_s": {
+  "off": 32493.8,
+  "on": 34676.1
+ },
+ "read_rule_version": "memloop-v1-rule-2"
+}

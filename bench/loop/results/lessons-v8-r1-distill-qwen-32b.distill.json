@@ -1,0 +1,38 @@
+{
+ "files": [
+  "agent-v8-r1-distill-qwen-32b-k4e4-np4.jsonl"
+ ],
+ "set": "v8",
+ "split": "train",
+ "root": "/data/ring-memloop-v9",
+ "model": "r1-distill-qwen-32b",
+ "grader": "grade-65b662df4ba4",
+ "admitted": 4,
+ "lessons": [
+  {
+   "id": 6,
+   "task_id": "v8_01_hex_color",
+   "model": "r1-distill-qwen-32b"
+  },
+  {
+   "id": 7,
+   "task_id": "v8_03_case_convert",
+   "model": "r1-distill-qwen-32b"
+  },
+  {
+   "id": 8,
+   "task_id": "v8_16_two_color",
+   "model": "r1-distill-qwen-32b"
+  },
+  {
+   "id": 9,
+   "task_id": "v8_23_robot_walk",
+   "model": "r1-distill-qwen-32b"
+  }
+ ],
+ "refused": {
+  "duplicate lesson": 6
+ },
+ "rows_of_other_models": 0,
+ "regrade_mismatch": []
+}
