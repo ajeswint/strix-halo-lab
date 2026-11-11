@@ -1652,6 +1652,23 @@ Stated before any GPU session (2026-11-05 CT, measure skill steps 1-6). Reopens 
     python3 bench/loop/debate.py report --label crawdad-v8-r2 --regrade
     ```
 
+## CRAwDAD v8 redraw (fixed parser, result)
+
+Run 2026-11-06/07 CT on AJ's go, per the pre-run above (protocols `137acf32c95d` D / `a01c192bac5d` DR, build `b11669-620d2225c`, fresh grading seed `104729`). Both arms complete on all 30 `v8` tasks; `report --regrade` ok on both.
+
+```
+crawdad-v8-d2 (D):  leaf 9/30   solo Q 9  R 4  union 10   first-speaker solo F 4   replies 108   stops accept 30
+crawdad-v8-r2 (DR): leaf 12/30  solo Q 11 R 7  union 14   first-speaker solo F 8   replies 109   stops accept 29, max_rounds 1
+paired leaf: gains v8_12_pascal_mod, v8_18_closest_pair, v8_27_stair_ways; losses none
+net = L_R - L_D = +3
+```
+
+- Verdict: keep retrieval as configured, by the unchanged bar (`net >= 3`), exactly at the line, the same reading as stored `crawdad-v8-{d,r}` (`1b801af`).
+- Same-prompt caveat, again: `v8_18_closest_pair` is an R1-Distill `graphs_geometry` task whose retrieval read is empty (`retrieved: []`), so its prompt is identical in both arms; its R1 solo flipped fail -> pass between arms and it is one of the three gains. Without it the net is +2 (inconclusive by the bar). As in the stored run, the keep sits on the line and this run cannot separate retrieval from same-prompt variation. Stored `+3` and redraw `+3` are two exploratory readings at the line, not a strong effect.
+- Debate replication reading (`crawdad-v7-30` bar, recorded, no new verdict): D leaf 9 over first-speaker solo F 4 is net +5 (5 fail->pass, 0 pass->fail) and `L_D 9 >= max(Q 9, R 4)` holds, so the debate keep replicates under the fixed parser; the leaf only ties the best single seat (Qwen solo 9).
+- Parser: no `parse_fail` stops in either arm (stored D/DR had six in-fence `parse_fail` stops).
+- Results: `bench/loop/results/crawdad-v8-{d2,r2}.debate.{jsonl,meta.json,summary.json}`. Stored `crawdad-v8-{d,r}` rows untouched.
+
 ## Model lifecycle: llmctl sessions (2026-10-07)
 
 Why: before this, nothing in the tree stopped one model and loaded another. `llm-serve.sh` managed only the small model, `llama-deepseek` is a separate sudo-only unit with no `Conflicts=`, `preflight.sh` only gates, and "one model at a time" lived in prose. On 2026-10-07 at 03:58 the kernel OOM-killed a 95 GiB `python3` in Cursor's scope while a Qwen server held 28 GiB of GTT; Cursor's scope failed with it and the v4 probe run (started 03:38) was lost with no rows written. What allocated the 95 GiB is not established: the grader's sandbox child has `RLIMIT_AS` 4 GiB, and a solution that prints in a loop grew the grader parent only ~130 MiB in 8 s (tested under a 3 GiB cap), so unbounded output buffering is ruled out as the main cause. The `agent.py` parent is the suspect (nothing capped it), not proven.
