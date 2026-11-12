@@ -262,9 +262,9 @@ MUTANTS = {
         ('coincident circle check omitted', 'if d < 1e-9 and abs(r1 - r2) < 1e-9:\n        return "coincident", ()', 'pass'),
         ('radius <= 0 check omitted', 'or r <= 0:', 'or False:'),
     ],
-    'v10_65_lexmin_toposort': [
-        ('cycle check returns empty list instead of None', 'if len(order) != n_nodes:\n        return None', 'if len(order) != n_nodes:\n        return []'),
-        ('heapq pop replaced with max pop', 'u = heapq.heappop(heap)', 'u = heap.pop()'),
+    'v10_65_welsh_powell_coloring': [
+        ('order sorts by degree ascending instead of descending', 'order = sorted(range(n_nodes), key=lambda u: (-len(adj[u]), u))', 'order = sorted(range(n_nodes), key=lambda u: (len(adj[u]), u))'),
+        ('start color index from 1 instead of 0', 'c = 0\n        while c in used:', 'c = 1\n        while c in used:'),
     ],
     'v10_66_point_in_convex': [
         ('boundary check returns inside', 'return "boundary" if on_edge else "inside"', 'return "inside"'),

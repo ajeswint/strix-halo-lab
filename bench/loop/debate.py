@@ -55,7 +55,7 @@ SEATS = {"qwen3-32b": "qwen32", "r1-distill-qwen-32b": "r1d32"}   # served alias
 ORDER = ("qwen32", "r1d32")
 COIN_SEED = 42            # the paper code's coin seed
 SEED_BASE = 4000          # reply seed = SEED_BASE + round; disjoint from run.py 0-15, loop 1000+, fix 2000+, plan 3000-3001
-ALLOWED_SEED_BASE_MIN = 4000  # seed_base < 4000 collides with reserved ranges (0-15 run.py, 1000+ loop, 2000+ fix, 3000-3001 plan)
+ALLOWED_SEED_BASE_MIN = 4100  # seed_base in 4001-4099 overlaps default rounds 4001-4004; < 4000 collides with 0-15, 1000+, 2000+, 3000-3001
 ALLOWED_SEED_BASE_MAX = (1 << 31) - 10
 REASONING_BUDGET = 2048   # user, 2026-10-15
 MAX_TOKENS = 6144         # thinking + visible answer
@@ -358,9 +358,9 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
         if seed_base is None:
             seed_base = SEED_BASE
         elif not (isinstance(seed_base, int) and not isinstance(seed_base, bool)
-                  and ALLOWED_SEED_BASE_MIN <= seed_base <= ALLOWED_SEED_BASE_MAX):
-            raise SystemExit(f"seed_base {seed_base} collides with reserved ranges (0-15, 1000+, 2000+, 3000-3001); "
-                             f"allowed range is {ALLOWED_SEED_BASE_MIN}..{ALLOWED_SEED_BASE_MAX}")
+                  and (seed_base == SEED_BASE or ALLOWED_SEED_BASE_MIN <= seed_base <= ALLOWED_SEED_BASE_MAX)):
+            raise SystemExit(f"seed_base {seed_base} invalid; allowed values are {SEED_BASE} (default) or "
+                             f"{ALLOWED_SEED_BASE_MIN}..{ALLOWED_SEED_BASE_MAX} (to avoid colliding with default seeds 4001-4004 and reserved ranges)")
         all_ids = [t["id"] for t in run.load_set(set_name)]
         task_ids = task_ids or all_ids
         unknown = set(task_ids) - set(all_ids)
@@ -802,6 +802,15 @@ def selftest():
               refused(lambda: step(root, "sb4", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=3000)))
         check("refused: seed_base negative (-5)",
               refused(lambda: step(root, "sb5", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=-5)))
+        check("refused: seed_base overlapping default rounds (4001)",
+              refused(lambda: step(root, "sb6", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=4001)))
+        check("refused: seed_base above max (1<<31)",
+              refused(lambda: step(root, "sb7", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=ALLOWED_SEED_BASE_MAX + 1)))
+        calls.clear()
+        step(root, "sb_def", "v1", ids[:2], alias["qwen32"], srv, fake("qwen32", seed_base=4000), log=quiet, seed_base=4000)
+        meta_def, rows_def = load(root, "sb_def")
+        check("seed_base: 4000 accepted explicitly, protocol matches default",
+              meta_def["seed_base"] == 4000 and meta_def["protocol"] == PROTOCOL)
         calls.clear()
         step(root, "sb_ok", "v1", ids[:2], alias["qwen32"], srv, fake("qwen32", seed_base=4100), log=quiet, seed_base=4100)
         meta_sb, rows_sb = load(root, "sb_ok")
@@ -911,7 +920,7 @@ def main():
     ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch; reparse: grade the changed code")
     ap.add_argument("--retrieve", help="step, first step only: a memring retrieval export (memring.py debate --passes-out)")
     ap.add_argument("--seed-base", type=int, default=None,
-                    help=f"step, first step only: reply seed base (default {SEED_BASE}; allowed range >= {ALLOWED_SEED_BASE_MIN})")
+                    help=f"step, first step only: reply seed base (default {SEED_BASE}; allowed: {SEED_BASE} or {ALLOWED_SEED_BASE_MIN}..{ALLOWED_SEED_BASE_MAX})")
     a = ap.parse_args()
     if a.selftest:
         return selftest()

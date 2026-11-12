@@ -163,7 +163,7 @@ FAMILIES = {"v5": {"v5_01_table_zone": "civil_time", "v5_02_leap_smear": "civil_
                     "v10_59_lucas_sequence": "number_theory", "v10_60_engel_expansion": "number_theory",
                     "v10_61_convex_hull_2d": "graphs_geometry", "v10_62_tarjan_scc": "graphs_geometry",
                     "v10_63_kruskal_mst": "graphs_geometry", "v10_64_circle_intersection": "graphs_geometry",
-                    "v10_65_lexmin_toposort": "graphs_geometry", "v10_66_point_in_convex": "graphs_geometry",
+                    "v10_65_welsh_powell_coloring": "graphs_geometry", "v10_66_point_in_convex": "graphs_geometry",
                     "v10_67_dijkstra_path": "graphs_geometry", "v10_68_segment_intersection": "graphs_geometry",
                     "v10_69_graph_isomorphism": "graphs_geometry", "v10_70_minimum_enclosing_circle": "graphs_geometry",
                     "v10_71_articulation_points": "graphs_geometry", "v10_72_eulerian_path_directed": "graphs_geometry",

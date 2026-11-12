@@ -44,6 +44,15 @@ class TestTaskFile(unittest.TestCase):
         self.assertEqual(counts, FAMILY_COUNTS)
 
     @unittest.skipUnless(HAVE_BWRAP, "needs bwrap")
+    def test_task_65_welsh_powell_coloring(self):
+        t = [x for x in tasks_v10.TASKS if x["id"] == "v10_65_welsh_powell_coloring"]
+        self.assertEqual(len(t), 1)
+        task = t[0]
+        self.assertEqual(memring.FAMILIES["v10"]["v10_65_welsh_powell_coloring"], "graphs_geometry")
+        ok, err = run.grade(task["ref"], task["tests"])
+        self.assertTrue(ok, err)
+
+    @unittest.skipUnless(HAVE_BWRAP, "needs bwrap")
     def test_check_tasks_clean(self):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
