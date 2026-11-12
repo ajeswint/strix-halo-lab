@@ -10,7 +10,7 @@ Working repo for a Framework Desktop (Ryzen AI Max+ 395 / Strix Halo, Radeon 806
 
 - **Hardware & OS**: Framework Desktop (Ryzen AI Max+ 395, Radeon 8060S gfx1151, 128 GB unified LPDDR5X). Ubuntu 26.04.1 LTS, ROCm 10.0.0, GTT 108 GiB.
 - **Serving & lifecycle**: Small models and RAG endpoints serve via `scripts/llmctl.py` sessions only. Memory preflight (`scripts/preflight.sh`) required before any load; NOT READY = stop. Never load beside DeepSeek (~85 GiB GTT).
-- **Standing seats**: Code writer is Google Antigravity (`gemini-4-argon`, effort high); adversarial reviewer is Claude Code (Sonnet, effort high, reviews only). Relayed via `tools/lab-seats/launch.sh`.
+- **Standing seats**: Code writer is Google Antigravity (`gemini-3.8-flash-high`, effort high); adversarial reviewer is Grok 4.7 high (reviews only).
 - **Repo constraints**: SQLite with one writer (WAL mode). No Docker (podman only), no Postgres, no Unsloth in the torch env, no GTT above 108 GiB.
 
 ## Topic docs index
