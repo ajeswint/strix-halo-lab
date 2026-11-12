@@ -1700,19 +1700,17 @@ Stated before any GPU session (2026-11-11 CT). For review before running; **no G
   - Metrics across {d2, d3, d4}:
     - Leaf totals L_2, L_3, L_4 in [0, 30].
     - Pairwise discordant counts: D_ij = sum_{t=1}^{30} [L_i(t) != L_j(t)] for (i, j) in {(d2,d3), (d2,d4), (d3,d4)}.
-    - Mean noise flip rate: p_flip = (1 / 90) * (D_23 + D_24 + D_34).
-    - Spread: Delta_N = max(L) - min(L), sample standard deviation s_L = sqrt((1/2) * sum_i (L_i - L_bar)^2).
+    - Cross-seed triad discordance and spread: mean discordant rate p_flip = (1 / 90) * (D_23 + D_24 + D_34), leaf range Delta_N = max(L) - min(L), sample standard deviation s_L = sqrt((1/2) * sum_i (L_i - L_bar)^2). These cross-seed triad metrics across different seed bases (4000/4100/4200) are reported as recorded spread only, not as the paired-null sigma for same-seed contrasts.
   - Pre-committed rule setting the v10 Stage V bar:
-    - Stage V is a same-seed paired contrast (D vs DR at seed base 4000) over N=90 tasks. Under the paired null hypothesis of zero retrieval effect, each task flip between runs occurs with per-task probability p_flip (measured in Stage N across the triad {d2, d3, d4} as mean discordant rate). For each task i, the paired contrast indicator X_i in {-1, 0, +1} has E[X_i] = 0 and Var(X_i) = p_flip, yielding net noise variance Var(net) = 90 * p_flip and paired noise standard error sigma_paired = sqrt(90 * p_flip).
-    - To guard against noise with a ~99% one-sided confidence margin (2.5 * sigma_paired), bounded below by the minimum net gain required for an exact paired sign test to reach p <= 0.05 when at least 1 discordant loss occurs (7 gains vs 1 loss, net +6, exact binomial p = 0.035), the noise net threshold is given by ONE closed formula:
-      T_noise = max(ceil(2.5 * sqrt(90 * p_flip)), 6)
-    - Concrete numeric bars:
-      - p_flip = 0 (observed d vs d2 on 30 tasks / 107 replies: 0 grade flips): ceil(2.5 * 0) = 0 => T_noise = max(0, 6) = 6.
-      - p_flip = 1/30 (observed same-prompt empty-read flip rate: 1/7 ~ 1/30 over 30 tasks): ceil(2.5 * sqrt(3)) = ceil(4.33) = 5 => T_noise = max(5, 6) = 6.
-      - p_flip = 2/30: ceil(2.5 * sqrt(6)) = ceil(6.12) = 7 => T_noise = max(7, 6) = 7.
-      - p_flip = 3/30: ceil(2.5 * 3.0) = ceil(7.5) = 8 => T_noise = max(8, 6) = 8.
-      - For larger leaf spreads on Stage N, the formula evaluates without branches: leaf range 4 (p_flip ~ 4/30) yields T_noise = ceil(2.5 * sqrt(12)) = 9; leaf range 5 (p_flip ~ 5/30) yields T_noise = ceil(2.5 * sqrt(15)) = 10.
-    - Check against v8 effect: On v8 (n=30), retrieval produced leaf 12 vs 9 without retrieval (+3 on 30 tasks, +10.0%). Scaled to n=90, a repeat of the v8 effect (+3 * 3 = +9 net gain) clears the bar at the observed noise floor (+9 >= 6), and would clear even at elevated noise p_flip = 2/30 (bar 7) or 3/30 (bar 8).
+    - Stage V is a same-seed paired contrast (D vs DR at seed base 4000) over N=90 tasks. Under the paired null hypothesis of zero retrieval effect, task flips between same-seed runs occur due to same-seed / same-prompt variation (KV cache reuse drift across sequential requests and sampling nondeterminism).
+    - Base T_noise on the measured same-seed paired flip rate already reported in this section: 0 grade flips on d vs d2 (0/30) and 1/7 on the identical empty-read R1 graphs solos (p_same = 1/7 = 0.143 ≈ 4.3/30).
+    - For each task i, the paired contrast indicator X_i in {-1, 0, +1} has E[X_i] = 0 and Var(X_i) = p_same = 1/7, yielding net noise variance Var(net) = 90 * (1/7) = 90/7 and paired noise standard error sigma_paired = sqrt(90/7) ≈ 3.586.
+    - To guard against noise with a ~99% one-sided confidence margin (2.5 * sigma_paired), bounded below by the minimum net gain required for an exact paired sign test to reach p <= 0.05 when at least 1 discordant loss occurs (7 gains vs 1 loss, net +6, exact binomial p = 0.035), the noise net threshold is pinned as a number before data:
+      T_noise = max(ceil(2.5 * sqrt(90 / 7)), 6) = max(ceil(2.5 * 3.586), 6) = max(9, 6) = 9
+    - Numeric evaluation:
+      - p_same = 0 (observed d vs d2 on 30 tasks / 107 replies: 0 grade flips): ceil(2.5 * 0) = 0 => T_noise = max(0, 6) = 6 (the sign-test lower bound).
+      - p_same = 1/7 = 0.143 ≈ 4.3/30 (observed same-prompt empty-read flip rate on the 7 R1-Distill graphs solos): ceil(2.5 * sqrt(90 / 7)) = ceil(8.96) = 9 => T_noise = max(9, 6) = 9, pinned as the threshold before data.
+    - Check against v8 effect: On v8 (n=30), retrieval produced leaf 12 vs 9 without retrieval (+3 on 30 tasks, +10.0%). Scaled to n=90, a repeat of the v8 effect (+3 * 3 = +9 net gain) explicitly meets the pinned threshold T = 9 (+9 >= 9). Keep still also requires exact sign-test p <= 0.05 on discordant tasks (e.g. 9 gains vs 0 losses gives p = 0.002; 10 gains vs 1 loss gives net +9 with p = 0.005; 11 gains vs 2 losses gives net +9 with p = 0.039).
 
 - Stage V: Retrieval test on `v10` (90 tasks):
   - Arms: Both run on all 90 `v10` tasks (`--set v10`) with `COIN_SEED = 42` (45 openers per seat), `SEED_BASE = 4000` (seeds `4000 + round`), fresh grading seed `104729`, same sampling, budgets, build, model files, and endpoint defaults as `crawdad-v8`:
@@ -1724,18 +1722,18 @@ Stated before any GPU session (2026-11-11 CT). For review before running; **no G
 
       | Net gain (net = L_R - L_D) | Exact sign test p <= 0.05 | Exact sign test 0.05 < p <= 0.10 | Exact sign test p > 0.10 |
       | :--- | :--- | :--- | :--- |
-      | net >= T_noise | **Keep** | **Inconclusive** | **Drop** |
-      | 0 < net < T_noise | **Inconclusive** | **Inconclusive** | **Drop** |
+      | net >= T_noise (pinned T = 9) | **Keep** | **Inconclusive** | **Drop** |
+      | 0 < net < T_noise (pinned T = 9) | **Inconclusive** | **Inconclusive** | **Drop** |
       | net <= 0 | **Drop** | **Drop** | **Drop** |
 
     - Partition definitions:
-      - **Keep**: net >= T_noise AND p <= 0.05. Both the noise floor and statistical significance are satisfied.
+      - **Keep**: net >= T_noise (pinned T = 9) AND p <= 0.05. Both the noise floor and statistical significance are satisfied.
       - **Drop**: net <= 0 OR p > 0.10. Retrieval provided no net gain or the outcome was statistically indistinguishable from chance.
-      - **Inconclusive**: 0 < net AND p <= 0.10 AND NOT Keep (specifically: 0 < net < T_noise with p <= 0.10, or net >= T_noise with 0.05 < p <= 0.10). Defaults to drop unless AJ approves expansion.
-    - Same-prompt caveat handling: DR tasks where the opener had an empty retrieval read (`retrieved: []`, e.g. R1-Distill on `graphs_geometry`) share identical opener prompts with D. The primary bar governs over all 90 tasks, but results will explicitly tabulate net gain excluding empty-read opener gains/losses. If excluding empty-read gains drops net < T_noise, the keep carries a recorded caveat.
+      - **Inconclusive**: 0 < net AND p <= 0.10 AND NOT Keep (specifically: 0 < net < T_noise with p <= 0.10, or net >= T_noise with 0.05 < p <= 0.10, for pinned T = 9). Defaults to drop unless AJ approves expansion.
+    - Same-prompt caveat handling: DR tasks where the opener had an empty retrieval read (`retrieved: []`, e.g. R1-Distill on `graphs_geometry`) share identical opener prompts with D. The primary bar governs over all 90 tasks, but results will explicitly tabulate net gain excluding empty-read opener gains/losses. If excluding empty-read gains drops net < T_noise (pinned T = 9), the keep carries a recorded caveat.
 
 - Cost estimates from stored `v8` redraw logs (`/tmp/lab-seats/crawdad-v8-{d2,r2}/session*.log` and `.debate.jsonl`):
-  - `crawdad-v8-d2` (n=30): 4 sessions, 108 replies, decode 24,593 s (6.83 GPU-hours; wall ~5 h 29 min due to overlapped request scheduling / server-side timing), prompt tok 115,140, comp tok 264,580 (total 379,720).
+  - `crawdad-v8-d2` (n=30): 4 sessions, 108 replies, decode 24,593 s (6.83 GPU-hours; the clock window quoted is not the full serial wall and GPU-hours from summed gen_s is the primary figure), prompt tok 115,140, comp tok 264,580 (total 379,720).
   - `crawdad-v8-r2` (n=30): 5 sessions, 109 replies, decode 25,048 s (6.96 GPU-hours; wall ~7 h 10 min across sessions), prompt tok 210,825, comp tok 270,199 (total 481,024).
   - Scaled for `v10` (n=90, exactly 3x tasks):
     - D (v10): ~324 replies, ~20.5–21.0 GPU hours decode (~16–18 h wall), ~1.14M tokens.
