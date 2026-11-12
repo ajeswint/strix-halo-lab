@@ -1,6 +1,6 @@
 # tools/lab-seats
 
-Launcher for the two standing seats: `code-writer` = Google Antigravity (`agy`, Gemini 4 Argon, effort high; since 2026-11-05 CT) and `adversarial-reviewer` = Claude Code (Sonnet, effort high, unchanged). Roster, reply format and precedence are in `docs/review-roles.md`; the writer's rules are in `docs/antigravity-writer.md`. Ryzen Max Bot (the Grok bot on this MAX) calls it; it launches and relays and writes no product code.
+Launcher for the two standing seats: `code-writer` = Google Antigravity (`agy`, Gemini 3.8 Flash, effort high; since 2026-11-11 CT) and `adversarial-reviewer` = Claude Code (Sonnet, effort high, unchanged). Roster, reply format and precedence are in `docs/review-roles.md`; the writer's rules are in `docs/antigravity-writer.md`. Ryzen Max Bot (the Grok bot on this MAX) calls it; it launches and relays and writes no product code.
 
 ## Use
 
@@ -23,7 +23,7 @@ tools/lab-seats/launch.sh --dry-run --name seats-dry --task "Read docs/review-ro
 Sequentially, cwd = the repo, prompt on stdin:
 
 ```
-agy -p "$(cat writer-prompt.txt)" --model gemini-4-argon --effort high --dangerously-skip-permissions < /dev/null
+agy -p "$(cat writer-prompt.txt)" --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions < /dev/null
 claude -p --model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer
 ```
 
@@ -31,7 +31,7 @@ The writer's prompt is an argument, not stdin: `agy -p` reads stdin only with `-
 
 Each is wrapped in `timeout --kill-after=30` (default 3600 s). The reviewer runs only if the writer exited 0 **and** wrote a non-empty `writer-out.md` (headless `agy` soft-denies unapproved tools with exit 0, so an exit code alone is not enough). `--bg` is not used with claude: it cannot be combined with `-p` (https://code.claude.com/docs/en/cli-reference). `effort: high` is also in the reviewer's agent file (https://code.claude.com/docs/en/sub-agents).
 
-**Writer flags.** `--dangerously-skip-permissions`: headless `agy` has no approval prompt and soft-denies a tool call without an allow rule (exit 0), so without it the writer could not edit or commit. It matches the old `bypassPermissions` posture for approval, with less behind it (no tool list, no gpu-guard); see `docs/antigravity-writer.md`. **The model slug `gemini-4-argon` is unconfirmed**: `agy models` requires a sign-in. After AJ signs in once (interactively, `agy`), run `agy models`, and if the slug differs set `LAB_SEATS_WRITER_MODEL`. An unknown slug fails non-zero with no silent fallback.
+**Writer flags.** `--dangerously-skip-permissions`: headless `agy` has no approval prompt and soft-denies a tool call without an allow rule (exit 0), so without it the writer could not edit or commit. It matches the old `bypassPermissions` posture for approval, with less behind it (no tool list, no gpu-guard); see `docs/antigravity-writer.md`. The standing writer slug `gemini-3.8-flash-high` is verified and has been used; it is the launcher default and is overridable with `LAB_SEATS_WRITER_MODEL`. An unknown slug fails non-zero with no silent fallback.
 
 ## Caps
 
@@ -39,7 +39,7 @@ Each is wrapped in `timeout --kill-after=30` (default 3600 s). The reviewer runs
 |---|---|
 | `LAB_SEATS_TIMEOUT` | seconds per one-shot, default 3600 (an unmeasured default, not tuned from a real run); integer, baked into `run.sh` at launch. A timeout gives `writer-failed rc=124`, or `rc=137` if the process ignored SIGTERM and `--kill-after=30` sent SIGKILL (same for `reviewer-failed`). |
 | `LAB_SEATS_MAX_USD` | optional; adds `--max-budget-usd N` to the **reviewer** one-shot only (claude, print mode). `agy` 1.5.1 has no budget flag, so the writer is uncapped except by the timeout. Unset = no budget cap. |
-| `LAB_SEATS_WRITER_MODEL` | `agy` model slug, default `gemini-4-argon` (unconfirmed, see above); must match `[A-Za-z0-9._-]+`; baked into `run.sh` at launch. |
+| `LAB_SEATS_WRITER_MODEL` | `agy` model slug, default `gemini-3.8-flash-high`; must match `[A-Za-z0-9._-]+`; baked into `run.sh` at launch. |
 
 `--max-turns` is documented upstream for claude (print mode only; https://code.claude.com/docs/en/cli-reference) but not shown in 2.1.317 `claude --help`; not wired, untested. `agy` has no equivalent.
 
