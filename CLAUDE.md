@@ -1,6 +1,6 @@
 # Working rules for agents in this repo
 
-- Read `README.md` first; it is the current state of the machine and the decision log. Files under `bench/`, `etc/`, `systemd/`, `envs/`, `models/`, `scripts/` are copies of live files; the tree mirrors their real paths.
+- Read `README.md` first (it summarizes machine state and the decision log, with an index of topic docs); agents read only the short `README.md` plus the one docs file relevant to their task, never all of `docs/`. Files under `bench/`, `etc/`, `systemd/`, `envs/`, `models/`, `scripts/` are copies of live files; the tree mirrors their real paths.
 - Terse. Mechanism-level explanations. Yes/no first when the question is yes/no.
 - Exact copy-paste commands only. Never `<placeholders>` in command blocks.
 - Verify against current upstream docs before asserting versions or install steps. Cite the URL.
@@ -10,10 +10,10 @@
 - When installing into `/data/envs/torch` with the AMD wheel index, always add `--index-strategy unsafe-best-match` and the constraints file `envs/torch-constraints.txt`.
 - Own errors plainly and correct forward.
 - Review roles (who writes, who attacks, who judges): `docs/review-roles.md` (canonical; `AGENTS.md` is the seat pin). Standing seats since 2026-11-05 CT: `code-writer` is Google Antigravity (Gemini 4 Argon, effort high; rules in `docs/antigravity-writer.md`; the Claude writer is closed), `adversarial-reviewer` is Claude Code (Sonnet, effort high) and reviews only; both launched by Ryzen Max Bot through `tools/lab-seats/launch.sh`, which merges on `APPROVE*` (soft nits parked unless AJ asks). Full replies are Detail, then Relay, then Outline. `red-team` is a domain arm, not the adversarial-reviewer.
-- Stay in this repo's scope (the Roadmap in README.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
+- Stay in this repo's scope (the Roadmap in docs/roadmap.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
 - Install the entire stack for a step first, then test. Never test one component while other installs are pending or running.
 - Model servers start and stop only through `scripts/llmctl.py` (sessions; `llm-serve` skill). Long clients (agent.py, run.py) run as `scripts/llmctl.py run -- ...` inside an ACTIVE session: that is the memory cap (2026-10-07: a 95 GiB python3 OOM-killed Cursor). Ending DeepSeek is the user's, at a terminal.
-- Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `scripts/preflight.sh` with the model path (`preflight` skill), right before the load. NOT READY = stop. Never load beside the DeepSeek server (~85 GiB GTT); ask before stopping it. (2026-10-04 OOM incident, README Security.)
+- Memory preflight before loading ANY model or running llama-bench/llama-perplexity/training: `scripts/preflight.sh` with the model path (`preflight` skill), right before the load. NOT READY = stop. Never load beside the DeepSeek server (~85 GiB GTT); ask before stopping it. (2026-10-04 OOM incident, docs/setup-hardware.md Security.)
 - Procedures live in `.claude/skills/` (preflight, llm-serve, bench, measure, orch-review, live-sync, torch-install, model-add, handoff). Use the skill instead of re-deriving the steps. When a procedure changes, amend its skill in the same commit.
 - After presenting options or a list, stop and wait for the user's choice.
 - History before 2026-10-04 lives in the archived ajeswint/strix-halo-setup repo.
