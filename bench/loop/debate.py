@@ -55,6 +55,8 @@ SEATS = {"qwen3-32b": "qwen32", "r1-distill-qwen-32b": "r1d32"}   # served alias
 ORDER = ("qwen32", "r1d32")
 COIN_SEED = 42            # the paper code's coin seed
 SEED_BASE = 4000          # reply seed = SEED_BASE + round; disjoint from run.py 0-15, loop 1000+, fix 2000+, plan 3000-3001
+ALLOWED_SEED_BASE_MIN = 4000  # seed_base < 4000 collides with reserved ranges (0-15 run.py, 1000+ loop, 2000+ fix, 3000-3001 plan)
+ALLOWED_SEED_BASE_MAX = (1 << 31) - 10
 REASONING_BUDGET = 2048   # user, 2026-10-15
 MAX_TOKENS = 6144         # thinking + visible answer
 BUDGET_MESSAGE = "Reasoning budget reached. Write the answer now."
@@ -76,9 +78,15 @@ VERDICT_RULES = ("\n\nThen end your reply with two lines. First `VERDICT: accept
                  "```python code block, standard library only, no example usage, no tests, no input(). Last, "
                  "`CONFIDENCE: c`, c from 0.0 to 1.0, how likely the module that stands after your reply is correct.")
 FENCE = "=========="
-PROTOCOL = hashlib.sha256(json.dumps([SOLO_SUFFIX, DEBATE_HEAD, CRITIC, DEFENDER, VERDICT_RULES, FENCE, BUDGET_MESSAGE,
-                                      REASONING_BUDGET, MAX_TOKENS, SEED_BASE, COIN_SEED, run.SAMPLING,
+
+
+def debate_protocol(seed_base=SEED_BASE):
+    return hashlib.sha256(json.dumps([SOLO_SUFFIX, DEBATE_HEAD, CRITIC, DEFENDER, VERDICT_RULES, FENCE, BUDGET_MESSAGE,
+                                      REASONING_BUDGET, MAX_TOKENS, seed_base, COIN_SEED, run.SAMPLING,
                                       agent.FRESH_SEED]).encode()).hexdigest()[:12]
+
+
+PROTOCOL = debate_protocol(SEED_BASE)
 # Retrieval arm (step --retrieve EXPORT on a run's first step): every prompt a seat writes, solo R1 included, starts
 # with the grader-pass modules memring.passes() chose from that seat's own solver slot for the task's family. An empty
 # read adds nothing, so that prompt is the plain one. A run without --retrieve is the plain debate, hash PROTOCOL.
@@ -196,11 +204,12 @@ def ref_block(refs):
     return REF_HEAD + body + f"\n{FENCE}\n\n"
 
 
-def protocol(retrieval):
+def protocol(retrieval, seed_base=SEED_BASE):
     """PROTOCOL for the plain debate; with retrieval, a hash that also binds the block layout and the export."""
+    base = debate_protocol(seed_base) if seed_base != SEED_BASE else PROTOCOL
     if not retrieval:
-        return PROTOCOL
-    return hashlib.sha256(json.dumps([PROTOCOL, ref_block([{"task_id": "T", "content": "C"}]),
+        return base
+    return hashlib.sha256(json.dumps([base, ref_block([{"task_id": "T", "content": "C"}]),
                                       retrieval["sha256"]]).encode()).hexdigest()[:12]
 
 
@@ -309,9 +318,9 @@ def owed(meta, idx, seat):
     return out
 
 
-def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print, retrieve=None):
+def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=print, retrieve=None, seed_base=None):
     """Ask every reply the served seat owes. Returns the number of replies asked. retrieve: a retrieval export, first
-    step only (the meta fixes it, by sha256, for the rest of the run)."""
+    step only (the meta fixes it, by sha256, for the rest of the run). seed_base: first step only (default 4000)."""
     if alias not in SEATS:
         raise SystemExit(f"served model {alias!r} is not a debate seat ({sorted(SEATS)})")
     seat = SEATS[alias]
@@ -328,13 +337,16 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 raise SystemExit(f"{mp}: {k} is {meta[k]}, this step asked for {want}")
         if retrieve is not None:
             raise SystemExit(f"{mp}: --retrieve is for a run's first step; the meta already fixes it")
+        if seed_base is not None:
+            raise SystemExit(f"{mp}: --seed-base is for a run's first step; the meta already fixes it")
+        seed_base = meta.get("seed_base", SEED_BASE)
         ret = meta.get("retrieval")
         if ret:
             info, refs = load_refs(os.path.join(HERE, ret["file"]))
             if info["sha256"] != ret["sha256"]:
                 raise SystemExit(f"{ret['file']} changed since the run started (sha256 {info['sha256'][:12]})")
-        if meta["protocol"] != protocol(ret):
-            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {protocol(ret)} (prompts or constants changed mid-run)")
+        if meta["protocol"] != protocol(ret, seed_base):
+            raise SystemExit(f"{mp}: protocol {meta['protocol']}, this code is {protocol(ret, seed_base)} (prompts or constants changed mid-run)")
         if meta["build"] != server.get("build_info"):
             raise SystemExit(f"{mp}: server build {meta['build']}, the served one is {server.get('build_info')}")
         prev = meta["seats"].get(seat)
@@ -343,6 +355,12 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
     else:
         if set_name is None:
             raise SystemExit("the first step of a run needs --set")
+        if seed_base is None:
+            seed_base = SEED_BASE
+        elif not (isinstance(seed_base, int) and not isinstance(seed_base, bool)
+                  and ALLOWED_SEED_BASE_MIN <= seed_base <= ALLOWED_SEED_BASE_MAX):
+            raise SystemExit(f"seed_base {seed_base} collides with reserved ranges (0-15, 1000+, 2000+, 3000-3001); "
+                             f"allowed range is {ALLOWED_SEED_BASE_MIN}..{ALLOWED_SEED_BASE_MAX}")
         all_ids = [t["id"] for t in run.load_set(set_name)]
         task_ids = task_ids or all_ids
         unknown = set(task_ids) - set(all_ids)
@@ -358,8 +376,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
             if sorted(refs) != sorted(ORDER):
                 raise SystemExit(f"the retrieval export covers {sorted(refs)}, not both seats")
         meta = {"label": label, "set": set_name, "tasks": task_ids, "first": coin(task_ids), "coin_seed": COIN_SEED,
-                "protocol": protocol(ret), "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
-                "sampling": run.SAMPLING, "seed_base": SEED_BASE, "fresh_seed": agent.FRESH_SEED,
+                "protocol": protocol(ret, seed_base), "reasoning_budget": REASONING_BUDGET, "max_tokens": MAX_TOKENS,
+                "sampling": run.SAMPLING, "seed_base": seed_base, "fresh_seed": agent.FRESH_SEED,
                 "build": server.get("build_info"), "seats": {}}
         if ret:
             meta["retrieval"] = ret
@@ -390,12 +408,12 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 got = refs[seat].get(memring.FAMILIES[meta["set"]][tid], []) if refs else []
                 prompt = ref_block(got) + prompt
             try:
-                r = ask(prompt, SEED_BASE + rnd)
+                r = ask(prompt, seed_base + rnd)
             except BaseException:
                 dead.set()
                 raise
             code, verdict, conf = parse(r["content"])
-            row = {"task": tid, "seat": seat, "model": alias, "round": rnd, "role": role, "seed": SEED_BASE + rnd,
+            row = {"task": tid, "seat": seat, "model": alias, "round": rnd, "role": role, "seed": seed_base + rnd,
                    "content": r["content"], "reasoning_chars": r["reasoning_chars"], "budget_hit": r.get("budget_hit"),
                    "finish": r["finish"],
                    "completion_tokens": r["usage"].get("completion_tokens"),
@@ -564,7 +582,7 @@ def report(root, label, regrade=False, log=print):
     summary = {"label": label, "set": meta["set"], "tasks": len(meta["tasks"]), "complete": complete,
                "protocol": meta["protocol"], "retrieval": meta.get("retrieval"), "build": meta["build"], "seats": meta["seats"],
                "reasoning_budget": meta["reasoning_budget"], "max_tokens": meta["max_tokens"],
-               "sampling": meta["sampling"], "fresh_seed": meta["fresh_seed"],
+               "sampling": meta["sampling"], "seed_base": meta.get("seed_base", SEED_BASE), "fresh_seed": meta["fresh_seed"],
                "first_counts": {s: sum(v == s for v in meta["first"].values()) for s in ORDER},
                "solo_solved": solo_pass, "solo_union": len(meta["tasks"]) - excl["neither"], "exclusive": excl,
                "debate_solved": sum(r.get("leaf_pass", False) for r in per), "leaves": leaves, "stops": stops,
@@ -585,6 +603,13 @@ def selftest():
         nonlocal ok
         ok &= bool(cond)
         print(f"{'ok' if cond else 'FAIL':4} {name}")
+
+    # protocol constants and seed-base hashing
+    ret_v7_dummy = {"sha256": "5118c06066ba7744e627cc09c800f4444902a1634f887a65a65a466a6e2777d5"}
+    check("default protocol hash for D is 137acf32c95d", PROTOCOL == "137acf32c95d")
+    check("default protocol hash for DR is a01c192bac5d", protocol(ret_v7_dummy) == "a01c192bac5d")
+    check("non-default seed-base changes D and DR protocol hashes",
+          protocol(None, seed_base=4100) != PROTOCOL and protocol(ret_v7_dummy, seed_base=4100) != "a01c192bac5d")
 
     # parsing
     check("verdict: markdown bold, case-insensitive", parse("fine\n**VERDICT:** Accept\nCONFIDENCE: 0.9")[1:] == ("accept", 0.9))
@@ -676,7 +701,7 @@ def selftest():
     }
     calls, flock = [], threading.Lock()
 
-    def fake(seat, fail_at=None):
+    def fake(seat, fail_at=None, seed_base=SEED_BASE):
         def ask(prompt, seed):
             with flock:   # the count and the append are one step across threads
                 return locked(prompt, seed)
@@ -686,7 +711,7 @@ def selftest():
                 calls.append((seat, None, None, prompt))
                 raise RuntimeError("server died")
             tid = next(t["id"] for t in tasks if t["prompt"] in prompt)
-            rnd = seed - SEED_BASE
+            rnd = seed - seed_base
             key = ("s1" if first[tid] == seat else "s2") if rnd == 1 else rnd
             calls.append((seat, tid, rnd, prompt))
             if key not in script[tid]:
@@ -767,6 +792,24 @@ def selftest():
               refused(lambda: step(root, "t", None, None, alias["qwen32"], dict(srv, build_info="b-other", model_path="/m/qwen32"), fake("qwen32"), log=quiet)))
         check("refused: the same seat on another model file",
               refused(lambda: step(root, "t", None, None, alias["qwen32"], dict(srv, model_path="/m/other"), fake("qwen32"), log=quiet)))
+        check("refused: seed_base in run.py range (10)",
+              refused(lambda: step(root, "sb1", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=10)))
+        check("refused: seed_base in loop range (1000)",
+              refused(lambda: step(root, "sb2", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=1000)))
+        check("refused: seed_base in fix range (2000)",
+              refused(lambda: step(root, "sb3", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=2000)))
+        check("refused: seed_base in plan range (3000)",
+              refused(lambda: step(root, "sb4", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=3000)))
+        check("refused: seed_base negative (-5)",
+              refused(lambda: step(root, "sb5", "v1", ids, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=-5)))
+        calls.clear()
+        step(root, "sb_ok", "v1", ids[:2], alias["qwen32"], srv, fake("qwen32", seed_base=4100), log=quiet, seed_base=4100)
+        meta_sb, rows_sb = load(root, "sb_ok")
+        check("seed_base: 4100 stored in meta, protocol differs from default, rows use 4101+",
+              meta_sb["seed_base"] == 4100 and meta_sb["protocol"] == protocol(None, 4100) != PROTOCOL
+              and len(rows_sb) == 2 and all(r["seed"] == 4101 for r in rows_sb))
+        check("refused: --seed-base on a later step",
+              refused(lambda: step(root, "sb_ok", None, None, alias["qwen32"], srv, fake("qwen32"), log=quiet, seed_base=4100)))
         mp = paths(root, "t")[0]
         m = json.load(open(mp)); m["protocol"] = "000000000000"; save_meta(mp, m)
         check("refused: a protocol hash that is not this code's",
@@ -867,6 +910,8 @@ def main():
     ap.add_argument("--api", default=run.API)
     ap.add_argument("--regrade", action="store_true", help="report: re-grade every coded reply, exit 2 on a mismatch; reparse: grade the changed code")
     ap.add_argument("--retrieve", help="step, first step only: a memring retrieval export (memring.py debate --passes-out)")
+    ap.add_argument("--seed-base", type=int, default=None,
+                    help=f"step, first step only: reply seed base (default {SEED_BASE}; allowed range >= {ALLOWED_SEED_BASE_MIN})")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
@@ -884,7 +929,7 @@ def main():
     os.makedirs(root, exist_ok=True)
     alias = run.served_model(api=a.api)
     step(root, a.label, a.set, a.tasks.split(",") if a.tasks else None, alias, server_props(a.api),
-         server_ask(alias, a.api), a.parallel, retrieve=a.retrieve)
+         server_ask(alias, a.api), a.parallel, retrieve=a.retrieve, seed_base=a.seed_base)
     return 0
 
 
