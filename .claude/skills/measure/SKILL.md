@@ -31,7 +31,7 @@ delta:     <abs and %>      threshold: <stated before>   -> keep | drop | inconc
 ```
 
 - Inconclusive (delta inside the spread) means drop, or rerun with a bigger n if the user agrees. It never means keep.
-- A dropped change is recorded too: one line in README Decisions with the number ("GPU DPM forced high: +15-20 W idle for ~2%").
+- A dropped change is recorded too: one line in docs/setup-hardware.md Decisions with the number ("GPU DPM forced high: +15-20 W idle for ~2%").
 
 ## Evals specific to roadmap 2/3
 

@@ -2,7 +2,7 @@
 # Memory preflight before loading any model, llama-bench/llama-perplexity, or training.
 # Usage: scripts/preflight.sh [model.gguf]   (split GGUF: pass shard 1; all shards are summed)
 # Exit 0 = READY, 1 = NOT READY. Read-only; loads nothing.
-# Policy (CLAUDE.md, README Security, 2026-10-04 OOM): one model at a time. READY needs
+# Policy (CLAUDE.md, docs/setup-hardware.md Security, 2026-10-04 OOM): one model at a time. READY needs
 # llama-deepseek inactive, no llama-* process, GTT used <= 16 GiB (the gpu-guard cutoff),
 # and, with a model given, MemAvailable and free GTT both >= model size + 16 GiB.
 # The 16 GiB margin is a floor for KV cache and buffers, not a fit prediction.
