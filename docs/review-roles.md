@@ -1,18 +1,19 @@
 # Review roles
 
 Source of truth for the roster, the reply format, and precedence. `CLAUDE.md` and `AGENTS.md` carry the same seat pin. If a roster line disagrees with this file, this file wins.
+Updated 2026-11-11 CT (AJ, America/Chicago): writer is Google Antigravity, model Gemini 3.8 Flash (`gemini-3.8-flash-high`), effort high (Argon is quota-exhausted); reviewer is Grok 4.7 high. The Claude Code writer remains closed.
 Updated 2026-11-05 CT (AJ, America/Chicago): the writer seat moved from Claude Code (Sonnet) to Google Antigravity, Gemini 4 Argon, effort high; the reviewer is unchanged. The earlier 2026-11-06-dated entry (Claude writer plus Claude reviewer) is superseded for the writer. The 2026-10-14 roster (kept below as history) is historical for drafts. The README decision log keeps its paragraph. `orchestrator/orch.py` on DeepSeek was not that cloud agent and is unchanged.
 
 ## Seats
 
 | Seat | Who | Does |
 |---|---|---|
-| code-writer | Google Antigravity, model Gemini 4 Argon, reasoning effort high. Headless `agy` one-shot and the interactive App; rules in `docs/antigravity-writer.md`. `.claude/agents/code-writer.md` is a stub (not a Claude agent). | Drafts code, commands, and repo edits. Does not review its own draft. Works on a branch, stages named paths only, pushes only if the task says so (see Writer git rules). |
-| adversarial-reviewer | Claude Code, Sonnet, effort high. `.claude/agents/adversarial-reviewer.md`. | Reviews only. Does not edit the draft. First line is `APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`. |
-| Ryzen Max Bot | Grok bot on this MAX. | Launches the writer as an `agy -p` one-shot and the reviewer as a `claude -p` one-shot, relays, and merges the PR on an `APPROVE*` sign-off. Does not write product code in place of the writer. |
+| code-writer | Google Antigravity, model Gemini 3.8 Flash (slug `gemini-3.8-flash-high`), reasoning effort high. Headless `agy` one-shot and the interactive App; rules in `docs/antigravity-writer.md`. `.claude/agents/code-writer.md` is a stub (not a Claude agent). | Drafts code, commands, and repo edits. Does not review its own draft. Works on a branch, stages named paths only, pushes only if the task says so (see Writer git rules). |
+| adversarial-reviewer | Grok 4.7 high. | Reviews only. Does not edit the draft. First line is `APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`. |
+| Ryzen Max Bot | Grok bot on this MAX. | Launches the writer as an `agy -p` one-shot and relays, and merges the PR on an `APPROVE*` sign-off. Does not write product code in place of the writer. |
 | User (AJ) | Human. | Final judge. Runs sudo and host actions. |
 
-Gemini 4 Argon is the writer's model through Antigravity. That is not the benched "Gemini overseer" of the 2026-10-14 roster, which stays benched until AJ un-benches it and is not a draft seat.
+Gemini 3.8 Flash is the writer's model through Antigravity. That is not the benched "Gemini overseer" of the 2026-10-14 roster, which stays benched until AJ un-benches it and is not a draft seat.
 
 Domain arms, invoked by name, are not these seats: `systems`, `trainer`, `evaluator`, `red-team`.
 
@@ -37,7 +38,7 @@ The reviewer's no-write rule is a prompt rule, not enforced: the one-shot runs w
 ## Precedence
 
 1. AJ decides. Sudo and host actions are AJ's. Seats never run sudo.
-2. For a draft, code-writer (Antigravity) writes and adversarial-reviewer (Claude) reviews. Ryzen Max Bot launches, relays, and merges on an `APPROVE*` sign-off (`tools/lab-seats/launch.sh`); it writes no product code.
+2. For a draft, code-writer (Antigravity) writes and adversarial-reviewer (Grok 4.7 high) reviews. Ryzen Max Bot launches, relays, and merges on an `APPROVE*` sign-off (`tools/lab-seats/launch.sh`); it writes no product code.
 3. Domain arms run when invoked with `--agent systems`, `--agent trainer`, `--agent evaluator`, or `--agent red-team`. systems owns live config and `orchestrator/orch.py`. trainer owns the LoRA job and does not start it without AJ's yes. evaluator reads benches and does not edit the repo to make a run pass. red-team attacks injection, judge manipulation, and collapse. red-team does not review diff correctness. That is the adversarial-reviewer.
 4. `orchestrator/orch.py` on DeepSeek is the commit-review memory. It is not the standing draft reviewer. Do not add a second DeepSeek reviewer. A review that sees only GitHub still does not count for local MAX measurements (GTT, gpu-guard, live runs, root-only files).
 
@@ -53,14 +54,14 @@ tools/lab-seats/launch.sh --task "Read docs/review-roles.md and confirm the stan
 That writes the scratch files under `/tmp/lab-seats/` and `nohup`s the launch script. The launch script runs the writer `agy -p` one-shot, then the reviewer `claude -p` one-shot. Flags:
 
 ```
-agy -p "PROMPT" --model gemini-4-argon --effort high --dangerously-skip-permissions
+agy -p "PROMPT" --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions
 ```
 
 ```
 claude -p --model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer
 ```
 
-The first line is the shape; the launcher reads PROMPT from `writer-prompt.txt` (`agy -p` takes the prompt as an argument, not stdin; https://antigravity.google/docs/cli/headless). `gemini-4-argon` is the launcher default and is **unconfirmed**: `agy models` needs a sign-in. Override with `LAB_SEATS_WRITER_MODEL`; an unknown slug fails the writer non-zero, with no silent fallback. `--dangerously-skip-permissions` is there because headless `agy` has no prompt and soft-denies any tool without an allow rule (exit 0, nothing done); the reasoning and its cost are in `docs/antigravity-writer.md`.
+The first line is the shape; the launcher reads PROMPT from `writer-prompt.txt` (`agy -p` takes the prompt as an argument, not stdin; https://antigravity.google/docs/cli/headless). `gemini-3.8-flash-high` is the launcher default; override with `LAB_SEATS_WRITER_MODEL`; an unknown slug fails the writer non-zero, with no silent fallback. `--dangerously-skip-permissions` is there because headless `agy` has no prompt and soft-denies any tool without an allow rule (exit 0, nothing done); the reasoning and its cost are in `docs/antigravity-writer.md`.
 
 `claude --bg` does not combine with `-p` (https://code.claude.com/docs/en/cli-reference). Standing automation is the nohup wrapper, not a background TUI panel. `effort: high` is also set in the reviewer's agent file (https://code.claude.com/docs/en/sub-agents).
 

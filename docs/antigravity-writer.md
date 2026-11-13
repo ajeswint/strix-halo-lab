@@ -1,15 +1,15 @@
 # Antigravity writer seat
 
-The `code-writer` seat is Google Antigravity, model Gemini 4 Argon, reasoning effort high. Set by AJ 2026-11-05 CT (America/Chicago); the Claude Code writer (`claude -p --agent code-writer`, Sonnet) is closed. `docs/review-roles.md` is canonical for the roster; this file holds the writer's operating rules, because Antigravity does not read `.claude/agents/` or `CLAUDE.md` on its own. Antigravity's own docs list `AGENTS.md` at the workspace root as an always-on rules file, so `AGENTS.md` carries the binding writer rules in short and this file has the detail (https://antigravity.google/docs/rules/).
+The `code-writer` seat is Google Antigravity, model Gemini 3.8 Flash (slug `gemini-3.8-flash-high`), reasoning effort high. Standing seats updated 2026-11-11 CT (AJ; Argon quota-exhausted); the Claude Code writer (`claude -p --agent code-writer`, Sonnet) is closed. `docs/review-roles.md` is canonical for the roster; this file holds the writer's operating rules, because Antigravity does not read `.claude/agents/` or `CLAUDE.md` on its own. Antigravity's own docs list `AGENTS.md` at the workspace root as an always-on rules file, so `AGENTS.md` carries the binding writer rules in short and this file has the detail (https://antigravity.google/docs/rules/).
 
-The adversarial-reviewer is unchanged: Claude Code, Sonnet, effort high, `.claude/agents/adversarial-reviewer.md`.
+The adversarial-reviewer is Grok 4.7 high.
 
 ## Two instances
 
 | Instance | What | Launched by |
 |---|---|---|
-| Headless one-shot | `agy` 1.5.1 at `/home/aj/.local/bin/agy`, `agy -p "..." --model gemini-4-argon --effort high --dangerously-skip-permissions` | `tools/lab-seats/launch.sh` (Ryzen Max Bot), cwd = the repo, output in `/tmp/lab-seats/NAME/writer-out.md` |
-| Interactive App | Antigravity App v2.29.0 linux-x64, `/home/aj/Applications/Antigravity/antigravity` | AJ. Set model Gemini 4 Argon and effort High in the UI after sign-in. |
+| Headless one-shot | `agy` 1.5.1 at `/home/aj/.local/bin/agy`, `agy -p "..." --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions` | `tools/lab-seats/launch.sh` (Ryzen Max Bot), cwd = the repo, output in `/tmp/lab-seats/NAME/writer-out.md` |
+| Interactive App | Antigravity App v2.29.0 linux-x64, `/home/aj/Applications/Antigravity/antigravity` | AJ. Set model Gemini 3.8 Flash and effort High in the UI after sign-in. |
 
 ## Verified, and not
 
@@ -17,10 +17,10 @@ Verified on this MAX 2026-11-05 (CT), without signing in and without a model cal
 
 - `agy --version` prints `1.5.1`. `agy --help` lists `-p/--print/--prompt`, `--model`, `--effort` (`low|medium|high|xhigh|max`), `--dangerously-skip-permissions`, `--print-timeout`, `--output-format`, `--sandbox`, `--settings`, `--agent`.
 - `agy changelog` (1.5.0) names the models "Gemini 4 Argon and Gemini 3.8 Flash".
-- `agy models` answers "Please sign in to view available models". So the model slug is **not confirmed**. `gemini-4-argon` is the launcher default and is overridable with `LAB_SEATS_WRITER_MODEL`. A wrong slug exits non-zero with no silent fallback (https://antigravity.google/docs/cli/headless), so the writer fails loudly, not on a different model.
+- The standing writer slug `gemini-3.8-flash-high` is verified and has been used (standing seat since 2026-11-11 CT); it is the launcher default and is overridable with `LAB_SEATS_WRITER_MODEL`. A wrong slug exits non-zero with no silent fallback (https://antigravity.google/docs/cli/headless), so the writer fails loudly, not on a different model.
 - Print mode takes the prompt as the `-p` argument; stdin is used only with `--input-format stream-json` (same page). The launcher therefore passes the prompt inline and redirects stdin from `/dev/null`, and refuses a writer prompt over 100000 bytes (Linux caps one argument at 128 KiB).
 
-Not verified (no sign-in, so no live one-shot has run): that the slug resolves, that `--effort high` is accepted with that model, how long a real writer run takes (the 3600 s default is unmeasured), host RAM of an `agy` run, and the App's behavior on rules files. `bash tools/lab-seats/test.sh` covers the launcher against a fake `agy`; it proves flags and sequencing, not the real CLI.
+Not verified: how long a real writer run takes (the 3600 s default is unmeasured), host RAM of an `agy` run, and the App's behavior on rules files. `bash tools/lab-seats/test.sh` covers the launcher against a fake `agy`; it proves flags and sequencing, not the real CLI.
 
 ## Permissions posture
 

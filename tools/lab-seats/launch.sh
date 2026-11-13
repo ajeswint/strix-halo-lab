@@ -22,9 +22,9 @@
 #                       rc 124 -> *-failed rc=124, rc 137 if it needed --kill-after=30's SIGKILL)
 #   LAB_SEATS_MAX_USD   optional; adds --max-budget-usd N to the REVIEWER one-shot only (claude, print mode).
 #                       `agy --help` (1.5.1) has no budget flag, so the writer has no spend cap. Unset = none.
-#   LAB_SEATS_WRITER_MODEL  agy model slug, default gemini-4-argon. UNCONFIRMED: `agy models` needs a sign-in and
-#                       the slug has not been read from it yet. A wrong slug fails the writer non-zero with no
-#                       silent fallback (https://antigravity.google/docs/cli/headless).
+#   LAB_SEATS_WRITER_MODEL  agy model slug, default gemini-3.8-flash-high (standing seat 2026-11-11 CT).
+#                       A wrong slug fails the writer non-zero with no silent fallback
+#                       (https://antigravity.google/docs/cli/headless).
 # --max-turns is documented upstream for claude (print mode only; https://code.claude.com/docs/en/cli-reference)
 # but not shown in 2.1.317 `claude --help`; not wired, untested. agy has no equivalent flag.
 #
@@ -77,7 +77,7 @@ if [ -n "${LAB_SEATS_MAX_USD:-}" ]; then
     budget=" --max-budget-usd $LAB_SEATS_MAX_USD"
 fi
 
-wmodel=${LAB_SEATS_WRITER_MODEL:-gemini-4-argon}
+wmodel=${LAB_SEATS_WRITER_MODEL:-gemini-3.8-flash-high}
 case $wmodel in
     ''|*[!A-Za-z0-9._-]*) echo "launch.sh: LAB_SEATS_WRITER_MODEL must match [A-Za-z0-9._-]+" >&2; exit 2 ;;
 esac
@@ -100,7 +100,7 @@ printf '%s\n' "$task" > "$dir/TASK.md"
 # agy -p takes the prompt as an argument (stdin is for --input-format stream-json only), so the
 # writer prompt rides on the command line; Linux caps one argument at 128 KiB, hence the size check.
 {
-    printf 'You are the code-writer seat for strix-halo-lab (Google Antigravity, Gemini 4 Argon, effort high).\n'
+    printf 'You are the code-writer seat for strix-halo-lab (Google Antigravity, Gemini 3.8 Flash, effort high).\n'
     printf 'Repo: %s. Read README.md, CLAUDE.md, docs/review-roles.md and docs/antigravity-writer.md first.\n' "$repo"
     printf 'Do the task below. Do not review your own work. Reply with Detail, then Relay, then Outline;\n'
     printf 'your Relay is for the adversarial-reviewer. Put any PR URL in Relay.\n\n'

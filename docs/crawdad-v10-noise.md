@@ -32,7 +32,7 @@ Stated before any GPU session (2026-11-11 CT). For review before running; **no G
 
 - Context and Question: On `v8` (n=30), the fixed-parser redraw (`crawdad-v8-d2` vs `crawdad-v8-r2`) gave leaf D 9/30 vs DR 12/30 (net +3), repeating the pre-fix result (`crawdad-v8-d` 8/30 vs `crawdad-v8-r` 11/30, net +3). Both runs sat exactly on the keep bar (`net >= 3`). However, in both runs, one gain (`v8_18_closest_pair`) was an R1-Distill `graphs_geometry` task with an empty retrieval read (`retrieved: []`), whose prompt and seed were identical between D and DR. Same-prompt variation (KV prompt cache reuse differences across sequential turns on `--cache-reuse 256` and sampling nondeterminism) flips ~1 task per 30 tasks, so net +3 cannot be statistically separated from noise. This pre-run defines a two-stage experiment:
   1. **Stage N (Noise Floor on v8)**: Measure the unprompted leaf flip rate and leaf total spread across three independent D runs on `v8` under the fixed parser with distinct reply seeds.
-  2. **Stage V (Retrieval on v10)**: Test retrieval on the larger held-out set `v10` (n=90), evaluated with an exact paired sign test and a noise-scaled threshold derived from Stage N.
+  2. **Stage V (Retrieval on v10)**: Test retrieval on the larger held-out set `v10` (n=90), evaluated with an exact paired sign test and a noise-scaled threshold pinned T=9 from p_same=1/7.
 
 - Stage N: Noise-floor measurement on `v8` (30 tasks):
   - Arms: repeat the unchanged D arm (`crawdad-v8-d2` configuration, fixed parser, protocol `137acf32c95d` family) on `v8` twice more with distinct reply seed bases:
@@ -56,7 +56,7 @@ Stated before any GPU session (2026-11-11 CT). For review before running; **no G
     - Numeric evaluation:
       - p_same = 0 (observed d vs d2 on 30 tasks / 107 replies: 0 grade flips): ceil(2.5 * 0) = 0 => T_noise = max(0, 6) = 6 (the sign-test lower bound).
       - p_same = 1/7 = 0.143 ≈ 4.3/30 (observed same-prompt empty-read flip rate on the 7 R1-Distill graphs solos): ceil(2.5 * sqrt(90 / 7)) = ceil(8.96) = 9 => T_noise = max(9, 6) = 9, pinned as the threshold before data.
-    - Check against v8 effect: On v8 (n=30), retrieval produced leaf 12 vs 9 without retrieval (+3 on 30 tasks, +10.0%). Scaled to n=90, a repeat of the v8 effect (+3 * 3 = +9 net gain) explicitly meets the pinned threshold T = 9 (+9 >= 9). Keep still also requires exact sign-test p <= 0.05 on discordant tasks (e.g. 9 gains vs 0 losses gives p = 0.002; 10 gains vs 1 loss gives net +9 with p = 0.005; 11 gains vs 2 losses gives net +9 with p = 0.039).
+    - Check against v8 effect: On v8 (n=30), retrieval produced leaf 12 vs 9 without retrieval (+3 on 30 tasks, +10.0%). Scaled to n=90, a repeat of the v8 effect (+3 * 3 = +9 net gain) explicitly meets the pinned threshold T = 9 (+9 >= 9). Keep still also requires exact sign-test p <= 0.05 on discordant tasks (e.g. 9 gains vs 0 losses gives p = 0.002; 10 gains vs 1 loss gives net +9 with p = 0.006; 11 gains vs 2 losses gives net +9 with p = 0.011).
 
 - Stage V: Retrieval test on `v10` (90 tasks):
   - Arms: Both run on all 90 `v10` tasks (`--set v10`) with `COIN_SEED = 42` (45 openers per seat), `SEED_BASE = 4000` (seeds `4000 + round`), fresh grading seed `104729`, same sampling, budgets, build, model files, and endpoint defaults as `crawdad-v8`:
@@ -79,7 +79,7 @@ Stated before any GPU session (2026-11-11 CT). For review before running; **no G
     - Same-prompt caveat handling: DR tasks where the opener had an empty retrieval read (`retrieved: []`, e.g. R1-Distill on `graphs_geometry`) share identical opener prompts with D. The primary bar governs over all 90 tasks, but results will explicitly tabulate net gain excluding empty-read opener gains/losses. If excluding empty-read gains drops net < T_noise (pinned T = 9), the keep carries a recorded caveat.
 
 - Cost estimates from stored `v8` redraw logs (`/tmp/lab-seats/crawdad-v8-{d2,r2}/session*.log` and `.debate.jsonl`):
-  - `crawdad-v8-d2` (n=30): 4 sessions, 108 replies, decode 24,593 s (6.83 GPU-hours; the clock window quoted is not the full serial wall and GPU-hours from summed gen_s is the primary figure), prompt tok 115,140, comp tok 264,580 (total 379,720).
+  - `crawdad-v8-d2` (n=30): 4 sessions, 108 replies, decode 24,593 s (6.83 GPU-hours; GPU-hours from summed gen_s is the primary figure), prompt tok 115,140, comp tok 264,580 (total 379,720).
   - `crawdad-v8-r2` (n=30): 5 sessions, 109 replies, decode 25,048 s (6.96 GPU-hours; wall ~7 h 10 min across sessions), prompt tok 210,825, comp tok 270,199 (total 481,024).
   - Scaled for `v10` (n=90, exactly 3x tasks):
     - D (v10): ~324 replies, ~20.5–21.0 GPU hours decode (~16–18 h wall), ~1.14M tokens.

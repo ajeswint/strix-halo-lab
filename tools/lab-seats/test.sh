@@ -28,7 +28,7 @@ check "reviewer: model sonnet, effort high" bash -c 'grep -q "^model: sonnet$" "
 # The writer seat is Antigravity, not a Claude agent: the old file must be a stub that cannot launch
 # (no YAML frontmatter, no tool list) and must point at the Antigravity doc.
 check "code-writer.md is a stub (no frontmatter)" bash -c '[ "$(head -n1 "$1")" != "---" ] && ! grep -q "^tools:" "$1" && grep -q "docs/antigravity-writer.md" "$1"' _ "$repo/.claude/agents/code-writer.md"
-check "AGENTS.md names Antigravity writer"  bash -c 'grep -q "Antigravity" "$1" && grep -q "Gemini 4 Argon" "$1"' _ "$repo/AGENTS.md"
+check "AGENTS.md names Antigravity writer"  bash -c 'grep -q "Antigravity" "$1" && grep -q "Gemini 3.8 Flash" "$1"' _ "$repo/AGENTS.md"
 
 # --- dry run: scratch files, flags, nothing started
 export LAB_SEATS_ROOT=$tmp/seats
@@ -39,7 +39,7 @@ for f in TASK.md writer-prompt.txt reviewer-prompt.txt run.sh; do
     check "dry-run wrote $f"               test -s "$d/$f"
 done
 check "dry-run started nothing"            bash -c '[ ! -e "$1/run.pid" ] && [ ! -e "$1/writer-out.md" ]' _ "$d"
-w="agy -p \"\$(cat \"$d/writer-prompt.txt\")\" --model gemini-4-argon --effort high --dangerously-skip-permissions < /dev/null"
+w="agy -p \"\$(cat \"$d/writer-prompt.txt\")\" --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions < /dev/null"
 r="claude -p --model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer"
 check "run.sh writer is agy, flags exact"  grep -qF "$w >" "$d/run.sh"
 check "run.sh reviewer flags exact"        grep -qF "$r <" "$d/run.sh"
@@ -85,7 +85,7 @@ EOF
 chmod +x "$tmp/bin/agy" "$tmp/bin/claude"
 export FAKE_AGY_ARGS=$tmp/agy-args.txt
 PATH="$tmp/bin:$PATH" bash "$d/run.sh"
-check "fake run: writer got model/effort/skip flags" grep -qF -e "--model gemini-4-argon --effort high --dangerously-skip-permissions" "$FAKE_AGY_ARGS"
+check "fake run: writer got model/effort/skip flags" grep -qF -e "--model gemini-3.8-flash-high --effort high --dangerously-skip-permissions" "$FAKE_AGY_ARGS"
 check "fake run: writer-out from agy"      grep -q "^## Relay$" "$d/writer-out.md"
 check "fake run: status done w/ verdict"   grep -q "^done verdict=APPROVE-WITH-NITS$" "$d/run.status"
 check "fake run: verdict.txt"              test "$(cat "$d/verdict.txt")" = "APPROVE-WITH-NITS"
