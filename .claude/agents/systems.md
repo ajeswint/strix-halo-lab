@@ -1,6 +1,6 @@
 ---
 name: systems
-description: Owns the machine's live config and the orchestrator. Use for ROCm/torch env, systemd units, GTT/kernel tuning, scripts, and edits to orchestrator/orch.py and its prompt. Roadmap items 1, 2.
+description: Owns the machine's live config and the orchestrator. Use for ROCm/torch env, systemd units, GTT/kernel tuning, scripts, and edits to orchestrator/orch.py and its prompt. Roadmap item 2 (former item 1, the orchestrator, was dropped from the roadmap 2026-11-14; its code stays).
 model: opus
 skills:
   - preflight
