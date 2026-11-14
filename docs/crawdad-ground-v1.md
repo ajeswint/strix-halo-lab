@@ -102,13 +102,15 @@ Worked examples for sign-test boundary ($k = \text{losses}, n_{\text{disc}} = \t
 
 The threshold $T = 9$ was derived from same-seed paired discordance $p_{\text{same}} = 1/7 \approx 0.143$, giving $\sigma_{\text{paired}} = \sqrt{90/7} \approx 3.586$ and $2.5 \times \sigma_{\text{paired}} \approx 8.96 \to 9$.
 
-Stage N cross-seed noise on `v8` is larger: d2 (seed 4000) vs d3 (seed 4100) was discordant on 7/30 tasks (~0.233). If that cross-seed rate applied to $n=90$, $\sigma = \sqrt{90 \times 0.233} \approx 4.58$ and $2.5\sigma \approx 11.5 \to 12$. The shared-turn-0, same-seed paired design between G and C justifies keeping $T = 9$; results will also report whether $\text{net} \ge 12$ as an explicit sensitivity line.
+Stage N cross-seed noise on `v8` is larger: across the triad {d2, d3, d4} (seeds 4000, 4100, 4200), mean pairwise discordance was $p_{\text{flip}} = 24/90 \approx 0.267$ (see below). If that cross-seed rate applied to $n=90$, $\sigma = \sqrt{90 \times 0.267} \approx 4.90$ and $2.5\sigma \approx 12.25 \to \lceil 12.25 \rceil = 13$. The shared-turn-0, same-seed paired design between G and C justifies keeping the primary pass bar $T = 9$ unchanged; results will also report whether $\text{net} \ge 13$ as an explicit cross-seed sensitivity line.
 
-#### Stage N Triad Placeholder (to be filled before run)
-Stage N arm `crawdad-v8-d4` (seed base 4200) is currently running. Triad metrics across {d2, d3, d4}:
-- Leaf totals: $L_2 = 9/30$, $L_3 = 12/30$, $L_4 = \text{[PLACEHOLDER: awaiting d4 completion]}$
-- Pairwise discordant counts: $D_{23} = 7/30$, $D_{24} = \text{[PLACEHOLDER]}$, $D_{34} = \text{[PLACEHOLDER]}$
-- Mean discordance $p_{\text{flip}} = \text{[PLACEHOLDER]}$, spread $\Delta_N = \text{[PLACEHOLDER]}$
+#### Stage N Triad (filled after d4 completed, 2026-11-14 CT)
+Stage N arms `crawdad-v8-d2` (seed base 4000), `crawdad-v8-d3` (seed base 4100) and `crawdad-v8-d4` (seed base 4200), all on `v8` (n=30). Triad metrics across {d2, d3, d4}:
+- Leaf totals: $L_2 = 9/30$, $L_3 = 12/30$, $L_4 = 10/30$; spread $\Delta_N = 12 - 9 = 3$; sample SD $s_L \approx 1.53$
+- Pairwise discordant counts: $D_{23} = 7/30$, $D_{24} = 7/30$, $D_{34} = 10/30$
+- Mean discordance $p_{\text{flip}} = (7 + 7 + 10)/90 = 24/90 \approx 0.267$
+- Per task across the three seeds: 5 always pass, 13 never pass, 12 unstable (each unstable task contributes exactly 2 discordant pairs: $12 \times 2 = 24$)
+- Cross-seed sensitivity bar: $\lceil 2.5\sqrt{90 \times 0.267} \rceil = 13$ (reported as a sensitivity line only). Primary pass bar stays $T = 9$.
 
 ## Expected GPU Hours
 
