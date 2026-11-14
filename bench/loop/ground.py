@@ -14,10 +14,11 @@ Protocol:
   - G (grounded): From turn 0, self-written edge-case tests (seed 5050, seeing only prompt), static checks
     (compile, deny_check, AST entry points, pyflakes if available), visible tests from prompt examples
     (bench/loop/tasks_v10_visible.py), and test-and-fix revisions up to K=3 turns (seeds 5001-5003).
-    Best-of-N selection across static, visible, and model tests (earliest turn wins ties).
-  - C (matched control): From turn 0, up to K=3 self-revisions at seeds 5001-5003 with task prompt and
-    previous code only (no execution feedback). Final code = last produced.
-- Budget: B = 4 * MAX_TOKENS (24576 completion tokens) matched cap per (task, seat) for G and C.
+    Primary score on LAST non-empty module; best-of-N logged as secondary package result.
+  - C (matched control): From turn 0, up to K=3 self-revisions at seeds 5001-5003 with matched revision
+    instruction without execution feedback. Scored on LAST non-empty module.
+- Budget: B = 4 * MAX_TOKENS (24576 completion tokens) matched hard cap per (task, seat) for G and C.
+  Before every completion call, if tokens_so_far + MAX_TOKENS > TASK_BUDGET, the call is skipped (stop reason "budget").
 - Hidden grading: fresh grade at FRESH_SEED 104729 once per (task, seat, arm) after the loop is over.
 - The in-loop code path never accesses hidden tests or references.
 """
@@ -53,17 +54,15 @@ TEST_WRITE_SUFFIX = (
     "Do not define the solution functions, do not write example usage, no input()."
 )
 
+REVISION_INSTRUCTION = (
+    "Review your solution against all requirements and constraints in the specification, "
+    "and write a corrected complete module."
+)
+
 REVISION_SUFFIX = (
     "\n\nAnswer in this order: a short explanation of your correction (at most 150 words); one complete "
     "corrected Python 3 module in a single ```python code block (standard library only, no example usage, "
     "no tests, no input()); then a last line `CONFIDENCE: c`, c from 0.0 to 1.0, how likely your corrected module is correct."
-)
-
-CONTROL_SUFFIX = (
-    "\n\nCarefully re-check your solution against all rules, constraints, edge cases, and types in the specification. "
-    "If you find any flaws or missing requirements, provide a corrected complete module. "
-    "If you are confident the module is already completely correct and requires no changes, you may output the identical module."
-    + REVISION_SUFFIX
 )
 
 
@@ -77,8 +76,8 @@ def ground_protocol(seed_base=SEED_BASE):
     payload = [
         debate.SOLO_SUFFIX,
         TEST_WRITE_SUFFIX,
+        REVISION_INSTRUCTION,
         REVISION_SUFFIX,
-        CONTROL_SUFFIX,
         debate.BUDGET_MESSAGE,
         debate.REASONING_BUDGET,
         debate.MAX_TOKENS,
@@ -203,15 +202,16 @@ def g_revision_prompt(task_prompt, code, err):
         return (task_prompt + "\n\nYour previous answer contained no code block; it ran out of tokens "
                 "before writing code. Keep the reasoning shorter and write the complete module." + REVISION_SUFFIX)
     return (task_prompt + f"\n\nYour previous solution:\n```python\n{code}\n```\n\n"
-            f"It failed with:\n```\n{err.strip()}\n```\n\n"
-            "Find the cause and write a corrected complete module." + REVISION_SUFFIX)
+            f"Execution error:\n```\n{err.strip()}\n```\n\n"
+            + REVISION_INSTRUCTION + REVISION_SUFFIX)
 
 
 def c_revision_prompt(task_prompt, code):
     if code is None:
         return (task_prompt + "\n\nYour previous answer contained no code block; it ran out of tokens "
                 "before writing code. Keep the reasoning shorter and write the complete module." + REVISION_SUFFIX)
-    return (task_prompt + f"\n\nYour previous solution:\n```python\n{code}\n```\n\n" + CONTROL_SUFFIX)
+    return (task_prompt + f"\n\nYour previous solution:\n```python\n{code}\n```\n\n"
+            + REVISION_INSTRUCTION + REVISION_SUFFIX)
 
 
 def sign_test_p(gains, losses):
@@ -452,25 +452,33 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
 
         # Step 2: Arm G (Grounded)
         if entry.get("final_g") is None:
-            # 2a. Model test generation
+            # 2a. Model test generation (G-only, counts against TASK_BUDGET)
             test_gen = entry.get("test_gen")
             if test_gen is None:
-                test_prompt = task_prompt + TEST_WRITE_SUFFIX
-                try:
-                    resp_test = ask(test_prompt, TEST_SEED)
-                except BaseException:
-                    dead.set()
-                    raise
-                m_code, m_err = extract_model_tests(resp_test.get("content", ""))
-                test_tok = (resp_test.get("usage") or {}).get("completion_tokens") or 0
-                test_gen = {
-                    "kind": "test_gen", "task": tid, "seat": seat, "arm": "G",
-                    "seed": TEST_SEED, "content": resp_test.get("content", ""),
-                    "tests": m_code, "err": m_err,
-                    "completion_tokens": test_tok, "gen_s": resp_test.get("gen_s", 0.0)
-                }
-                write_row(test_gen)
-                task_asked += 1
+                if c0_tokens + debate.MAX_TOKENS > TASK_BUDGET:
+                    test_gen = {
+                        "kind": "test_gen", "task": tid, "seat": seat, "arm": "G",
+                        "seed": TEST_SEED, "content": "", "tests": None,
+                        "err": "budget", "completion_tokens": 0, "gen_s": 0.0
+                    }
+                    write_row(test_gen)
+                else:
+                    test_prompt = task_prompt + TEST_WRITE_SUFFIX
+                    try:
+                        resp_test = ask(test_prompt, TEST_SEED)
+                    except BaseException:
+                        dead.set()
+                        raise
+                    m_code, m_err = extract_model_tests(resp_test.get("content", ""))
+                    test_tok = (resp_test.get("usage") or {}).get("completion_tokens") or 0
+                    test_gen = {
+                        "kind": "test_gen", "task": tid, "seat": seat, "arm": "G",
+                        "seed": TEST_SEED, "content": resp_test.get("content", ""),
+                        "tests": m_code, "err": m_err,
+                        "completion_tokens": test_tok, "gen_s": resp_test.get("gen_s", 0.0)
+                    }
+                    write_row(test_gen)
+                    task_asked += 1
 
             model_tests = test_gen.get("tests")
             g_tokens = c0_tokens + test_gen.get("completion_tokens", 0)
@@ -482,6 +490,8 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
             tried_codes = {c0_code} if c0_code is not None else set()
             prev_err = eval0["err"]
             stop_reason = None
+            last_non_empty_code = c0_code
+            last_non_empty_turn = 0 if c0_code is not None else -1
 
             if eval0["static_pass"] and eval0["visible_pass"] and eval0["model_pass"]:
                 stop_reason = "all_pass"
@@ -491,18 +501,23 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
             for rev in existing_revs:
                 candidates.append(rev)
                 g_tokens += rev.get("completion_tokens", 0)
-                if rev.get("code") is not None:
-                    tried_codes.add(rev["code"])
-                prev_err = rev.get("err", "")
-                if rev.get("static_pass") and rev.get("visible_pass") and rev.get("model_pass"):
-                    stop_reason = "all_pass"
+                rev_code = rev.get("code")
+                if rev_code is not None and rev_code.strip():
+                    last_non_empty_code = rev_code
+                    last_non_empty_turn = rev.get("turn", 0)
+                    tried_codes.add(rev_code)
+                    prev_err = rev.get("err", "")
+                    if rev.get("static_pass") and rev.get("visible_pass") and rev.get("model_pass"):
+                        stop_reason = "all_pass"
+                else:
+                    stop_reason = "no_code"
 
             cur_turn = len(candidates) - 1
-            last_code = candidates[-1]["code"]
+            last_code = last_non_empty_code
 
             while stop_reason is None and cur_turn < K_REVISIONS:
                 cur_turn += 1
-                if g_tokens >= TASK_BUDGET:
+                if g_tokens + debate.MAX_TOKENS > TASK_BUDGET:
                     stop_reason = "budget"
                     break
 
@@ -517,8 +532,26 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 g_tokens += tok_rev
                 task_asked += 1
 
+                # No-code check (Blocker 1)
+                if code_rev is None or not code_rev.strip():
+                    eval_rev = {"static_pass": False, "visible_pass": False, "model_pass": False,
+                                "err": "no code block", "checks_run": ["compile", "deny_check", "entry_points"]}
+                    rev_row = dict(kind="revision", task=tid, seat=seat, arm="G",
+                                   turn=cur_turn, seed=seed_base + cur_turn,
+                                   content=resp_rev.get("content", ""), code=None,
+                                   completion_tokens=tok_rev, gen_s=resp_rev.get("gen_s", 0.0),
+                                   **eval_rev)
+                    write_row(rev_row)
+                    candidates.append(rev_row)
+                    stop_reason = "no_code"
+                    break
+
+                # Valid non-empty code produced
+                last_non_empty_code = code_rev
+                last_non_empty_turn = cur_turn
+
                 # Repeat code check
-                if code_rev is not None and code_rev in tried_codes:
+                if code_rev in tried_codes:
                     eval_rev = evaluate_candidate(code_rev, entry_points, vis_tests, model_tests)
                     rev_row = dict(kind="revision", task=tid, seat=seat, arm="G",
                                    turn=cur_turn, seed=seed_base + cur_turn,
@@ -530,9 +563,7 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                     stop_reason = "repeat_code"
                     break
 
-                if code_rev is not None:
-                    tried_codes.add(code_rev)
-
+                tried_codes.add(code_rev)
                 eval_rev = evaluate_candidate(code_rev, entry_points, vis_tests, model_tests)
                 rev_row = dict(kind="revision", task=tid, seat=seat, arm="G",
                                turn=cur_turn, seed=seed_base + cur_turn,
@@ -545,9 +576,6 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 if eval_rev["static_pass"] and eval_rev["visible_pass"] and eval_rev["model_pass"]:
                     stop_reason = "all_pass"
                     break
-                if eval_rev["err"] == prev_err:
-                    stop_reason = "repeat_error"
-                    break
                 if cur_turn >= K_REVISIONS:
                     stop_reason = "max_turns"
                     break
@@ -557,10 +585,12 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
             if stop_reason is None:
                 stop_reason = "max_turns"
 
-            best = select_best_candidate(candidates)
+            valid_candidates = [c for c in candidates if c.get("code") is not None] or candidates
+            best = select_best_candidate(valid_candidates)
             final_g = {
                 "kind": "final", "task": tid, "seat": seat, "arm": "G",
-                "selected_turn": best["turn"], "code": best["code"],
+                "selected_turn": last_non_empty_turn, "code": last_non_empty_code,
+                "best_turn": best["turn"], "best_code": best["code"],
                 "stop_reason": stop_reason, "total_tokens": g_tokens,
                 "candidates_produced": len(candidates)
             }
@@ -572,20 +602,27 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
             c_candidates = [dict(turn=0, code=c0_code, tokens=c0_tokens)]
             tried_c_codes = {c0_code} if c0_code is not None else set()
             stop_reason_c = None
+            last_c_non_empty_code = c0_code
+            last_c_non_empty_turn = 0 if c0_code is not None else -1
 
             existing_c_revs = entry.get("c_revisions", [])
             for rev in existing_c_revs:
                 c_candidates.append(rev)
                 c_tokens += rev.get("completion_tokens", 0)
-                if rev.get("code") is not None:
-                    tried_c_codes.add(rev["code"])
+                rev_code = rev.get("code")
+                if rev_code is not None and rev_code.strip():
+                    last_c_non_empty_code = rev_code
+                    last_c_non_empty_turn = rev.get("turn", 0)
+                    tried_c_codes.add(rev_code)
+                else:
+                    stop_reason_c = "no_code"
 
             cur_c_turn = len(c_candidates) - 1
-            last_c_code = c_candidates[-1]["code"]
+            last_c_code = last_c_non_empty_code
 
             while stop_reason_c is None and cur_c_turn < K_REVISIONS:
                 cur_c_turn += 1
-                if c_tokens >= TASK_BUDGET:
+                if c_tokens + debate.MAX_TOKENS > TASK_BUDGET:
                     stop_reason_c = "budget"
                     break
 
@@ -600,6 +637,23 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 c_tokens += tok_c
                 task_asked += 1
 
+                # No-code check (Blocker 1)
+                if code_c is None or not code_c.strip():
+                    rev_row_c = {
+                        "kind": "revision", "task": tid, "seat": seat, "arm": "C",
+                        "turn": cur_c_turn, "seed": seed_base + cur_c_turn,
+                        "content": resp_c.get("content", ""), "code": None,
+                        "completion_tokens": tok_c, "gen_s": resp_c.get("gen_s", 0.0)
+                    }
+                    write_row(rev_row_c)
+                    c_candidates.append(rev_row_c)
+                    stop_reason_c = "no_code"
+                    break
+
+                # Valid non-empty code produced
+                last_c_non_empty_code = code_c
+                last_c_non_empty_turn = cur_c_turn
+
                 rev_row_c = {
                     "kind": "revision", "task": tid, "seat": seat, "arm": "C",
                     "turn": cur_c_turn, "seed": seed_base + cur_c_turn,
@@ -609,21 +663,24 @@ def step(root, label, set_name, task_ids, alias, server, ask, parallel=1, log=pr
                 write_row(rev_row_c)
                 c_candidates.append(rev_row_c)
 
-                if code_c is None or code_c == last_c_code:
-                    stop_reason_c = "no_changes"
-                    break
+                # Repeat code check
                 if code_c in tried_c_codes:
                     stop_reason_c = "repeat_code"
                     break
+
                 tried_c_codes.add(code_c)
                 last_c_code = code_c
+
+                if cur_c_turn >= K_REVISIONS:
+                    stop_reason_c = "max_turns"
+                    break
 
             if stop_reason_c is None:
                 stop_reason_c = "max_turns"
 
             final_c = {
                 "kind": "final", "task": tid, "seat": seat, "arm": "C",
-                "selected_turn": c_candidates[-1]["turn"], "code": c_candidates[-1]["code"],
+                "selected_turn": last_c_non_empty_turn, "code": last_c_non_empty_code,
                 "stop_reason": stop_reason_c, "total_tokens": c_tokens,
                 "candidates_produced": len(c_candidates)
             }
@@ -653,7 +710,7 @@ def status_line(meta, idx):
     )
     if not any(owe.values()):
         return f"done: {finished}/{len(meta['tasks'])} tasks complete across all arms (P, G, C)"
-    nxt = max(ORDER, key=lambda s: (owe[s], s == ORDER[0]))
+    nxt = next(s for s in ORDER if owe[s] > 0)
     return f"owed {owe}; next session: invite {nxt}"
 
 
@@ -709,19 +766,35 @@ def report(root, label, regrade=False, log=print):
                 else:
                     grades[(t, s, arm)] = bool(stored_grade)
 
+                # Secondary G_best grade
+                if arm == "G":
+                    best_code = fin.get("best_code")
+                    stored_best = fin.get("fresh_pass_best")
+                    if stored_best is None or regrade:
+                        if best_code is not None:
+                            passed_b, _, _ = agent.fresh_grade(best_code, tasks[t]["tests"])
+                        else:
+                            passed_b = False
+                        grades[(t, s, "G_best")] = passed_b
+                    else:
+                        grades[(t, s, "G_best")] = bool(stored_best)
+
     # Task-level union solve: a task is solved by an arm if EITHER seat passes
-    solved_by_arm = {"P": {}, "G": {}, "C": {}}
+    solved_by_arm = {"P": {}, "G": {}, "C": {}, "G_best": {}}
     for t in meta["tasks"]:
         for arm in ("P", "G", "C"):
-            sp = any(grades.get((t, s, arm), False) for s in ORDER)
-            solved_by_arm[arm][t] = sp
+            passed_union = any(grades.get((t, s, arm), False) for s in ORDER)
+            solved_by_arm[arm][t] = passed_union
+        passed_best = any(grades.get((t, s, "G_best"), False) for s in ORDER)
+        solved_by_arm["G_best"][t] = passed_best
 
     l_p = sum(solved_by_arm["P"].values())
     l_g = sum(solved_by_arm["G"].values())
     l_c = sum(solved_by_arm["C"].values())
+    l_g_best = sum(solved_by_arm["G_best"].values())
     n_tasks = len(meta["tasks"])
 
-    # Primary contrast: G vs C
+    # Primary contrast: G vs C (both last non-empty module)
     net_gc = l_g - l_c
     gains_gc = sum(1 for t in meta["tasks"] if solved_by_arm["G"][t] and not solved_by_arm["C"][t])
     losses_gc = sum(1 for t in meta["tasks"] if not solved_by_arm["G"][t] and solved_by_arm["C"][t])
@@ -743,15 +816,24 @@ def report(root, label, regrade=False, log=print):
     # Sensitivity line: net >= 12
     meets_sensitivity = (net_gc >= T_SENSITIVITY)
 
-    # Secondary contrast: G vs P
+    # Secondary contrasts: package and baseline results (no keep/drop verdict derived from them)
     net_gp = l_g - l_p
     gains_gp = sum(1 for t in meta["tasks"] if solved_by_arm["G"][t] and not solved_by_arm["P"][t])
     losses_gp = sum(1 for t in meta["tasks"] if not solved_by_arm["G"][t] and solved_by_arm["P"][t])
     p_gp = sign_test_p(gains_gp, losses_gp)
 
+    net_gbest_c = l_g_best - l_c
+    gains_gbest_c = sum(1 for t in meta["tasks"] if solved_by_arm["G_best"][t] and not solved_by_arm["C"][t])
+    losses_gbest_c = sum(1 for t in meta["tasks"] if not solved_by_arm["G_best"][t] and solved_by_arm["C"][t])
+    p_gbest_c = sign_test_p(gains_gbest_c, losses_gbest_c)
+
+    net_gbest_p = l_g_best - l_p
+    gains_gbest_p = sum(1 for t in meta["tasks"] if solved_by_arm["G_best"][t] and not solved_by_arm["P"][t])
+    losses_gbest_p = sum(1 for t in meta["tasks"] if not solved_by_arm["G_best"][t] and solved_by_arm["P"][t])
+    p_gbest_p = sign_test_p(gains_gbest_p, losses_gbest_p)
+
     # Exploratory ablations (computed post hoc on CPU from logged candidates)
     # Ablation 1: selection on static + visible only (ignoring model tests in score)
-    # Ablation 2: stop at first visible pass
     ablation_static_vis = {}
     for t in meta["tasks"]:
         for s in ORDER:
@@ -759,7 +841,6 @@ def report(root, label, regrade=False, log=print):
             cand_rows = [entry.get("turn0")] + entry.get("g_revisions", [])
             valid_cands = [c for c in cand_rows if c is not None and "static_pass" in c]
             if valid_cands:
-                # Score key without model_pass: (int(static_pass), int(visible_pass), -turn)
                 b = max(valid_cands, key=lambda c: (int(bool(c.get("static_pass"))),
                                                    int(bool(c.get("visible_pass"))),
                                                    -c.get("turn", 0)))
@@ -771,16 +852,28 @@ def report(root, label, regrade=False, log=print):
     summary = {
         "label": label, "set": meta["set"], "tasks": n_tasks,
         "protocol": meta["protocol"],
-        "solved": {"P": l_p, "G": l_g, "C": l_c},
+        "solved": {"P": l_p, "G": l_g, "C": l_c, "G_best": l_g_best},
         "primary_contrast_G_vs_C": {
+            "description": "G (last non-empty module) vs C (last non-empty module)",
             "net": net_gc, "gains": gains_gc, "losses": losses_gc, "ties": ties_gc,
             "sign_test_p": round(p_gc, 4), "t_noise": T_NOISE,
             "t_sensitivity": T_SENSITIVITY, "meets_sensitivity": meets_sensitivity,
             "no_room": no_room, "verdict": verdict
         },
-        "secondary_contrast_G_vs_P": {
-            "net": net_gp, "gains": gains_gp, "losses": losses_gp,
-            "sign_test_p": round(p_gp, 4)
+        "secondary_contrasts": {
+            "note": "Package and baseline comparisons; no keep/drop verdict derived from secondary results.",
+            "G_vs_P": {
+                "net": net_gp, "gains": gains_gp, "losses": losses_gp,
+                "sign_test_p": round(p_gp, 4)
+            },
+            "G_best_vs_C": {
+                "net": net_gbest_c, "gains": gains_gbest_c, "losses": losses_gbest_c,
+                "sign_test_p": round(p_gbest_c, 4)
+            },
+            "G_best_vs_P": {
+                "net": net_gbest_p, "gains": gains_gbest_p, "losses": losses_gbest_p,
+                "sign_test_p": round(p_gbest_p, 4)
+            }
         },
         "completion_tokens": {
             "by_arm": tokens_by_arm,
@@ -795,11 +888,13 @@ def report(root, label, regrade=False, log=print):
         json.dump(summary, f, indent=1)
 
     log(f"--- CRAwDAD Grounding Report: {label} ---")
-    log(f"Tasks solved (union): P={l_p}/{n_tasks}, G={l_g}/{n_tasks}, C={l_c}/{n_tasks}")
+    log(f"Tasks solved (union): P={l_p}/{n_tasks}, G={l_g}/{n_tasks}, C={l_c}/{n_tasks}, G_best={l_g_best}/{n_tasks}")
     log(f"Primary (G vs C): net={net_gc:+d} (gains={gains_gc}, losses={losses_gc}, ties={ties_gc}), "
         f"sign test p={p_gc:.4f} -> VERDICT: {verdict.upper()}" +
         (f" (meets sensitivity >= {T_SENSITIVITY})" if meets_sensitivity else ""))
-    log(f"Secondary (G vs P): net={net_gp:+d}, sign test p={p_gp:.4f}")
+    log(f"Secondary G vs P: net={net_gp:+d}, sign test p={p_gp:.4f}")
+    log(f"Secondary G_best vs C: net={net_gbest_c:+d}, sign test p={p_gbest_c:.4f}")
+    log(f"Secondary G_best vs P: net={net_gbest_p:+d}, sign test p={p_gbest_p:.4f}")
     log(f"Tokens: P={tokens_by_arm['P']}, G={tokens_by_arm['G']}, C={tokens_by_arm['C']}")
     log(f"Ablation (static+visible only): solved={l_ablation_sv}/{n_tasks} (net vs C: {l_ablation_sv - l_c:+d})")
 
@@ -868,6 +963,22 @@ def selftest():
     c0_fail = {"turn": 0, "static_pass": True, "visible_pass": False, "model_pass": False}
     c1_pass = {"turn": 1, "static_pass": True, "visible_pass": True, "model_pass": False}
     check("selection prefers visible pass over visible fail", select_best_candidate([c0_fail, c1_pass])["turn"] == 1)
+
+    # 6. Status line invites first seat in ORDER with owed work
+    fake_meta = {"tasks": ["t1", "t2"]}
+    idx_qwen_owes = {
+        ("t1", "qwen32"): {"turn0": {}, "final_g": {}, "final_c": {}},
+        # t2 not done for qwen32 (owes 3) or r1d32 (owes 6)
+    }
+    s_line1 = status_line(fake_meta, idx_qwen_owes)
+    check("status invites qwen32 when qwen32 owes work", "invite qwen32" in s_line1)
+
+    idx_r1_owes = {
+        ("t1", "qwen32"): {"turn0": {}, "final_g": {}, "final_c": {}},
+        ("t2", "qwen32"): {"turn0": {}, "final_g": {}, "final_c": {}},
+    }
+    s_line2 = status_line(fake_meta, idx_r1_owes)
+    check("status invites r1d32 when only r1d32 owes work", "invite r1d32" in s_line2)
 
     print(f"\nSelftest {'PASSED' if ok else 'FAILED'}")
     return 0 if ok else 1

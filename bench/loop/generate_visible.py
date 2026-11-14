@@ -198,7 +198,10 @@ def generate():
         valid_checks = []
         for c in raw_checks:
             kind, expr, exp_s, code = c
-            # Filter out known invalid checks (prompt typos / unbound variable references)
+            # Filter out known invalid checks:
+            # - v10_39 and v10_66 value examples depend on unbound variables (b and poly); keep only ValueError asserts.
+            # - v10_57, v10_76, v10_81 have prompt typos in example output values.
+            # - v10_74 examples depend on multi-line assignments (poly1, poly2); 0 valid standalone asserts (no_visible).
             if tid == "v10_39_uuid_urn" and bool(re.search(r'\bb\b(?!["\'])', code)):
                 continue
             if tid == "v10_57_ramanujan_sum" and "ramanujan_sum(6, 2) == -2" in code:
