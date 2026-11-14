@@ -25,4 +25,4 @@ Agents must read only `README.md` plus the single topic document relevant to the
 - [docs/crawdad-v8.md](docs/crawdad-v8.md): Held-out v8 task set, RAG retrieval evaluation, parser failure analysis, and v8 redraw experiments. Read when working on retrieval-augmented debate or v8 evaluations.
 - [docs/crawdad-v10-noise.md](docs/crawdad-v10-noise.md): Held-out v10 task set, noise floor evaluation, and retrieval retest pre-run. Read when analyzing debate consistency or running v10 benchmarks.
 - [docs/crawdad-ground-v1.md](docs/crawdad-ground-v1.md): CRAwDAD grounding in execution feedback pre-run on v10, visible test split, and paired sign test bar. Read when working on execution-feedback benchmarks or grounded loop evaluations.
-- [docs/roadmap.md](docs/roadmap.md): Active 5-point project roadmap (orchestrator, agentic loop, LoRA training, DaVinci Resolve, server-class hardware research). Read when verifying project scope or checking next milestones.
+- [docs/roadmap.md](docs/roadmap.md): Active 3-point project roadmap (orchestrator, agentic loop, LoRA training). Read when verifying project scope or checking next milestones.
