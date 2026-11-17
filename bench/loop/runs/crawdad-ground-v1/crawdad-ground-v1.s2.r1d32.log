@@ -1,0 +1,16 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 72: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: faa8da8d0d314dbcb98f9fbb134e3384
+up: r1-distill-qwen-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 72: ACTIVE r1d32 on :8081, GTT 28.0 GiB
+step crawdad-ground-v1: r1d32 owes work on 90 tasks
+step crawdad-ground-v1: r1d32 asked 515 actions; done: 90/90 tasks complete across all arms (P, G, C)
+llmctl: run python3 rc=0 memory.peak=53 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 72: ENDED r1d32; GTT after stop 1.2 GiB

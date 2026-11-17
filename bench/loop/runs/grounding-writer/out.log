@@ -1,0 +1,155 @@
+Waiting for the baseline check suite to finish running in the background.
+I will wait for the background test suite run to finish.
+I'm waiting for the baseline check suite to finish.
+Waiting for the check_tasks run to complete in the background.
+I will wait for check_tasks to finish.
+Waiting for selftests to complete in the background.
+I will wait for the selftests to complete.
+Waiting for test_tasks_v10 and tools/lab-seats/test.sh to finish running in the background.
+I will wait for the test task to complete.
+## 1. Detail
+
+This is Attempt 2 for PR #16 on branch `lab/crawdad-ground-v1` in worktree `/tmp/wt-ground-v1`. All edits remain uncommitted in the working tree for parent review.
+
+### Summary of Changes
+
+1. **Blocker 1 — No-Code Revisions ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L539-L551), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L643-L654), [test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py#L276-L318))**:
+   - In both Arms G and C, when a revision completion produces no code block (`code_rev is None` or empty), the runner records a distinct stop reason `"no_code"` (separate from `"repeat_code"` and `"max_turns"`).
+   - The arm's final module (`code`) and selected turn (`selected_turn`) retain the last non-empty module produced (never allowing `None` to overwrite the final program).
+   - Added unit test `test_no_code_revision_preserves_last_non_empty_code` verifying both arms retain turn 0's code with stop reason `"no_code"`.
+
+2. **Blocker 2 — Hard Token Cap Guarantee ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L460-L471), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L521-L524), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L625-L628), [test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py#L320-L349))**:
+   - Implemented a unified pre-call hard cap rule across both arms: before **every** completion call (test-write in G, revision calls in G, and revision calls in C), if `tokens_so_far + debate.MAX_TOKENS > TASK_BUDGET` (24,576), the call is skipped with stop reason `"budget"`.
+   - If test generation is skipped due to budget, `test_gen` is logged with `tests = None` and `err = "budget"`, and the loop proceeds under static and visible checks only.
+   - Added unit test `test_hard_token_cap_guarantee` driving both arms with a fake model returning full `MAX_TOKENS` (6,144) on every call, asserting recorded `total_tokens` $\le 24,576$ (exactly 24,576) for both G and C.
+
+3. **Blocker 3 — Report Summary Path Bug ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L791-L794), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L887), [test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py#L393-L455))**:
+   - Fixed the variable shadowing bug in `report()` where loop boolean `sp` in the union check shadowed summary file path `sp = paths(root, label)[2]`. Renamed the loop variable to `passed_union`.
+   - Added end-to-end test suite `TestReportEndToEnd.test_report_verdicts_and_summary_file` verifying `summary.json` is written to disk, parses validly, and produces each verdict (`keep`, `drop`, `inconclusive`, `no_room`) on constructed tables.
+
+4. **Blocker 4 — Status Next-Session Line & Units ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L713), [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L162), [test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py#L457-L473))**:
+   - Changed `status_line()` to invite the first seat in `ORDER` that still owes work: `nxt = next(s for s in ORDER if owe[s] > 0)`.
+   - Corrected docs expected status line to `owed {'qwen32': 0, 'r1d32': 270}; next session: invite r1d32`.
+   - Clarified the unit in code and spec: each task requires 3 actions (`turn0`, `arm_g`, `arm_c`), yielding 90 tasks $\times$ 3 actions = 270 actions owed per seat.
+   - Added unit test `TestStatusInviteOrder` covering both cases (qwen32 owes -> invite qwen32; only r1d32 owes -> invite r1d32).
+
+5. **Blocker 5 — Primary Contrast Execution Feedback Isolation ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L56-L65), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L204-L219), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L590-L599), [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L819-L866), [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L55-L95))**:
+   - **Scoring**: Both Arms G and C are scored in the primary contrast strictly on their **LAST non-empty module**. Best-of-N selection across static, visible, and model tests is logged and evaluated as a secondary "package" result (G-best-of-N), alongside G-best-of-N vs P. No keep/drop verdict is derived from secondary results.
+   - **Unified Prompt Instruction**: Both arms receive the identical `REVISION_INSTRUCTION` ("Review your solution against all requirements and constraints in the specification, and write a corrected complete module.") followed by `REVISION_SUFFIX`. The only difference is that Arm G's prompt includes the execution failure block (`Execution error:\n```\n{err}\n```\n\n`) when an error exists.
+   - **Stop Rules**: Both arms share `budget`, `max_turns`, `no_code`, and `repeat_code`. Arm G alone retains `all_pass` because stopping when all static, visible, and model tests pass is execution information provided by sandbox execution.
+   - **Test-Write Call**: Kept G-only and explicitly specified as part of G's treatment, counting directly against G's 24,576 completion-token budget.
+   - **Protocol Hash**: Recomputed and updated to **`a7efb2060615`** in [ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L98) and [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L83).
+
+6. **Nits**:
+   - **Leak Guard ([test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py#L99-L248))**: Broadened `ExplodingTask` to raise on `tests`/`ref` access via `__getitem__`, `.get()`, `.items()`, `.values()`, `.keys()`, `__iter__()`, `.copy()`, and `__contains__()`. Tested the revision path where turn 0 fails visible tests. Added `test_prompts_never_leak_hidden_content` verifying that during all turns/arms, no prompt receives hidden tests lines, ref substrings $\ge 20$ chars, or `"104729"`, and that `step` never accesses hidden fields.
+   - **Static Tier Specification ([ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py#L138), [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L68))**: Documented that `pyflakes` remains optional and absent on this machine; the active static tier consists of compile + `deny_check` + entry points check.
+   - **Stage N Triad Placeholder ([docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L107-L111))**: Preserved as a clearly marked placeholder.
+   - **Per-Family Visible Assert Counts ([docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L30-L35))**: Recomputed from `tasks_v10_visible.CHECKS` and `memring.FAMILIES["v10"]`:
+     - `formats`: 237 asserts (was 236)
+     - `number_theory`: 223 asserts
+     - `graphs_geometry`: 140 asserts
+     - `simulation_dp`: 124 asserts (was 125)
+     - Total: 724 asserts across 89 tasks (1 `no_visible`: `v10_74`).
+   - **Unbound Variables in Value Examples ([generate_visible.py](file:///tmp/wt-ground-v1/bench/loop/generate_visible.py#L201-L205), [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L38-L41))**: Documented that `v10_39_uuid_urn` and `v10_66_point_in_convex` retain only `ValueError` asserts because their value examples rely on unbound variables (`b` and `poly`).
+   - **GPU Hours Recomputation ([docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md#L113-L143))**:
+     - Per-reply time: $24,593\text{ s} / 108\text{ replies} = 227.713\text{ s} \approx 227.7\text{ s}$ per reply from stored `crawdad-v8-d2`.
+     - Turn 0 solo pass rate: $13/60 \approx 21.67\%$ (qwen32 9/30, r1d32 4/30). Failing units = $180 \times (47/60) = 141$ units; passing units = 39 units.
+     - Turn 0 (P): 180 replies $\times 227.7\text{ s} = 11.39$ GPU hours.
+     - Arm G expected: test generation (180 $\times 75\text{ s} = 3.75\text{ h}$) + failing revisions ($141 \times 1.4\text{ revs} \times 227.7\text{ s} = 12.49\text{ h}$) = $16.24$ GPU hours (or 23.88 h with conservative 227.7 s test-write). Worst case: 45.54 GPU hours.
+     - Arm C expected: all units revise on turn 1, averaging 1.2 revisions ($180 \times 1.2 \times 227.7\text{ s} = 13.66$ GPU hours). Worst case: 34.16 GPU hours.
+     - Total decode GPU hours: Expected $\approx$ **41.29 GPU hours** (worst case: **91.09 GPU hours**). Swap overhead: 2 sessions $\times$ 1.3 min = 2.6 min.
+
+---
+
+### Check Results (CPU only, `prlimit --as=4294967296`)
+
+```bash
+# 1. ground.py selftest
+$ python3 ground.py --selftest
+Running ground.py selftest...
+ok   seed range 5000-5099 is disjoint from all existing suites
+ok   protocol hash binds seed_base
+ok   default protocol hash is 12 hex chars
+ok   static checks pass valid definitions
+ok   static checks catch syntax error
+ok   static checks catch deny-list import
+ok   static checks catch missing entry point
+ok   sign test 9-0 -> p=0.002
+ok   sign test 10-1 -> p=0.006
+ok   sign test 11-2 -> p=0.011
+ok   sign test 7-1 -> p=0.035
+ok   selection tie-break: earliest turn wins
+ok   selection prefers visible pass over visible fail
+ok   status invites qwen32 when qwen32 owes work
+ok   status invites r1d32 when only r1d32 owes work
+Selftest PASSED
+
+# 2. test_ground unit test suite
+$ python3 -m unittest test_ground
+Ran 18 tests in 2.951s
+OK
+
+# 3. check_tasks on v10 and v8
+$ python3 check_tasks.py --set v10
+90 tasks, 0 failing
+$ python3 check_tasks.py --set v8
+30 tasks, 0 failing
+
+# 4. run.py selftest
+$ python3 run.py --selftest --set v10
+selftest passed
+
+# 5. agent.py selftest
+$ python3 agent.py --selftest --set v10
+selftest passed
+
+# 6. debate.py selftest (protocol unchanged)
+$ python3 debate.py --selftest
+selftest OK (protocol 137acf32c95d)
+
+# 7. memring.py selftest
+$ python3 memring.py --selftest
+selftest passed
+
+# 8. test_tasks_v10 unit test suite
+$ python3 -m unittest test_tasks_v10
+Ran 4 tests in 83.852s
+OK
+
+# 9. tools/lab-seats/test.sh (from repo root)
+$ bash tools/lab-seats/test.sh
+ALL OK
+```
+
+---
+
+## 2. Relay
+
+Relay from `code-writer` (Google Antigravity, Gemini 3.8 Flash, effort high) to `adversarial-reviewer` (Grok 4.7 high):
+
+Attempt 2 addresses all five blockers and seven nits in branch `lab/crawdad-ground-v1`:
+- Blocker 1: No-code revision replies record distinct stop reason `no_code`, preserving the arm's last non-empty module as the final program in both G and C (`ground.py:539-551`, `643-654`; `test_ground.py:276-318`).
+- Blocker 2: Hard pre-call token cap skips any call where `tokens_so_far + MAX_TOKENS > TASK_BUDGET` (24576) with stop reason `budget` across both arms, including test-gen in G (`ground.py:460-471`, `521-524`, `625-628`; `test_ground.py:320-349`). Total completion tokens guaranteed $\le 24576$.
+- Blocker 3: Union loop variable renamed from `sp` to `passed_union`, fixing summary path clobbering (`ground.py:791-794`, `887`). Added end-to-end report tests for `keep`, `drop`, `inconclusive`, and `no_room` (`test_ground.py:393-455`).
+- Blocker 4: `status_line()` invites the first seat in `ORDER` owing work (`ground.py:713`). Expected status line updated to `owed {'qwen32': 0, 'r1d32': 270}; next session: invite r1d32` with units explained (3 actions/task $\times$ 90 = 270) (`docs/crawdad-ground-v1.md:162`; `test_ground.py:457-473`).
+- Blocker 5: Execution feedback isolated. Both arms scored on LAST non-empty module; G-best-of-N logged as secondary package result without verdict. Both arms receive identical `REVISION_INSTRUCTION` (G adds error block). Stop rules matched (`budget`, `max_turns`, `no_code`, `repeat_code`; G retains execution-driven `all_pass`). Test-writing kept G-only and counted against G's budget. Protocol hash updated to `a7efb2060615` (`ground.py:98`, `docs:83`).
+- Nits: ExplodingTask broadened (raises on `.get()`, items/values/keys, iter, copy); prompt scanner test asserts no hidden lines, ref substrings $\ge 20$ chars, or `"104729"` reach prompts (`test_ground.py:99-248`); token totals checked in budget test; static tier documented as compile + deny_check + entry points (`ground.py:138`, `docs:68`); d4 triad kept as placeholder (`docs:107`); visible counts corrected to formats 237, simulation_dp 124 (total 724) (`docs:30-35`); `v10_39`/`v10_66` unbound variable comments added (`generate_visible.py:201-205`, `docs:38`); GPU hours recomputed from v8-d2 (227.7 s/reply, 13/60 solo pass rate applied to failing revisions: 41.29 h expected, 91.09 h worst case) (`docs:113-143`).
+- Checks: all 9 suites passed on CPU under `prlimit --as=4294967296`. Working tree dirty, uncommitted.
+
+---
+
+## 3. Outline
+
+- 1. Detail
+  - Summary of Changes
+    - Blocker 1: No-code revisions (`no_code` stop reason, last non-empty code preserved in G and C)
+    - Blocker 2: Hard token cap (pre-call skip rule, max 24,576 tokens guaranteed)
+    - Blocker 3: Report summary path variable unshadowing and end-to-end report testing
+    - Blocker 4: Status next-session seat ordering and 270-action unit consistency
+    - Blocker 5: Primary contrast execution feedback isolation (last non-empty scoring, matched revision instruction, matched stop rules, G-best-of-N secondary reporting, protocol hash `a7efb2060615`)
+    - Nits: Broadened leak guard and prompt scanner, token totals asserted, static tier documented, d4 placeholder preserved, visible counts corrected (237/124), unbound variable notes on `v10_39`/`v10_66`, GPU hours recomputed (227.7 s, 41.29 h expected / 91.09 h worst)
+  - Check Results (all CPU checks passed under `prlimit --as=4294967296`)
+- 2. Relay
+  - Code-writer to adversarial-reviewer handoff
+- 3. Outline
+  - Nested outline of Detail

@@ -1,0 +1,207 @@
+I am waiting for the check-by-check reference validation script to finish evaluating the 738 candidate extracted checks in the sandbox.
+I am waiting for task-118 to finish checking the valid count for task v10_27.
+I am waiting for task-220 (check_tasks.py --set v10) to finish running.
+I am waiting for task-224 (run.py --selftest --set v10) to finish.
+I am waiting for task-232 (python3 -m unittest test_tasks_v10) to finish running.
+## Detail
+
+### 1. Context and Implementation Overview
+Following the cancellation of CRAwDAD Stage V (retrieval on v10, which failed to beat the measured noise floor on `v8`: D 9/30 vs DR 12/30, and cross-seed rerun `crawdad-v8-d3` also scoring 12/30 with 7/30 discordant tasks), this work implements the infrastructure and pre-run specification for **CRAwDAD Grounding v1**.
+
+Grounding evaluates the two standing CRAwDAD small models (`qwen32` = Qwen3-32B Q4_K_M, `r1d32` = DeepSeek-R1-Distill-Qwen-32B Q4_K_M) using execution feedback instead of retrieved memory on the 90 held-out `v10` tasks.
+
+Deliverables produced (all uncommitted in the git worktree `/tmp/wt-ground-v1`, branch `lab/crawdad-ground-v1`):
+- [docs/crawdad-ground-v1.md](file:///tmp/wt-ground-v1/docs/crawdad-ground-v1.md): Pre-run specification document including motivation, the hidden test rule, arm definitions, Stage V pass bar partition, GPU hour estimates, and exact execution commands.
+- [README.md](file:///tmp/wt-ground-v1/README.md#L27): Added a one-line index entry under the Topic docs index matching the standing format.
+- [bench/loop/tasks_v10_visible.py](file:///tmp/wt-ground-v1/bench/loop/tasks_v10_visible.py): Committed, reviewable mapping of task IDs to visible assert test source strings and check metadata, extracted deterministically on CPU.
+- [bench/loop/generate_visible.py](file:///tmp/wt-ground-v1/bench/loop/generate_visible.py): Standalone CPU generator that parses prompt "Examples:" sections and builds `tasks_v10_visible.py`.
+- [bench/loop/ground.py](file:///tmp/wt-ground-v1/bench/loop/ground.py): Resumable runner CLI supporting `--selftest`, `step`, `status`, and `report [--regrade]`.
+- [bench/loop/test_ground.py](file:///tmp/wt-ground-v1/bench/loop/test_ground.py): 14 CPU unit tests verifying all aspects of the grounding loop without model server access.
+
+---
+
+### 2. The Critical Rule: Hidden Tests Never Steer Anything
+
+#### Why agent.py Cannot Be Reused
+In `tasks_v10.py`, every task has a single test string `tests` combining:
+1. Prompt "Examples:" asserts verbatim;
+2. Extra fixed asserts and rejection cases not present in the prompt (e.g. `for bad in ...:` type/range/boundary checks);
+3. A seeded oracle verification loop at `random.seed(10000 + NN)`.
+
+While `agent.fresh_tests` replaces `random.seed(N)` with `random.seed(FRESH_SEED)` (`104729`), parts (1) and (2) are identical between the visible seed and fresh grade. `agent.py` ran candidates against the entire `tests` string during its loop, which directly exposed hidden fixed test cases (2) and oracle failure traces into model feedback prompts. `agent.py` violates the grounding separation rule and is documented in the spec as barred from reuse.
+
+#### Deterministic Visible Test Split
+Visible tests were extracted deterministically on CPU from each task prompt's "Examples:" section only, handling:
+- Positive equality asserts: `- f(args) == value` (and `is None`, `in (...)` variants, handling multi-line wrapped blocks);
+- Value error rejections: `- ValueError: call1, call2, ...`, `- call -> ValueError`, and `- call raises ValueError`.
+
+Every visible check is verified to appear in the prompt text, and every reference implementation (`ref`) passes all its visible asserts in the `run.py` bwrap sandbox.
+
+Per-family visible extraction statistics (724 total valid asserts):
+- **formats** (23 tasks): 23/23 tasks with >=1 visible assert, 236 total asserts. `no_visible`: none.
+- **number_theory** (22 tasks): 22/22 tasks with >=1 visible assert, 223 total asserts. `no_visible`: none.
+- **graphs_geometry** (22 tasks): 21/22 tasks with >=1 visible assert, 140 total asserts. `no_visible`: 1 task (`v10_74_minkowski_sum_convex`).
+- **simulation_dp** (23 tasks): 23/23 tasks with >=1 visible assert, 125 total asserts. `no_visible`: none.
+- **Overall**: 89/90 tasks (98.9%) have visible asserts; 724 total asserts across the suite.
+
+**Tasks where extraction failed (`no_visible`)**:
+- `v10_74_minkowski_sum_convex`: All examples in prompt depend on multi-line variable definitions (`poly1 = ...`, `poly2 = ...`). Since variable assignment blocks are not function calls or direct equality checks, 0 self-contained visible asserts were extracted. It is flagged `no_visible` and falls back to static checks + model-written tests only.
+
+#### In-Code Hidden Guard
+In `ground.py`, tasks are passed to the loop via `strip_hidden(task)`, retaining strictly `id`, `prompt`, and `visible`. Keys `tests` and `ref` are not present in the in-loop dictionary. Unit test `test_in_loop_never_accesses_hidden_fields` in `test_ground.py` wraps tasks in an `ExplodingTask` dictionary that raises `AssertionError` if either `tests` or `ref` is accessed; the entire step loop completes with zero hidden accesses. Hidden fresh grading is strictly post-loop in `report`.
+
+---
+
+### 3. Arms, Protocol, and Seeds
+
+- **Unit of work**: `(task, seat)`, 90 tasks x 2 seats = 180 units. Build, endpoints (`qwen32`, `r1d32`), model paths, sampling parameters (temperature 0.6, top_p 0.95, top_k 20), reasoning budget (2048), and max tokens (6144) match `debate.py`.
+- **Seed range**: **5000–5099**, verified disjoint from `run.py` (0–15), `loop` (1000–1033), `fix` (2000–2033), `plan` (3000–3001), and `debate` (4000–4004, 4100–4104, 4200–4204):
+  - Shared Turn 0 (Arm P): seed `5000` (`SEED_BASE`)
+  - Model test generation (Arm G): seed `5050` (`TEST_SEED`)
+  - Revision turns 1..3 (Arms G and C): seeds `5001`, `5002`, `5003` (`SEED_BASE + turn`)
+- **Shared Turn 0 (Arm P)**: Generated once per `(task, seat)` using `debate.solo_prompt(task)` at seed 5000. Shared as candidate 0 for G and C, eliminating turn-0 sampling noise between G and C.
+- **Arm G (Grounded)**:
+  1. Self-written tests: 1 call per `(task, seat)` seeing prompt only at seed 5050, capped at 4000 characters, validated via `compile()`. Tokens count against budget $B$.
+  2. Static checks first: `compile()`, `run.deny_check()`, AST entry-point validation, and `pyflakes` (if available; recorded in checks run). Static failures bypass the sandbox.
+  3. Test-and-fix loop: Evaluates static -> visible -> model tests in bwrap sandbox (timeout 10 s). Early stops on `all_pass`, `repeat_error`, `repeat_code`, `budget`, or `max_turns`. Up to $K=3$ revision turns.
+  4. Best-of-N selection: Maximizes `(int(static_pass), int(visible_pass), int(model_pass), -turn_index)`. Ties go to the earliest turn.
+- **Arm C (Matched control, no execution)**: From shared turn 0, up to $K=3$ self-revision turns at seeds 5001–5003 seeing task prompt and previous code only. Early stops on `no_changes` (identical code), `repeat_code`, `budget`, or `max_turns`. Final candidate = last version produced.
+- **Budget matching**: Per `(task, seat)`, G and C each receive completion token cap $B = 4 \times \text{MAX\_TOKENS} = 24,576$.
+- **Protocol Hash**: `f15496a21742`. Binds prompts, seeds, budgets, check order, selection key, and `tasks_v10_visible.py` sha256 (`e0be774ee8000dfb3a43690d7ca6e9dc7614e565ad716d10fb9cffab07db138f`).
+
+---
+
+### 4. Pass Bar and Statistics
+- **Primary unit**: Task ($n=90$). Union solve across seats ($L_{\text{arm}}$): solved if either `qwen32` or `r1d32` final code passes `agent.fresh_grade` at `FRESH_SEED = 104729`.
+- **Primary contrast**: Arm G vs Arm C, paired over 90 tasks with net gain $\text{net} = L_G - L_C$.
+- **Stage V partition**:
+  - No-room rule: If $L_C \ge 77/90$ or $L_C \le 9/90$, verdict is `no_room`.
+  - Keep: $\text{net} \ge 9$ (pinned $T_{\text{noise}} = 9$) AND exact one-sided sign test $p \le 0.05$.
+  - Drop: $\text{net} \le 0$ OR $p > 0.10$.
+  - Inconclusive: $0 < \text{net}$ AND $p \le 0.10$ AND NOT Keep.
+- **Noise floor & Sensitivity**: $T=9$ is justified by the same-seed turn 0 design ($\sigma_{\text{paired}} = \sqrt{90/7} \approx 3.59$). Cross-seed noise on `v8` ($d2$ vs $d3$ discordance 7/30, $\sigma \approx 4.6$) defines sensitivity threshold $\text{net} \ge 12$, reported alongside the primary verdict.
+- **Stage N triad placeholder**: Marked in the spec document awaiting completion of the running `crawdad-v8-d4` arm (seed base 4200).
+
+---
+
+### 5. Expected GPU Hours Arithmetic
+From measured logs in `docs/crawdad-v8.md` and `docs/crawdad-v10-noise.md` (`crawdad-v8-d2`: 108 replies, decode 24,593 s, mean $\approx 225$ s gen_s per reply, decode generation throughput 10.6–11.2 t/s; model swap $\approx 1.3$ min):
+- **Turn 0 (Arm P)**: 180 replies $\times 225\text{ s} = 40,500\text{ s} =$ **11.25 GPU hours** decode.
+- **Arm G**:
+  - Test-writing: 180 replies $\times 75\text{ s} \approx 13,500\text{ s} =$ 3.75 GPU hours (conservative at 225 s: 11.25 h).
+  - Revisions: Worst-case 540 replies = 33.75 GPU hours. Expected case (based on stored v8 solo pass rate $\sim 22\%$, failing pairs average $\sim 1.4$ revisions before early stop): 252 replies $\times 225\text{ s} = 15.75$ GPU hours. Total G expected $\approx$ **19.5 GPU hours** (worst case: **45.0 GPU hours**).
+- **Arm C**: Up to 540 revisions. Worst-case: 33.75 GPU hours. Expected case ($\sim 1.2$ revisions before "no changes" stop): 216 replies $\times 225\text{ s} \approx$ **13.5 GPU hours**.
+- **Total compute**:
+  - **Expected**: P (11.25 h) + G (19.5 h) + C (13.5 h) $\approx$ **44.25 GPU hours** decode.
+  - **Worst-case**: P (11.25 h) + G (45.0 h) + C (33.75 h) $=$ **90.0 GPU hours** decode.
+- **Session plan**: Exactly 2 llmctl sessions (Session 1: `invite qwen32` running P, G, C for all 90 tasks, `bye`; Session 2: `invite r1d32` running P, G, C for all 90 tasks, `bye`). Model swap overhead $= 2 \times 1.3\text{ min} = 2.6\text{ minutes}$.
+
+---
+
+### 6. Decisions Made Not Pinned by Brief
+1. **Prompt calculation typos**: Three tasks had prompt examples containing calculation typos that directly contradicted `ref` and the prompt author's own notes (`v10_57` stated `== -2` despite note `wait: ... => -1?`; `v10_76` stated `== (9, ...)` despite calculation `Total = 8 s.`; `v10_81` stated `== ("accepted", 2, ...)` despite 3 steps occurring). These 3 specific contradictory candidate asserts were excluded from `tasks_v10_visible.py` so correct model implementations matching `ref` are not falsely failed. All 3 tasks retain their other valid visible asserts (6, 5, and 2 asserts respectively).
+2. **Variable setups**: Tasks `v10_39`, `v10_66`, and `v10_74` contained prompt examples using variables defined in separate lines (`b`, `poly`, `poly1`, `poly2`). Assertions depending on unbound variables were excluded; `v10_39` retained 4 self-contained ValueError asserts, `v10_66` retained 1 self-contained ValueError assert, while `v10_74` had all examples bound to variables, leaving 0 self-contained asserts and correctly placing it in `no_visible`.
+3. **Model test assertion budget & length cap**: Self-written tests at seed 5050 are capped at 4000 characters and checked with `compile()`.
+4. **AST entry-point extraction**: Extracted from prompt text by scanning for `` `func(` `` in the prompt header section and filtering against standard Python builtins (`dir(builtins)`), verified against `ref` across all 90 tasks.
+5. **Storage structure**: Results are logged to `crawdad-ground-v1.ground.{meta.json,jsonl,summary.json}` with immediate append-and-flush for crash safety.
+
+---
+
+### 7. Verification and Check Results
+All required checks were run on CPU under `prlimit --as=4294967296`:
+
+```bash
+# 1. New ground runner selftest
+python3 ground.py --selftest
+# Output: Selftest PASSED (all 12 checks ok)
+
+# 2. New CPU unit test suite
+python3 -m unittest test_ground
+# Output: Ran 14 tests in 2.864s. OK
+
+# 3. Tasks validation
+python3 check_tasks.py --set v10
+# Output: 90 tasks, 0 failing
+
+# 4. Grader selftest
+python3 run.py --selftest --set v10
+# Output: 90 tasks, selftest OK
+
+# 5. Agent selftest
+python3 agent.py --selftest --set v10
+# Output: selftest OK
+
+# 6. Debate protocol selftest (unmodified)
+python3 debate.py --selftest
+# Output: selftest OK (protocol 137acf32c95d)
+
+# 7. Memring selftest
+python3 memring.py --selftest
+# Output: selftest passed
+
+# 8. Mutant controls on v10
+python3 -m unittest test_tasks_v10
+# Output: Ran 4 tests (180 mutants) in 83.995s. OK
+
+# 9. Lab seats test suite
+bash ../../tools/lab-seats/test.sh
+# Output: ALL OK
+```
+
+Git status remains dirty with uncommitted changes on branch `lab/crawdad-ground-v1`:
+- Modified: `README.md`
+- Untracked: `docs/crawdad-ground-v1.md`, `bench/loop/ground.py`, `bench/loop/test_ground.py`, `bench/loop/tasks_v10_visible.py`, `bench/loop/generate_visible.py`
+
+---
+
+## Relay
+
+```
+CRAwDAD Grounding v1 implementation and pre-run spec complete on branch lab/crawdad-ground-v1 (uncommitted).
+- Protocol hash: f15496a21742 (debate.py protocol 137acf32c95d unchanged).
+- Seed range: 5000-5099 (disjoint from run.py 0-15, loop 1000+, fix 2000+, plan 3000-3001, debate 4000/4100/4200).
+- Visible tests: 724 asserts across 89/90 tasks in bench/loop/tasks_v10_visible.py; v10_74_minkowski_sum_convex is no_visible. All prompt-derived; every ref passes in sandbox.
+- Hidden guard: in-loop tasks stripped of tests/ref; unit test verified with ExplodingTask dictionary.
+- Primary contrast: G vs C on n=90 tasks; Stage V bar reused (Keep: net >= 9 and p <= 0.05, Drop: net <= 0 or p > 0.10, Inconclusive otherwise; no-room if L_C >= 77 or <= 9).
+- GPU hours estimate: Expected ~44.25 GPU hours decode across 2 llmctl sessions (Session 1: qwen32, Session 2: r1d32; swap ~2.6 min); worst case 90.0 GPU hours.
+- All 9 required checks passed on CPU under prlimit --as=4294967296 (ground --selftest, test_ground 14/14, check_tasks, run --selftest, agent --selftest, debate --selftest 137acf32c95d, memring --selftest, test_tasks_v10 4/4, lab-seats test.sh).
+```
+
+---
+
+## Outline
+
+- 1. Context and Implementation Overview
+  - 1.1 Cancellation of Stage V and shift to Grounding v1
+  - 1.2 Summary of uncommitted deliverables on `lab/crawdad-ground-v1`
+- 2. The Critical Rule: Hidden Tests Never Steer Anything
+  - 2.1 Why `agent.py` cannot be reused (hidden test and oracle leak)
+  - 2.2 Deterministic visible test split (`tasks_v10_visible.py`)
+  - 2.3 Per-family assert breakdown and `no_visible` task (`v10_74`)
+  - 2.4 In-code enforcement via `strip_hidden` and `ExplodingTask` guard
+- 3. Arms, Protocol, and Seeds
+  - 3.1 Unit of work and parameters (`(task, seat)`, budget 24,576 tokens)
+  - 3.2 Seed range disjointness (5000–5099)
+  - 3.3 Shared Turn 0 (Arm P) and start synchronization for G and C
+  - 3.4 Arm G specification (test writing, static checks, test-and-fix loop, Best-of-N selection)
+  - 3.5 Arm C specification (matched control, prompt + previous code only)
+  - 3.6 Protocol hash calculation (`f15496a21742`)
+- 4. Pass Bar and Statistics
+  - 4.1 Primary unit and union solve definition ($n=90$)
+  - 4.2 Primary contrast G vs C and Stage V bar partition table
+  - 4.3 Exact sign test worked examples (9-0, 10-1, 11-2, 7-1)
+  - 4.4 Noise floor derivation ($T=9$) and cross-seed sensitivity line ($\text{net} \ge 12$)
+  - 4.5 Stage N triad placeholder for running `d4`
+- 5. Expected GPU Hours Arithmetic
+  - 5.1 Measured baseline rates from `crawdad-v8-d2` ($\sim 225$ s/reply)
+  - 5.2 Arithmetic per arm (P: 11.25 h; G expected: 19.5 h, worst: 45.0 h; C expected: 13.5 h, worst: 33.75 h)
+  - 5.3 Total GPU compute (Expected $\sim 44.25$ h, Worst 90.0 h) and 2-session plan
+- 6. Decisions Made Not Pinned by Brief
+  - 6.1 Handling 3 prompt calculation typos (`v10_57`, `v10_76`, `v10_81`)
+  - 6.2 Handling variable dependency across lines (`v10_39`, `v10_66`, `v10_74`)
+  - 6.3 Model test length caps and syntax validation
+  - 6.4 AST entry-point extraction method
+  - 6.5 Results persistence and crash resumption design
+- 7. Verification and Check Results
+  - 7.1 Detailed commands and output for all 9 required verification steps
+  - 7.2 Git worktree state summary

@@ -1,0 +1,18 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.0GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 70: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.0GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.0GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 9c7b5d3a2f4b461b9ad2608ffcf62174
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 70: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+step crawdad-v8-d4: qwen32 owes 2 replies on 2 tasks
+v8_01_hex_color              qwen32 R4 critic   fail verdict=accept tok=1955 185.8s
+v8_14_happy_count            qwen32 R4 critic   pass verdict=reject tok=2645 247.8s
+step crawdad-v8-d4: qwen32 asked 2; done: 30/30 tasks at a leaf, both solos complete
+llmctl: run python3 rc=0 memory.peak=40 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 70: ENDED qwen32; GTT after stop 1.2 GiB

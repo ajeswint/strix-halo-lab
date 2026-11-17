@@ -1,0 +1,59 @@
+You are the code-writer seat for strix-halo-lab (Google Antigravity, Gemini 3.8 Flash, effort high). This is ATTEMPT 2 on PR #16.
+
+Work ONLY in the git worktree /tmp/wt-ground-v1, branch lab/crawdad-ground-v1, HEAD a67f4010e3bfb4f83755133a05e8bff2cee6a4a6 (clean; your attempt-1 work is committed there). Do not use any other checkout. Do not touch /home/aj/projects/strix-halo-lab or /tmp/wt-stage-n. Never touch /data, /data/ring-memloop-v9 (or any seal.key / raw DB) or /home/aj/lab-archive. Do NOT commit, amend, or push; leave the tree dirty, the parent commits. Do not switch models. If you hit a quota, 429, or auth error, stop and report it; do not fall back to Argon or any other model.
+
+GPU IS BUSY (Stage N d4 runs until ~03:00 CST). Do NOT run scripts/llmctl.py, do not start/stop any llama or systemd service, send no request to 127.0.0.1:8080 or :8081, install nothing (no pip/apt; pyflakes stays absent and optional). Everything you run is CPU-only under `prlimit --as=4294967296`.
+
+The reviewer seat (Grok 4.7 high) returned REQUEST-CHANGES on head a67f401. Verbatim review:
+----
+The runtime loop does not hand the model hidden tests, reference solutions, or the grading seed. The v10_57/76/81 exclusions are prompt typos, not a leak. The pass-bar arithmetic matches the Stage V table. The GPU expected total is 44.25 h; the ceiling is 90 h.
+Blockers:
+1. ground.py:612/626: an empty C revision becomes the final program.
+2. ground.py:457/505/588: the cap is pre-call only. G recorded 30715 tokens vs C's 24572.
+3. ground.py:716/794: `sp` is overwritten with a bool and then passed to open().
+4. ground.py:656 and docs:145: status invites the busier seat, and the owe is 270, not 540.
+5. ground.py:201/560/626 and docs:58/63: G vs C mixes best-of-N, early stop, the test-write call, and a different instruction with the traceback.
+Nits: test_ground.py:99 (leak guard narrow; budget test doesn't check totals); ground.py:138 (pyflakes); docs:102 (d4 placeholder); docs:31/34 (counts 237/124); generate_visible.py:202 (v10_39/66 are ValueError-only); docs:112/119 (227.7 s; the 1.4 rate is applied to all units).
+----
+
+Fix ALL FIVE BLOCKERS exactly as follows:
+
+1. No-code revisions (ground.py ~612/626, both arms): when a revision reply has no code block, keep the last non-empty code as the arm's current/final code (never let None become the final program), and record a DISTINCT stop reason (e.g. `no_code`), separate from `no_changes`/`repeat_code`. Same rule in G and C. Add a test where a revision returns no code block and assert the final code is the last non-empty module, in both arms.
+
+2. Hard token cap (ground.py ~457/505/588): before EVERY completion call in both arms, including the test-write call and turn 0's accounting, apply one shared rule: if tokens_so_far + MAX_TOKENS > TASK_BUDGET (24576), either skip the call (stop reason `budget`) or shrink that call's max_tokens to the remaining TASK_BUDGET - tokens_so_far (pick one, use it identically in both arms, document it in the spec, and if you shrink, make sure the request body actually carries the smaller max_tokens and that a remainder below a sensible minimum skips instead). Add a test that drives both arms with a fake model that always uses the full max_tokens it was given and asserts recorded total tokens <= 24576 for G and for C.
+
+3. report (ground.py ~716/794): the summary path variable `sp` is overwritten by a bool in the union loop and then passed to open(). Rename the loop variable. Add an end-to-end test that runs `report` on a small fake results set in a temp dir (stub the hidden fresh grade so no real hidden grading is needed, or use a tiny real task), checks the summary JSON is written and parses, and checks that the verdict comes out as each of keep / drop / inconclusive / no_room on constructed tables.
+
+4. status (ground.py ~656): the next-session line must invite the FIRST seat in ORDER that still owes work (not the seat with the most owed). Fix docs/crawdad-ground-v1.md ~145 expected line to read exactly `owed {'qwen32': 0, 'r1d32': 270}; next session: invite r1d32` (and make sure count_owed's units really give 270 per seat for 90 tasks; if they do not, make code and doc consistent and say what the unit is). Add a test for both cases (qwen32 owes -> invite qwen32; only r1d32 owes -> invite r1d32).
+
+5. Make the PRIMARY contrast isolate execution feedback (ground.py ~201/560/626, docs ~58/63):
+   - Both G and C are scored on their LAST non-empty module (not G's best-of-N).
+   - Both arms get the SAME "write a corrected full module" revision instruction; the only difference is that G's prompt contains the failure block (static/visible/model-test error text) and C's does not.
+   - Both arms use the SAME stop rules (budget, max_turns, no_code handling, repeat_code; an all-checks-pass stop is execution information, so either give C no early stop and G none either, or define a matched stop; state the choice and the reasoning in the spec — the point is that stopping must not differ between arms except through information the execution provides, and that difference must be explicit).
+   - The test-write call: either give C a matched non-executed equivalent (same test-write call, same seed, tests shown in C's revision prompt but never run) or keep it G-only and document clearly in the spec that it is part of G's treatment and counts against G's budget. Pick one, state it.
+   - Log G's best-of-N selected module as a SECONDARY, clearly labeled "package" result (G-best-of-N), reported alongside G-best-of-N vs P, with token counts per arm. No keep/drop verdict from secondary results.
+   - Update docs/crawdad-ground-v1.md (~58/63 and wherever arms/selection are described) and recompute/update the protocol hash in code, doc and selftest.
+
+Also fix the nits:
+ - test_ground.py ~99: broaden the leak guard: the exploding task must also raise on .get('tests'/'ref'), items/values/keys iteration exposing those fields, copy/dict() conversion, and the test must cover the revision path (a turn 0 that fails visible tests so revisions happen) in both arms. Also add a test that scans every prompt the fake model receives during a full step (turn 0, test-write, all revisions, both arms) and asserts none contains any hidden-only material: no line of the task's hidden `tests` that is not also present in the prompt text, no substring of `ref` longer than a short threshold that is not already in the prompt, and not the string "104729". `report` is the only function allowed to touch hidden fields; test that step never does.
+ - Budget test must assert token totals, not only stop reasons (covered by blocker 2's test).
+ - ground.py ~138: pyflakes stays optional and absent; make sure the spec says the static tier is compile + deny_check + entry points on this machine.
+ - docs ~102: keep the d4 triad as a clearly marked placeholder; do not fill it.
+ - docs ~31/34: correct the per-family visible assert counts (reviewer says 237 and 124 for the two wrong rows; recompute all four from tasks_v10_visible.CHECKS by family via memring.FAMILIES["v10"] and print them, so the doc matches the file exactly).
+ - generate_visible.py ~202 and the doc: state that v10_39 and v10_66 keep only ValueError asserts (their value examples depend on unbound variables).
+ - docs ~112/119: recompute GPU hours: per-reply time 227.7 s (state where that comes from in the stored v8 files and show the division), and apply the expected revision rate only to units that fail turn 0 (use the measured v8 solo pass rate, d2: qwen32 9/30 + r1d32 4/30 = 13/60), for both G and C under the new matched stop rules; give expected and worst case per arm and in total, with the arithmetic shown. Mark assumed rates as assumptions.
+
+CHECKS (required, CPU only, under prlimit --as=4294967296, from bench/loop):
+  python3 ground.py --selftest
+  python3 -m unittest test_ground
+  python3 check_tasks.py --set v10
+  python3 check_tasks.py --set v8
+  python3 run.py --selftest --set v10
+  python3 agent.py --selftest --set v10
+  python3 debate.py --selftest        # protocol 137acf32c95d must be unchanged; do not edit debate.py
+  python3 memring.py --selftest
+  python3 -m unittest test_tasks_v10
+  (repo root) bash tools/lab-seats/test.sh
+Never weaken a test to make it pass. If a check fails and you cannot fix it properly, stop and report.
+
+When done, leave everything uncommitted and print: files changed, how each blocker and nit was addressed (file:line), the new protocol hash, the recomputed per-family counts and GPU hours, the stop-rule and test-write choices for blocker 5, and the check results.

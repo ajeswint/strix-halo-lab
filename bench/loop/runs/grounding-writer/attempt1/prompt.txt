@@ -1,0 +1,76 @@
+You are the code-writer seat for strix-halo-lab (Google Antigravity, Gemini 3.8 Flash, effort high).
+
+Work ONLY in the git worktree /tmp/wt-ground-v1, branch lab/crawdad-ground-v1, created from origin/main at 6c56cc09eaafb2376422e73515b39f8193893740 (clean). Do not use any other checkout. Do not touch /home/aj/projects/strix-halo-lab (its dirty files must stay untouched) or /tmp/wt-stage-n. Never touch /data, /data/ring-memloop-v9 (or any seal.key / raw DB) or /home/aj/lab-archive. Do not commit. Do not push. Leave the tree dirty; the parent commits. Do not switch models. If you hit a quota, 429, or auth error, stop and report it; do not fall back to Argon or any other model.
+
+GPU IS BUSY (Stage N arm crawdad-v8-d4 is running until ~03:00 CST). Do NOT run scripts/llmctl.py (no invite/run/bye), do not start or stop any llama/systemd service, do not send any request to 127.0.0.1:8080 or :8081, and do not install packages (no pip/apt). Everything you run must be CPU-only, under `prlimit --as=4294967296`.
+
+Read README.md, AGENTS.md / CLAUDE.md, docs/review-roles.md, docs/crawdad-v10-noise.md (its Stage V bar section is reused below), bench/loop/run.py (grade, _sandbox, deny_check, extract), bench/loop/debate.py (sampling constants, request_body, server_ask, step/status/report pattern, selftest style), bench/loop/agent.py, and bench/loop/tasks_v10.py first.
+
+============================================================
+CONTEXT: why this exists
+============================================================
+AJ cancelled CRAwDAD Stage V (memory retrieval on v10). Retrieval never beat noise: v8 D 9/30 vs DR 12/30 (+3), and a plain rerun at another seed (crawdad-v8-d3) also scored 12/30, with 7/30 tasks discordant between d2 and d3. New direction: GROUNDING the two small coding models (qwen32 = Qwen3-32B Q4_K_M, r1d32 = DeepSeek-R1-Distill-Qwen-32B Q4_K_M, the CRAwDAD seats) in execution feedback instead of retrieved memory. Docs lookup is out of scope (puzzle-style tasks).
+
+Deliverable (both uncommitted in the worktree):
+ (a) a short pre-run spec doc docs/crawdad-ground-v1.md (plus a one-line pointer in README.md's doc index, matching the existing index style), and
+ (b) the implementation: a new script bench/loop/ground.py (do NOT change debate.py's behaviour or its protocol hashes; reuse its constants/helpers by import) plus bench/loop/test_ground.py (CPU unit tests), plus the visible-test split file described below.
+No GPU session starts from this commit. The run waits for AJ's separate yes.
+
+============================================================
+THE CRITICAL RULE: hidden tests never steer anything
+============================================================
+The hidden grading tests (each task's `tests` string in tasks_v10.py, graded at FRESH_SEED 104729 exactly as debate.py report does) must NEVER be shown to the model and NEVER used for selection, retries, stopping, or any decision inside the loop. Only three signals may steer: (1) VISIBLE tests, (2) model-written tests, (3) static checks. Hidden grading happens once per (task, seat, arm), on the final selected code, after the loop is over.
+
+What I found (verify it yourself and state it in the spec): in v10 there is NO separate visible test suite. Every one of the 90 tasks (all four families: formats, number_theory, graphs_geometry, simulation_dp) has a single `tests` string that contains (i) the prompt's "Examples:" asserts verbatim, (ii) extra fixed asserts and rejection cases NOT in the prompt, and (iii) a seeded oracle loop at random.seed(10000+NN). The final grade swaps that seed for 104729, but (i) and (ii) are identical between the "visible seed" and the fresh grade. Therefore:
+ - agent.py's existing loop (which feeds back failures from the full `tests` at the visible seed) VIOLATES the rule and must NOT be reused for this experiment. Say so in the spec.
+ - Visible split (identical policy for all four families): visible tests = ONLY the examples already written in each task's prompt "Examples:" block, i.e. lines of the form `- f(args) == value` and the `- ValueError: call, call, ...` lists (some prompts may use `->` or other phrasings; handle the forms that actually occur and count the rest). Extract them DETERMINISTICALLY on CPU (a script, not a model, not hand-copying from `tests`) into a committed, reviewable file bench/loop/tasks_v10_visible.py mapping task id -> visible assert source. Every visible check must be derivable from the prompt text alone: write a unit test that asserts each extracted call/expected-value literal appears in that task's prompt, and that every task's `ref` passes all its visible asserts in the sandbox. Report per-family counts: tasks with >=1 visible assert, total asserts, tasks where extraction failed (those fall back to static checks + model tests only, flagged `no_visible`, and are listed in the spec). Never read from `tests` to build visible tests.
+ - Enforce in code, not just prose: the in-loop code path must receive tasks with only id/prompt/visible (no `tests`, no `ref`). Add a unit test that runs the whole grounded loop with a fake model where task["tests"] and task["ref"] are replaced by objects that raise on any access, and the loop still completes; hidden grading is a separate function called only after the loop.
+
+============================================================
+ARMS (one seed base, v10's 90 held-out tasks, both seats)
+============================================================
+Unit of work: (task, seat), 90 tasks x 2 seats. Sampling, REASONING_BUDGET 2048, MAX_TOKENS 6144, build, model files, endpoints and request shape identical to debate.py (import them; do not copy numbers). New seed range disjoint from all existing ones (run.py 0-15, loop 1000+, fix 2000+, plan 3000-3001, debate 4000 and 4100+): propose 5000-5099; document it and check disjointness in the selftest. Paired design: the same turn seeds are used by every arm.
+
+ - Shared turn 0 = arm P (plain baseline, unmatched): one solo reply per (task, seat) from debate.solo_prompt(task) at seed 5000. Stored once and SHARED as the starting point of arms G and C, so the paired contrast does not inherit turn-0 sampling noise.
+ - Arm G (grounded), from turn 0, in AJ's priority order:
+   1. Self-written tests first: one separate call per (task, seat), seeing ONLY the task prompt (never any code), asks for a few edge-case asserts (cap the count and length; seed 5050). Store them. They count against G's budget. Model tests are checked for syntax; a model test that fails against EVERY candidate is reported but still counts as a check (note this caveat; do not use the reference to validate them, the ref is hidden-side).
+   2. Static checks first, cheapest first: compile(), run.deny_check, an ast check that the required entry-point function names from the prompt are defined, and pyflakes ONLY if importable (it is NOT installed on the MAX; do not install it; record which static checks ran).
+   3. Test-and-fix loop: run static -> visible asserts -> model tests in run.py's bwrap sandbox (no network, AS cap, short timeout, e.g. 10 s per run). If all pass, stop. Else feed back the first real failure (traceback / failing assert text, truncated like run._tail) and ask for a corrected full module. At most K=3 revision turns (seeds 5001-5003). Stop early on pass, repeated identical error, or resubmitted identical code (as agent.py does).
+   4. Best-of-N selection: among all code versions G produced for that (task, seat) (turn 0 + revisions), select the one passing the most checks, ordered static, then visible, then model tests (define the exact lexicographic key in the spec); ties go to the FIRST (earliest) version. Only the selected version is hidden-graded.
+ - Arm C (matched control, no execution): from the same shared turn 0, up to K=3 self-revision turns at the same seeds where the model sees its own code and the spec and is asked to re-check and output a corrected full module, with NO execution output of any kind. Stop on an explicit "no changes" / identical code, or the budget. Final = last code version.
+ - Budget matching: per (task, seat), G and C each get the same completion-token cap B = 4 x MAX_TOKENS (turn 0 + test-writing + revisions all count). Report tokens actually used per arm, and report both: the matched contrast G vs C (primary) and the unmatched G vs P (secondary, with tokens).
+ - Ablations only if cheap: compute post hoc on CPU from G's logged candidates and check results (e.g. "selection on static+visible only", "stop at first visible pass"). Label them exploratory; no keep/drop verdict from them. No extra GPU arms.
+
+============================================================
+PASS BAR (pin in the spec, before data)
+============================================================
+Primary unit: task (n=90). A task is solved by an arm if EITHER seat's final code passes the hidden fresh grade (the union, as debate's solo_union). Primary contrast: G vs C, paired over the 90 tasks. Reuse the Stage V partition from docs/crawdad-v10-noise.md verbatim in meaning: Keep = net >= T_noise (pinned T = 9) AND exact one-sided paired sign test p <= 0.05; Drop = net <= 0 OR p > 0.10; Inconclusive otherwise (defaults to drop unless AJ approves expansion); plus the no-room precondition (if L_C >= 77/90 or L_C <= 9/90, no verdict). Per-seat results are secondary (report, no verdict).
+Noise note (must be in the spec): T=9 came from same-seed p_same = 1/7 (sigma_paired = sqrt(90/7) ~= 3.59). Stage N's cross-seed noise is larger: d2 vs d3 discordant on 7/30 (~0.23); if that rate applied, sigma = sqrt(90 x 0.233) ~= 4.6 and 2.5 sigma ~= 12. The shared-turn-0 same-seed design is what justifies keeping T=9; also report whether net >= 12 as a sensitivity line. d4 (seed base 4200) is still running; leave a clearly marked placeholder for the d2/d3/d4 triad numbers to be filled in before the run, do not invent them.
+
+============================================================
+EXPECTED GPU HOURS (from real files only)
+============================================================
+Use docs/crawdad-v8.md / docs/crawdad-v10-noise.md measured figures (e.g. v8-d2: 108 replies, decode 24,593 s, ~225 s mean gen_s per reply, tg ~10.6-11.2 t/s; model swap ~1.3 min per load). Give: P (180 replies), G (180 test-writing + up to 3 x 180 revisions, give expected and worst case, and say what assumption sets the expected number of revisions, e.g. the v8 solo pass rate from the stored results), C (same). Show the arithmetic. Session plan: one llmctl session per seat (invite qwen32, run P/G/C for all 90 tasks, bye; then r1d32), with scripts/preflight.sh READY and llama-deepseek=inactive before each invite, printed as exact commands in the spec like docs/crawdad-v10-noise.md does. Results to bench/loop/results/crawdad-ground-v1.* with a resumable step/status/report CLI like debate.py (step resumes owed work for the served seat; status prints `done: ...` or `owed ...; next session: invite qwen32|r1d32` in the SAME last-line format as debate.py status so the existing launcher pattern works; report --regrade does the hidden fresh grade and the sign test, CPU only).
+
+============================================================
+IMPLEMENTATION REQUIREMENTS
+============================================================
+ - bench/loop/ground.py: CLI `--selftest`, `step --label L --set v10` (first step fixes meta: protocol hash, seeds, budget, K, visible file sha256), `status --label L`, `report --label L [--regrade]`. A protocol hash that binds prompts, seeds, K, B, check order and the visible file's sha256. Refuse to overwrite existing results. Every model call goes through debate's request_body/server_ask so the request shape matches CRAwDAD.
+ - Sandbox: reuse run.py's bwrap _sandbox/grade machinery (no network, read-only /usr, AS cap); per-check timeout; never shell out to the network.
+ - bench/loop/test_ground.py (unittest, CPU only, fake model, no server): visible extraction is prompt-derived and passes every ref; the hidden-tests access guard above; selection key and first-wins tie-break; budget accounting (stops at B, matched across G and C); stop rules; static checks catch a syntax error, a missing entry point and a deny-listed import without running tests; P/G/C share turn 0; status last line parses with the same regex the launcher uses (`next session: invite (qwen32|r1d32)` / `done:`); report computes net and exact sign-test p correctly on a toy table (include the spec's worked examples: 9-0 -> p=0.002, 10-1 -> 0.006, 11-2 -> 0.011, 7-1 -> 0.035).
+
+============================================================
+CHECKS (required, all CPU, under prlimit --as=4294967296, from bench/loop)
+============================================================
+  python3 ground.py --selftest
+  python3 -m unittest test_ground
+  python3 check_tasks.py --set v10
+  python3 run.py --selftest --set v10
+  python3 agent.py --selftest --set v10
+  python3 debate.py --selftest        # must still report protocol 137acf32c95d unchanged
+  python3 memring.py --selftest
+  python3 -m unittest test_tasks_v10
+  bash ../../tools/lab-seats/test.sh   # from repo root is fine
+If a check fails, stop and report; never weaken a test to make it pass.
+
+Keep the spec short (aim for one or two screens, in the style of docs/crawdad-v10-noise.md). When done, leave everything uncommitted and print: files changed, per-family visible-extraction counts (and the no_visible list), the protocol hash, the GPU-hour estimate, check results, and any decision you made that this brief did not pin.

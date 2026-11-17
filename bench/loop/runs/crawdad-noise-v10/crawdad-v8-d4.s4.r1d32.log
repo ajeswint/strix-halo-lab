@@ -1,0 +1,25 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.1GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 69: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.0GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.0GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 78c59c83eb434641b5418c192e76249f
+up: r1-distill-qwen-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 69: ACTIVE r1d32 on :8081, GTT 28.0 GiB
+step crawdad-v8-d4: r1d32 owes 9 replies on 9 tasks
+v8_01_hex_color              r1d32 R3 defender fail verdict=reject tok=2495 231.6s
+v8_02_morse_text             r1d32 R3 defender fail verdict=accept tok=1647 160.1s
+v8_04_money_text             r1d32 R3 defender fail verdict=accept tok=2689 252.4s
+v8_07_luhn_digits            r1d32 R4 critic   fail verdict=accept tok=2140 198.9s
+v8_08_query_pairs            r1d32 R3 defender fail verdict=accept tok=505 52.5s
+v8_14_happy_count            r1d32 R3 defender pass verdict=reject tok=1127 105.8s
+v8_18_closest_pair           r1d32 R3 defender fail verdict=accept tok=878 84.3s
+v8_24_elevator_scan          r1d32 R3 defender fail verdict=accept tok=2557 239.5s
+v8_27_stair_ways             r1d32 R4 critic   fail verdict=accept tok=2043 191.2s
+step crawdad-v8-d4: r1d32 asked 9; owed {'qwen32': 2, 'r1d32': 0}; next session: invite qwen32
+llmctl: run python3 rc=0 memory.peak=41 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 69: ENDED r1d32; GTT after stop 1.2 GiB
