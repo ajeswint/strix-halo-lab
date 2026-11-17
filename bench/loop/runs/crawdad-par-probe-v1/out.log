@@ -1,0 +1,81 @@
+=== start 2026-11-17T14:21:20-06:00 pwd=/tmp/wt-par-probe head=1eb694f8aaf53f7730dd6922c1dcfe8d301208f6 ===
+=== arm 1 crawdad-par-p1 2026-11-17T14:21:21-06:00 invite=[] step=[] ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 73: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: fe2a688697724eaf8553f24a7466a2b7
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 73: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+props: total_slots 1 n_ctx 32768 build b11669-620d2225c
+STEP_START arm1 2026-11-17T20:21:26Z 1794946886.314822821
+step crawdad-par-p1: qwen32 owes 8 replies on 8 tasks
+v7_01_packbits               qwen32 R1 solo     fail verdict=None tok=2652 241.1s
+v7_02_ini_strict             qwen32 R1 solo     fail verdict=None tok=2779 253.5s
+v7_03_semver_order           qwen32 R1 solo     fail verdict=None tok=2926 266.8s
+v7_04_partition_rank         qwen32 R1 solo     fail verdict=None tok=2878 261.9s
+v7_05_digit_rules            qwen32 R1 solo     fail verdict=None tok=2603 236.1s
+v7_06_route_lexmin           qwen32 R1 solo     fail verdict=None tok=2626 239.0s
+v7_07_rect_union             qwen32 R1 solo     fail verdict=None tok=2993 272.7s
+v7_08_bowling_frames         qwen32 R1 solo     fail verdict=None tok=2931 267.0s
+step crawdad-par-p1: qwen32 asked 8; owed {'qwen32': 0, 'r1d32': 12}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=52 MiB cap=8192 MiB as=16384 MiB
+STEP_END arm1 2026-11-17T20:55:24Z 1794948924.854321247
+STEP_WALL arm1 2038.5 s
+v7_01_packbits               first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_02_ini_strict             first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_03_semver_order           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_04_partition_rank         first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_05_digit_rules            first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_06_route_lexmin           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_07_rect_union             first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_08_bowling_frames         first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+owed {'qwen32': 0, 'r1d32': 12}; next session: invite r1d32
+llmctl: session 73: ENDED qwen32; GTT after stop 1.2 GiB
+=== arm 1 finished 2026-11-17T14:55:25-06:00 ===
+=== arm 2 crawdad-par-p2 2026-11-17T14:55:25-06:00 invite=[--ctx 65536 --np 2] step=[--parallel 2] ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 74: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 0a931bb9bd604f81aed93247378993ad
+up: qwen3-32b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+llmctl: session 74: ACTIVE qwen32 on :8081, GTT 35.9 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+STEP_START arm2 2026-11-17T20:55:31Z 1794948931.643525222
+step crawdad-par-p2: qwen32 owes 8 replies on 8 tasks
+v7_01_packbits               qwen32 R1 solo     fail verdict=None tok=2636 252.3s
+v7_02_ini_strict             qwen32 R1 solo     fail verdict=None tok=2845 274.6s
+v7_03_semver_order           qwen32 R1 solo     fail verdict=None tok=2797 268.2s
+v7_04_partition_rank         qwen32 R1 solo     fail verdict=None tok=2840 271.7s
+v7_05_digit_rules            qwen32 R1 solo     fail verdict=None tok=2752 263.0s
+v7_06_route_lexmin           qwen32 R1 solo     fail verdict=None tok=2878 275.4s
+v7_07_rect_union             qwen32 R1 solo     fail verdict=None tok=3074 295.2s
+v7_08_bowling_frames         qwen32 R1 solo     fail verdict=None tok=2816 268.2s
+step crawdad-par-p2: qwen32 asked 8; owed {'qwen32': 0, 'r1d32': 12}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=42 MiB cap=8192 MiB as=16384 MiB
+STEP_END arm2 2026-11-17T21:13:41Z 1794950021.849613295
+STEP_WALL arm2 1090.2 s
+v7_01_packbits               first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_02_ini_strict             first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_03_semver_order           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_04_partition_rank         first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_05_digit_rules            first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_06_route_lexmin           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v7_07_rect_union             first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v7_08_bowling_frames         first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+owed {'qwen32': 0, 'r1d32': 12}; next session: invite r1d32
+llmctl: session 74: ENDED qwen32; GTT after stop 1.2 GiB
+=== arm 2 finished 2026-11-17T15:13:42-06:00 ===
+=== probe complete 2026-11-17T15:13:42-06:00 ===
+=== end 2026-11-17T15:13:42-06:00 rc=0 ===

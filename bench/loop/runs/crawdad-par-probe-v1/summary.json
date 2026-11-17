@@ -1,0 +1,38 @@
+{
+  "question": "does llama-server --parallel 2 cut step wall time for one session's replies?",
+  "bar": "keep going only if step wall time drops >= 25% (arm1 -> arm2); pass rates not judged",
+  "worktree_head": "1eb694f8aaf53f7730dd6922c1dcfe8d301208f6",
+  "model": "qwen32 (Qwen3-32B-Q4_K_M), vk, build b11669-620d2225c",
+  "tasks": 8,
+  "arms": {
+    "p1": {
+      "label": "crawdad-par-p1",
+      "config": "ctx 32768 np 1, step --parallel 1",
+      "replies": 8,
+      "step_wall_s": 2038.5,
+      "completion_tokens": 22388,
+      "prompt_tokens": 5684,
+      "aggregate_tok_per_s": 10.98,
+      "mean_per_request_tg_tps": 11.08,
+      "sum_gen_s": 2038.1,
+      "budget_hit": 8,
+      "fresh_pass": 0
+    },
+    "p2": {
+      "label": "crawdad-par-p2",
+      "config": "ctx 65536 np 2 (32768 per slot), step --parallel 2",
+      "replies": 8,
+      "step_wall_s": 1090.2,
+      "completion_tokens": 22638,
+      "prompt_tokens": 5684,
+      "aggregate_tok_per_s": 20.76,
+      "mean_per_request_tg_tps": 10.55,
+      "sum_gen_s": 2168.6,
+      "budget_hit": 8,
+      "fresh_pass": 0
+    }
+  },
+  "wall_change_pct": -46.5,
+  "verdict": "PASS (>=25% drop)",
+  "gtt_arm2_GiB": "35.9 absolute, +34.7 over 1.2 (llmctl table +26.7 is for ctx 32768 np 1; reported, not enforced)"
+}
