@@ -1,0 +1,85 @@
+--- /tmp/lab-seats/crawdad-noise-v10/run.sh	2026-11-13 20:17:15.319537781 -0600
++++ run.sh	2026-11-17 15:40:58.009947458 -0600
+@@ -1,14 +1,24 @@
+ #!/usr/bin/env bash
+-# Stage N: crawdad-v8-d3 (seed-base 4100) then crawdad-v8-d4 (seed-base 4200).
+-# Worktree /tmp/wt-stage-n @ 6c56cc09eaafb2376422e73515b39f8193893740.
++# CRAwDAD 2-slot quality check: crawdad-v8-d2p2 (seed-base 4000, same as crawdad-v8-d2).
++# AJ approved 2026-11-17 15:39 CST. Worktree /tmp/wt-d2p2 @ bc260ff701ba815640eb1c9eda7927064b2c6cc1 (origin/main).
++# Protocol: Stage N v8 debate, exactly as d2/d3/d4 (expected hash 137acf32c95d at seed-base 4000).
++# ONLY differences from Stage N: every invite gets --ctx 65536 --np 2 (2 slots x 32768, the same per-slot
++# context as d2), every debate.py step gets --parallel 2, plus a STEP timing line per session.
++# Pre-registered bar (also in prereg.md, written before launch):
++#   PASS: leaf score 8..13/30 AND discordant tasks vs crawdad-v8-d2 <= 10.
++#   FAIL: leaf score <= 7, OR discordant tasks vs crawdad-v8-d2 > 10.
++# No DeepSeek. No model substitution. No code changes.
+ # Never touch /home/aj/projects/strix-halo-lab, /data/ring-memloop-v9,
+ # or /home/aj/lab-archive/crawdad-v8-baseline-2026-11-07.
+ set -euo pipefail
+ 
+-WT=/tmp/wt-stage-n
+-DIR=/tmp/lab-seats/crawdad-noise-v10
++WT=/tmp/wt-d2p2
++DIR=/tmp/lab-seats/crawdad-v8-d2p2
+ LOG="$DIR/run.log"
+ MAX_STEPS=12
++EXPECT_HEAD=bc260ff701ba815640eb1c9eda7927064b2c6cc1
++INVITE_OPTS=(--ctx 65536 --np 2)
++PARALLEL=2
+ 
+ cd "$WT"
+ # Record the actual bash PID (setsid may fork, so the launcher's $! can be stale).
+@@ -35,6 +45,10 @@
+ }
+ trap on_exit EXIT
+ 
++[[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
++[[ -z "$(git status --porcelain)" ]] || { echo "ERROR: worktree dirty"; exit 1; }
++[[ -s "$DIR/prereg.md" ]] || { echo "ERROR: $DIR/prereg.md missing"; exit 1; }
++
+ preflight() {
+   local out rc
+   set +e
+@@ -56,6 +70,17 @@
+   fi
+ }
+ 
++# Served shape must be 2 slots x 32768 per slot (same per-slot ctx as d2), else stop.
++check_props() {
++  local out
++  out=$(curl -s http://127.0.0.1:8081/props | python3 -c "import json,sys;p=json.load(sys.stdin);print('total_slots',p.get('total_slots'),'n_ctx',(p.get('default_generation_settings') or {}).get('n_ctx'),'build',p.get('build_info'))")
++  echo "props: $out"
++  if [[ "$out" != "total_slots 2 n_ctx 32768 "* ]]; then
++    echo "ERROR: served shape is not 2 slots x 32768: $out"
++    return 1
++  fi
++}
++
+ # debate.py status prints one line per task, then status_line():
+ #   done: N/M tasks at a leaf, both solos complete
+ #   owed {...}; next session: invite qwen32|r1d32
+@@ -99,8 +124,13 @@
+   echo "=== $label session $sess seat=$seat $(date -Iseconds) ==="
+   preflight 2>&1 | tee -a "$slog"
+   invited=1
+-  scripts/llmctl.py invite "$seat" 2>&1 | tee -a "$slog"
+-  scripts/llmctl.py run -- python3 bench/loop/debate.py step "$@" 2>&1 | tee -a "$slog"
++  scripts/llmctl.py invite "$seat" "${INVITE_OPTS[@]}" 2>&1 | tee -a "$slog"
++  check_props 2>&1 | tee -a "$slog"
++  local t0 t1
++  t0=$(date +%s.%N); echo "STEP_START $label s$sess $seat $(date -u +%FT%TZ) $t0" | tee -a "$slog"
++  scripts/llmctl.py run -- python3 bench/loop/debate.py step "$@" --parallel "$PARALLEL" 2>&1 | tee -a "$slog"
++  t1=$(date +%s.%N); echo "STEP_END $label s$sess $seat $(date -u +%FT%TZ) $t1" | tee -a "$slog"
++  python3 -c "print('STEP_WALL $label s$sess $seat %.1f s' % ($t1-$t0))" | tee -a "$slog"
+   scripts/llmctl.py bye 2>&1 | tee -a "$slog"
+   invited=0
+   echo "=== $label session $sess finished $(date -Iseconds) ==="
+@@ -138,6 +168,5 @@
+ }
+ 
+ export PYTHONUNBUFFERED=1
+-# attempt2: d3 finished and regraded in attempt1 (launcher done-line parse bug); run d4 only.
+-run_arm crawdad-v8-d4 4200
+-echo "=== Stage N both arms complete $(date -Iseconds) ==="
++run_arm crawdad-v8-d2p2 4000
++echo "=== d2p2 complete $(date -Iseconds) ==="
