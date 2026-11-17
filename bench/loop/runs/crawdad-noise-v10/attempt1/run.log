@@ -1,0 +1,395 @@
+=== start 2026-11-13T11:59:02-06:00 pwd=/tmp/wt-stage-n head=6c56cc09eaafb2376422e73515b39f8193893740 ===
+=== arm crawdad-v8-d3 seed-base 4100 2026-11-13T11:59:02-06:00 ===
+=== crawdad-v8-d3 session 1 seat=qwen32 2026-11-13T11:59:02-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 61: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 60bff72f13cb472b887c59b1a3358016
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 61: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+step crawdad-v8-d3: qwen32 owes 30 replies on 30 tasks
+v8_01_hex_color              qwen32 R1 solo     pass verdict=None tok=2456 222.5s
+v8_02_morse_text             qwen32 R1 solo     fail verdict=None tok=2810 254.9s
+v8_03_case_convert           qwen32 R1 solo     pass verdict=None tok=2442 221.0s
+v8_04_money_text             qwen32 R1 solo     fail verdict=None tok=2530 229.5s
+v8_05_cidr_range             qwen32 R1 solo     fail verdict=None tok=2625 238.8s
+v8_06_clock_12h              qwen32 R1 solo     fail verdict=None tok=2570 233.7s
+v8_07_luhn_digits            qwen32 R1 solo     fail verdict=None tok=2361 213.4s
+v8_08_query_pairs            qwen32 R1 solo     fail verdict=None tok=2608 236.8s
+v8_09_digit_persistence      qwen32 R1 solo     fail verdict=None tok=2326 210.0s
+v8_10_euler_phi              qwen32 R1 solo     fail verdict=None tok=2407 218.1s
+v8_11_goldbach_pairs         qwen32 R1 solo     pass verdict=None tok=2387 215.7s
+v8_12_pascal_mod             qwen32 R1 solo     fail verdict=None tok=2449 222.5s
+v8_13_primitive_triples      qwen32 R1 solo     pass verdict=None tok=2562 232.3s
+v8_14_happy_count            qwen32 R1 solo     fail verdict=None tok=2528 229.0s
+v8_15_egyptian_greedy        qwen32 R1 solo     fail verdict=None tok=2296 208.2s
+v8_16_two_color              qwen32 R1 solo     fail verdict=None tok=2428 220.1s
+v8_17_lattice_segment        qwen32 R1 solo     fail verdict=None tok=2539 230.4s
+v8_18_closest_pair           qwen32 R1 solo     pass verdict=None tok=2364 214.3s
+v8_19_euler_trail            qwen32 R1 solo     fail verdict=None tok=2930 266.9s
+v8_20_triangle_kind          qwen32 R1 solo     fail verdict=None tok=2482 225.2s
+v8_21_manhattan_center       qwen32 R1 solo     fail verdict=None tok=2308 209.1s
+v8_22_tree_centers           qwen32 R1 solo     fail verdict=None tok=2626 238.5s
+v8_23_robot_walk             qwen32 R1 solo     fail verdict=None tok=2444 222.1s
+v8_24_elevator_scan          qwen32 R1 solo     fail verdict=None tok=2528 229.3s
+v8_25_josephus_order         qwen32 R1 solo     pass verdict=None tok=2340 212.7s
+v8_26_max_subarray           qwen32 R1 solo     fail verdict=None tok=2344 212.4s
+v8_27_stair_ways             qwen32 R1 solo     pass verdict=None tok=2482 225.3s
+v8_28_lcs_smallest           qwen32 R1 solo     pass verdict=None tok=2520 228.5s
+v8_29_matrix_chain           qwen32 R1 solo     pass verdict=None tok=2500 227.0s
+v8_30_ledger_events          qwen32 R1 solo     pass verdict=None tok=2367 214.7s
+step crawdad-v8-d3: qwen32 asked 30; owed {'qwen32': 0, 'r1d32': 45}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=62 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 61: ENDED qwen32; GTT after stop 1.2 GiB
+=== crawdad-v8-d3 session 1 finished 2026-11-13T13:52:52-06:00 ===
+STATUS crawdad-v8-d3: v8_01_hex_color              first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_02_morse_text             first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_03_case_convert           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_04_money_text             first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_05_cidr_range             first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_06_clock_12h              first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_07_luhn_digits            first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_08_query_pairs            first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_09_digit_persistence      first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_10_euler_phi              first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_12_pascal_mod             first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_13_primitive_triples      first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_14_happy_count            first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_16_two_color              first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_17_lattice_segment        first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_18_closest_pair           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_19_euler_trail            first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_20_triangle_kind          first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_21_manhattan_center       first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_22_tree_centers           first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_23_robot_walk             first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_24_elevator_scan          first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_25_josephus_order         first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_26_max_subarray           first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_27_stair_ways             first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_29_matrix_chain           first=r1d32   solos=['qwen32'] rounds=[] next r1d32 R1
+v8_30_ledger_events          first=qwen32  solos=['qwen32'] rounds=[] next r1d32 R2
+owed {'qwen32': 0, 'r1d32': 45}; next session: invite r1d32
+owed {'qwen32': 0, 'r1d32': 45}; next session: invite r1d32
+=== crawdad-v8-d3 session 2 seat=r1d32 2026-11-13T13:52:52-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 62: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: dc6fdefdbfeb465e983eb8bb6083ea85
+up: r1-distill-qwen-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 62: ACTIVE r1d32 on :8081, GTT 28.0 GiB
+step crawdad-v8-d3: r1d32 owes 45 replies on 30 tasks
+v8_01_hex_color              r1d32 R1 solo     fail verdict=None tok=2457 221.1s
+v8_02_morse_text             r1d32 R1 solo     fail verdict=None tok=3024 272.8s
+v8_03_case_convert           r1d32 R1 solo     pass verdict=None tok=2713 244.1s
+v8_04_money_text             r1d32 R1 solo     fail verdict=None tok=3476 314.4s
+v8_05_cidr_range             r1d32 R1 solo     fail verdict=None tok=2994 270.9s
+v8_06_clock_12h              r1d32 R1 solo     fail verdict=None tok=3110 281.4s
+v8_06_clock_12h              r1d32 R2 critic   pass verdict=reject tok=2570 236.1s
+v8_07_luhn_digits            r1d32 R1 solo     fail verdict=None tok=2939 264.7s
+v8_07_luhn_digits            r1d32 R2 critic   fail verdict=reject tok=2557 232.6s
+v8_08_query_pairs            r1d32 R1 solo     fail verdict=None tok=3096 279.8s
+v8_09_digit_persistence      r1d32 R1 solo     pass verdict=None tok=2389 214.5s
+v8_10_euler_phi              r1d32 R1 solo     fail verdict=None tok=2423 218.2s
+v8_10_euler_phi              r1d32 R2 critic   fail verdict=accept tok=2429 221.6s
+v8_11_goldbach_pairs         r1d32 R1 solo     pass verdict=None tok=2934 264.1s
+v8_11_goldbach_pairs         r1d32 R2 critic   fail verdict=accept tok=1318 120.4s
+v8_12_pascal_mod             r1d32 R1 solo     fail verdict=None tok=2378 214.6s
+v8_12_pascal_mod             r1d32 R2 critic   pass verdict=accept tok=2325 212.8s
+v8_13_primitive_triples      r1d32 R1 solo     fail verdict=None tok=2932 264.5s
+v8_13_primitive_triples      r1d32 R2 critic   fail verdict=accept tok=2121 194.4s
+v8_14_happy_count            r1d32 R1 solo     fail verdict=None tok=2395 215.5s
+v8_15_egyptian_greedy        r1d32 R1 solo     pass verdict=None tok=3438 311.2s
+v8_15_egyptian_greedy        r1d32 R2 critic   fail verdict=reject tok=2659 242.2s
+v8_16_two_color              r1d32 R1 solo     fail verdict=None tok=2405 216.7s
+v8_16_two_color              r1d32 R2 critic   fail verdict=accept tok=2131 194.6s
+v8_17_lattice_segment        r1d32 R1 solo     fail verdict=None tok=2746 247.9s
+v8_17_lattice_segment        r1d32 R2 critic   fail verdict=reject tok=2574 235.9s
+v8_18_closest_pair           r1d32 R1 solo     fail verdict=None tok=2392 215.5s
+v8_19_euler_trail            r1d32 R1 solo     fail verdict=None tok=5123 468.4s
+v8_20_triangle_kind          r1d32 R1 solo     fail verdict=None tok=2499 225.4s
+v8_20_triangle_kind          r1d32 R2 critic   fail verdict=accept tok=2536 232.2s
+v8_21_manhattan_center       r1d32 R1 solo     fail verdict=None tok=2300 207.1s
+v8_22_tree_centers           r1d32 R1 solo     fail verdict=None tok=2711 244.7s
+v8_22_tree_centers           r1d32 R2 critic   fail verdict=accept tok=2134 196.2s
+v8_23_robot_walk             r1d32 R1 solo     fail verdict=None tok=3017 272.9s
+v8_23_robot_walk             r1d32 R2 critic   fail verdict=reject tok=2635 241.2s
+v8_24_elevator_scan          r1d32 R1 solo     fail verdict=None tok=2625 236.7s
+v8_25_josephus_order         r1d32 R1 solo     fail verdict=None tok=2388 215.6s
+v8_26_max_subarray           r1d32 R1 solo     fail verdict=None tok=2651 238.9s
+v8_26_max_subarray           r1d32 R2 critic   fail verdict=reject tok=2419 220.3s
+v8_27_stair_ways             r1d32 R1 solo     pass verdict=None tok=2993 270.5s
+v8_27_stair_ways             r1d32 R2 critic   fail verdict=accept tok=2168 198.6s
+v8_28_lcs_smallest           r1d32 R1 solo     pass verdict=None tok=3100 279.9s
+v8_29_matrix_chain           r1d32 R1 solo     fail verdict=None tok=2943 265.9s
+v8_30_ledger_events          r1d32 R1 solo     fail verdict=None tok=2710 244.6s
+v8_30_ledger_events          r1d32 R2 critic   pass verdict=accept tok=2443 223.0s
+step crawdad-v8-d3: r1d32 asked 45; owed {'qwen32': 21, 'r1d32': 0}; next session: invite qwen32
+llmctl: run python3 rc=0 memory.peak=938 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 62: ENDED r1d32; GTT after stop 1.2 GiB
+=== crawdad-v8-d3 session 2 finished 2026-11-13T16:54:47-06:00 ===
+STATUS crawdad-v8-d3: v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] next qwen32 R3
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[] next qwen32 R2
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+owed {'qwen32': 21, 'r1d32': 0}; next session: invite qwen32
+owed {'qwen32': 21, 'r1d32': 0}; next session: invite qwen32
+=== crawdad-v8-d3 session 3 seat=qwen32 2026-11-13T16:54:47-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.3GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 63: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.3GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.3GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 309af4ee8d644ca3ba0fde79b479bcda
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 63: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+step crawdad-v8-d3: qwen32 owes 21 replies on 21 tasks
+v8_01_hex_color              qwen32 R2 critic   pass verdict=reject tok=2496 229.3s
+v8_02_morse_text             qwen32 R2 critic   fail verdict=reject tok=3160 294.4s
+v8_03_case_convert           qwen32 R2 critic   pass verdict=reject tok=3522 325.9s
+v8_04_money_text             qwen32 R2 critic   fail verdict=reject tok=2799 261.3s
+v8_05_cidr_range             qwen32 R2 critic   fail verdict=reject tok=2653 247.8s
+v8_06_clock_12h              qwen32 R3 defender pass verdict=accept tok=1494 141.2s
+v8_07_luhn_digits            qwen32 R3 defender fail verdict=reject tok=2755 255.0s
+v8_08_query_pairs            qwen32 R2 critic   fail verdict=reject tok=2878 269.0s
+v8_09_digit_persistence      qwen32 R2 critic   fail verdict=accept tok=2309 211.1s
+v8_14_happy_count            qwen32 R2 critic   pass verdict=reject tok=2584 236.8s
+v8_15_egyptian_greedy        qwen32 R3 defender pass verdict=accept tok=1538 143.9s
+v8_17_lattice_segment        qwen32 R3 defender fail verdict=accept tok=1887 176.8s
+v8_18_closest_pair           qwen32 R2 critic   pass verdict=reject tok=1640 150.8s
+v8_19_euler_trail            qwen32 R2 critic   fail verdict=accept tok=2077 195.0s
+v8_21_manhattan_center       qwen32 R2 critic   fail verdict=reject tok=2393 219.0s
+v8_23_robot_walk             qwen32 R3 defender fail verdict=reject tok=2733 255.1s
+v8_24_elevator_scan          qwen32 R2 critic   fail verdict=reject tok=2880 266.2s
+v8_25_josephus_order         qwen32 R2 critic   pass verdict=reject tok=2506 230.5s
+v8_26_max_subarray           qwen32 R3 defender fail verdict=accept tok=1611 149.6s
+v8_28_lcs_smallest           qwen32 R2 critic   pass verdict=accept tok=2970 277.2s
+v8_29_matrix_chain           qwen32 R2 critic   fail verdict=accept tok=1373 129.4s
+step crawdad-v8-d3: qwen32 asked 21; owed {'qwen32': 0, 'r1d32': 13}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=939 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 63: ENDED qwen32; GTT after stop 1.2 GiB
+=== crawdad-v8-d3 session 3 finished 2026-11-13T18:12:42-06:00 ===
+STATUS crawdad-v8-d3: v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] next r1d32 R4
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] next r1d32 R4
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] next r1d32 R3
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+owed {'qwen32': 0, 'r1d32': 13}; next session: invite r1d32
+owed {'qwen32': 0, 'r1d32': 13}; next session: invite r1d32
+=== crawdad-v8-d3 session 4 seat=r1d32 2026-11-13T18:12:42-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.3GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 64: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 4150e7bad1564ad3bf96bcc8bfb3acb5
+up: r1-distill-qwen-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 64: ACTIVE r1d32 on :8081, GTT 28.0 GiB
+step crawdad-v8-d3: r1d32 owes 13 replies on 13 tasks
+v8_01_hex_color              r1d32 R3 defender pass verdict=accept tok=1406 130.7s
+v8_02_morse_text             r1d32 R3 defender fail verdict=accept tok=617 64.0s
+v8_03_case_convert           r1d32 R3 defender fail verdict=reject tok=2475 235.4s
+v8_04_money_text             r1d32 R3 defender fail verdict=accept tok=1210 117.0s
+v8_05_cidr_range             r1d32 R3 defender fail verdict=accept tok=1628 154.7s
+v8_07_luhn_digits            r1d32 R4 critic   fail verdict=accept tok=2396 224.7s
+v8_08_query_pairs            r1d32 R3 defender fail verdict=accept tok=478 50.9s
+v8_14_happy_count            r1d32 R3 defender pass verdict=accept tok=1241 115.6s
+v8_18_closest_pair           r1d32 R3 defender pass verdict=accept tok=899 84.7s
+v8_21_manhattan_center       r1d32 R3 defender fail verdict=accept tok=1237 114.2s
+v8_23_robot_walk             r1d32 R4 critic   fail verdict=accept tok=2111 199.8s
+v8_24_elevator_scan          r1d32 R3 defender fail verdict=accept tok=1642 155.1s
+v8_25_josephus_order         r1d32 R3 defender pass verdict=accept tok=1315 122.6s
+step crawdad-v8-d3: r1d32 asked 13; owed {'qwen32': 1, 'r1d32': 0}; next session: invite qwen32
+llmctl: run python3 rc=0 memory.peak=46 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 64: ENDED r1d32; GTT after stop 1.2 GiB
+=== crawdad-v8-d3 session 4 finished 2026-11-13T18:42:18-06:00 ===
+STATUS crawdad-v8-d3: v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] next qwen32 R4
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+owed {'qwen32': 1, 'r1d32': 0}; next session: invite qwen32
+owed {'qwen32': 1, 'r1d32': 0}; next session: invite qwen32
+=== crawdad-v8-d3 session 5 seat=qwen32 2026-11-13T18:42:18-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 65: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=103.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 54094ddafa2141f38693ac23415606cd
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 65: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+step crawdad-v8-d3: qwen32 owes 1 replies on 1 tasks
+v8_03_case_convert           qwen32 R4 critic   pass verdict=reject tok=2545 246.6s
+step crawdad-v8-d3: qwen32 asked 1; done: 30/30 tasks at a leaf, both solos complete
+llmctl: run python3 rc=0 memory.peak=40 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 65: ENDED qwen32; GTT after stop 1.2 GiB
+=== crawdad-v8-d3 session 5 finished 2026-11-13T18:46:30-06:00 ===
+STATUS crawdad-v8-d3: v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 max_rounds
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+done: 30/30 tasks at a leaf, both solos complete
+done: 30/30 tasks at a leaf, both solos complete
+ERROR: cannot parse status line: v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 max_rounds
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+done: 30/30 tasks at a leaf, both solos complete
+done: 30/30 tasks at a leaf, both solos complete
+=== end 2026-11-13T18:46:31-06:00 rc=1 wall_s=24449 ===

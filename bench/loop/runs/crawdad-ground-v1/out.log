@@ -1,0 +1,51 @@
+=== start 2026-11-14T12:04:01-06:00 pwd=/tmp/wt-ground-run head=1eb694f8aaf53f7730dd6922c1dcfe8d301208f6 ===
+protocol hash OK: a7efb2060615
+=== crawdad-ground-v1 session 1 seat=qwen32 2026-11-14T12:04:01-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.9GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 71: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: ba9f09f1f7484de1a474965c3fef01dd
+up: qwen3-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 71: ACTIVE qwen32 on :8081, GTT 27.9 GiB
+step crawdad-ground-v1: qwen32 owes work on 90 tasks
+step crawdad-ground-v1: qwen32 asked 522 actions; owed {'qwen32': 0, 'r1d32': 270}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=942 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 71: ENDED qwen32; GTT after stop 1.2 GiB
+=== crawdad-ground-v1 session 1 finished 2026-11-15T21:27:29-06:00 ===
+STATUS crawdad-ground-v1: owed {'qwen32': 0, 'r1d32': 270}; next session: invite r1d32
+=== crawdad-ground-v1 session 2 seat=r1d32 2026-11-15T21:27:29-06:00 ===
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 72: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.7GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: faa8da8d0d314dbcb98f9fbb134e3384
+up: r1-distill-qwen-32b on vk, ctx 32768, parallel 1, http://127.0.0.1:8081/v1
+llmctl: session 72: ACTIVE r1d32 on :8081, GTT 28.0 GiB
+step crawdad-ground-v1: r1d32 owes work on 90 tasks
+step crawdad-ground-v1: r1d32 asked 515 actions; done: 90/90 tasks complete across all arms (P, G, C)
+llmctl: run python3 rc=0 memory.peak=53 MiB cap=8192 MiB as=16384 MiB
+llmctl: session 72: ENDED r1d32; GTT after stop 1.2 GiB
+=== crawdad-ground-v1 session 2 finished 2026-11-17T09:58:49-06:00 ===
+STATUS crawdad-ground-v1: done: 90/90 tasks complete across all arms (P, G, C)
+STATUS crawdad-ground-v1 final: done: 90/90 tasks complete across all arms (P, G, C)
+=== report --regrade crawdad-ground-v1 2026-11-17T09:58:49-06:00 ===
+--- CRAwDAD Grounding Report: crawdad-ground-v1 ---
+Tasks solved (union): P=45/90, G=71/90, C=64/90, G_best=70/90
+Primary (G vs C): net=+7 (gains=11, losses=4, ties=75), sign test p=0.0592 -> VERDICT: INCONCLUSIVE
+Secondary G vs P: net=+26, sign test p=0.0000
+Secondary G_best vs C: net=+6, sign test p=0.1051
+Secondary G_best vs P: net=+25, sign test p=0.0000
+Tokens: P=503333, G=1551658, C=1720151
+Ablation (static+visible only): solved=46/90 (net vs C: -18)
+=== end 2026-11-17T10:05:40-06:00 rc=1 wall_s=252099 ===
