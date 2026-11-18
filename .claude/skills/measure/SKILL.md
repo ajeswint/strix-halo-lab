@@ -24,18 +24,23 @@ All GPU run launchers (e.g. `run.sh` under `bench/loop/runs/<label>/`, template 
 # 1. Clean worktree and expected HEAD checks
 [[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "ERROR: worktree dirty"; exit 1; }
+[[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]] || { echo "ERROR: worktree contains skip-worktree or assume-unchanged files"; exit 1; }
+[[ -f "$PREREG_FILE" ]] || { echo "ERROR: prereg file does not exist: $PREREG_FILE"; exit 1; }
+[[ -s "$PREREG_FILE" ]] || { echo "ERROR: prereg file is empty: $PREREG_FILE"; exit 1; }
+[[ "$(git hash-object "$PREREG_FILE")" == "$(git rev-parse "HEAD:$PREREG_FILE")" ]] || { echo "ERROR: $PREREG_FILE does not match HEAD"; exit 1; }
 
 # 2. Pre-registered bar guard: verifies file is tracked, clean, committed, and reachable from pushed remote ref
-bash scripts/prereg-guard.sh "bench/loop/runs/<label>/prereg.md" [origin/<branch>|origin/main]
+bash scripts/prereg-guard.sh --head "bench/loop/runs/<label>/prereg.md" [origin/<branch>|origin/main]
 
 # 3. Memory preflight check before model load
 preflight
 ```
 
-The guard script `scripts/prereg-guard.sh <prereg-path> [remote-ref]` verifies:
-- The prereg file exists and is inside the repository.
-- The file is tracked by git and has no uncommitted changes (index or worktree).
-- The commit containing it is reachable from the pushed remote branch (`origin/<branch>` or `origin/main`), verified via `git fetch` and `git merge-base --is-ancestor`.
+The guard script `scripts/prereg-guard.sh [--head] <prereg-path> [remote-ref]` verifies:
+- The prereg file exists, is inside the repository, and is not empty.
+- The file is tracked by git without skip-worktree or assume-unchanged flags.
+- Has no uncommitted changes (worktree hash matches HEAD blob).
+- The commit containing it (or HEAD if `--head`) is reachable from the pushed remote branch (`origin/<branch>` or `origin/main`), verified via `git ls-remote` and `git merge-base --is-ancestor`.
 - Prints the prereg commit SHA and remote ref on success; exits non-zero with a clear message otherwise.
 
 ## During

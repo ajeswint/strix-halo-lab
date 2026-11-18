@@ -46,9 +46,13 @@ trap on_exit EXIT
 # 1. Clean worktree and expected HEAD checks
 [[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "ERROR: worktree dirty"; exit 1; }
+[[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]] || { echo "ERROR: worktree contains skip-worktree or assume-unchanged files"; exit 1; }
+[[ -f "$PREREG_FILE" ]] || { echo "ERROR: prereg file does not exist: $PREREG_FILE"; exit 1; }
+[[ -s "$PREREG_FILE" ]] || { echo "ERROR: prereg file is empty: $PREREG_FILE"; exit 1; }
+[[ "$(git hash-object "$PREREG_FILE")" == "$(git rev-parse "HEAD:$PREREG_FILE")" ]] || { echo "ERROR: $PREREG_FILE does not match HEAD"; exit 1; }
 
 # 2. Pre-registered bar guard: verifies file is tracked, clean, committed, and reachable from pushed remote ref
-bash scripts/prereg-guard.sh "$PREREG_FILE" "$REMOTE_REF"
+bash scripts/prereg-guard.sh --head "$PREREG_FILE" "$REMOTE_REF"
 
 # 3. Memory preflight check before any model load
 preflight() {

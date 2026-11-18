@@ -2,7 +2,7 @@
 # scripts/test-prereg-guard.sh
 #
 # Tests scripts/prereg-guard.sh against a temporary git repository with a temporary bare remote.
-# Exercises both pass and fail cases.
+# Exercises pass cases, fail cases, forgery attacks, and bypass resistance.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +44,7 @@ git push -u origin main >/dev/null 2>&1
 
 echo "initial remote commit: $(git rev-parse HEAD)"
 
-# Helper assertion function
+# Helper assertion functions
 assert_fails() {
   local desc="$1"
   local expected_err="$2"
@@ -184,4 +184,94 @@ assert_passes "Check with --head flag" \
   bash "$GUARD_SCRIPT" --head bench/loop/runs/test-run/prereg.md
 
 echo ""
-echo "=== ALL 14 TESTS PASSED ==="
+echo "=== Running Hardening & Anti-Bypass Tests ==="
+
+# 15. Empty file (0 bytes and whitespace-only)
+touch bench/loop/runs/test-run/empty_prereg.md
+assert_fails "Empty prereg file (0 bytes)" "is empty" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/test-run/empty_prereg.md
+echo "   " > bench/loop/runs/test-run/empty_prereg.md
+assert_fails "Whitespace-only prereg file" "is empty" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/test-run/empty_prereg.md
+rm -f bench/loop/runs/test-run/empty_prereg.md
+
+# 16. Skip-worktree edit bypass attempt
+git update-index --skip-worktree bench/loop/runs/test-run/prereg.md
+echo "tampered content via skip-worktree" >> bench/loop/runs/test-run/prereg.md
+assert_fails "Skip-worktree edited file" "skip-worktree" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/test-run/prereg.md
+git update-index --no-skip-worktree bench/loop/runs/test-run/prereg.md
+git checkout -- bench/loop/runs/test-run/prereg.md
+
+# 17. Assume-unchanged edit bypass attempt
+git update-index --assume-unchanged bench/loop/runs/test-run/prereg.md
+echo "tampered content via assume-unchanged" >> bench/loop/runs/test-run/prereg.md
+assert_fails "Assume-unchanged edited file" "assume-unchanged" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/test-run/prereg.md
+git update-index --no-assume-unchanged bench/loop/runs/test-run/prereg.md
+git checkout -- bench/loop/runs/test-run/prereg.md
+
+# Create an unpushed commit for forged tracking ref tests
+mkdir -p bench/loop/runs/unpushed-run
+echo "unpushed prereg content" > bench/loop/runs/unpushed-run/prereg.md
+git add bench/loop/runs/unpushed-run/prereg.md
+git commit -m "unpushed prereg commit" >/dev/null
+UNPUSHED_PREREG_SHA="$(git log -n 1 --format=%H -- bench/loop/runs/unpushed-run/prereg.md)"
+
+# 18. Forged origin/master
+git update-ref refs/remotes/origin/master "$UNPUSHED_PREREG_SHA"
+assert_fails "Forged origin/master without ref arg" "is not reachable from pushed remote branch" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/unpushed-run/prereg.md
+assert_fails "Forged origin/master with explicit ref" "not found on remote" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/unpushed-run/prereg.md origin/master
+git update-ref -d refs/remotes/origin/master
+
+# 19. Forged origin/not-real
+git update-ref refs/remotes/origin/not-real "$UNPUSHED_PREREG_SHA"
+assert_fails "Forged origin/not-real without ref arg" "is not reachable from pushed remote branch" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/unpushed-run/prereg.md
+assert_fails "Forged origin/not-real with explicit ref" "not found on remote" \
+  bash "$GUARD_SCRIPT" bench/loop/runs/unpushed-run/prereg.md origin/not-real
+git update-ref -d refs/remotes/origin/not-real
+
+# 20. Forged origin/main with --no-fetch
+REAL_REMOTE_MAIN_REF="$(git rev-parse refs/remotes/origin/main)"
+git update-ref refs/remotes/origin/main "$UNPUSHED_PREREG_SHA"
+assert_fails "Forged origin/main with --no-fetch (explicit ref)" "is not reachable from remote ref origin/main" \
+  bash "$GUARD_SCRIPT" --no-fetch bench/loop/runs/unpushed-run/prereg.md origin/main
+assert_fails "Forged origin/main with --no-fetch (default ref)" "is not reachable from pushed remote branch" \
+  bash "$GUARD_SCRIPT" --no-fetch bench/loop/runs/unpushed-run/prereg.md
+git update-ref refs/remotes/origin/main "$REAL_REMOTE_MAIN_REF"
+
+# Clean up unpushed commit
+git reset --hard HEAD~1 >/dev/null
+
+# 21. Template uses --head and cleanliness checks
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMPLATE_FILE="$REPO_ROOT/scripts/launcher-template.sh"
+if grep -E 'scripts/prereg-guard\.sh[[:space:]]+.*--head' "$TEMPLATE_FILE" >/dev/null; then
+  echo "PASS: Template uses --head in scripts/prereg-guard.sh invocation"
+else
+  echo "FAIL: Template does not pass --head to scripts/prereg-guard.sh"
+  exit 1
+fi
+
+# Verify template cleanliness check detects skip-worktree and assume-unchanged
+git update-index --skip-worktree bench/loop/runs/test-run/prereg.md
+if [[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]]; then
+  echo "FAIL: template cleanliness check did not catch skip-worktree"
+  exit 1
+fi
+echo "PASS: Template cleanliness check detects skip-worktree"
+git update-index --no-skip-worktree bench/loop/runs/test-run/prereg.md
+
+git update-index --assume-unchanged bench/loop/runs/test-run/prereg.md
+if [[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]]; then
+  echo "FAIL: template cleanliness check did not catch assume-unchanged"
+  exit 1
+fi
+echo "PASS: Template cleanliness check detects assume-unchanged"
+git update-index --no-assume-unchanged bench/loop/runs/test-run/prereg.md
+
+echo ""
+echo "=== ALL 21 TESTS PASSED ==="

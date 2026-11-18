@@ -3,9 +3,10 @@
 #
 # Guard: verifies that a pre-registered bar file:
 #   1. exists and is inside the git repository
-#   2. is tracked by git
-#   3. has no uncommitted changes (index or worktree)
-#   4. has its commit reachable from a pushed remote ref (via git fetch and merge-base --is-ancestor)
+#   2. is not empty
+#   3. is tracked by git without skip-worktree or assume-unchanged flags
+#   4. has no uncommitted changes (worktree hash matches HEAD blob)
+#   5. has its commit reachable from a pushed remote ref (verified via git ls-remote)
 # Prints the prereg commit SHA and remote ref on success; exits non-zero otherwise.
 #
 # Usage:
@@ -13,7 +14,7 @@
 #
 # Options:
 #   --head       Check HEAD commit instead of the latest commit touching the file
-#   --no-fetch   Skip running 'git fetch' (e.g. for offline use or local testing)
+#   --no-fetch   Skip git fetch (still verifies against remote via ls-remote)
 #   -h, --help   Show this help message
 
 check_prereg() {
@@ -37,7 +38,7 @@ check_prereg() {
         echo ""
         echo "Options:"
         echo "  --head       Check HEAD commit instead of latest commit touching the file"
-        echo "  --no-fetch   Skip 'git fetch'"
+        echo "  --no-fetch   Skip 'git fetch' (still verifies against remote via ls-remote)"
         echo "  -h, --help   Show this help message"
         return 0
         ;;
@@ -81,6 +82,12 @@ check_prereg() {
     return 1
   fi
 
+  # Reject empty prereg file
+  if [[ ! -s "$prereg_path" ]] || [[ -z "$(tr -d '[:space:]' < "$prereg_path")" ]]; then
+    echo "ERROR: prereg file is empty: $prereg_path" >&2
+    return 1
+  fi
+
   local rel_path
   rel_path="$(realpath --relative-to="$repo_root" "$prereg_path" 2>/dev/null)" || {
     echo "ERROR: failed to resolve path for $prereg_path" >&2
@@ -98,9 +105,31 @@ check_prereg() {
     return 1
   fi
 
+  # Reject if file has skip-worktree or assume-unchanged flags
+  local ls_flags
+  ls_flags="$(git -C "$repo_root" ls-files -v -- "$rel_path" 2>/dev/null | awk '{print $1}')"
+  if [[ "$ls_flags" =~ ^[hSs]$ ]]; then
+    echo "ERROR: prereg file has skip-worktree or assume-unchanged flag ($ls_flags): $rel_path" >&2
+    return 1
+  fi
+
   # 2. Verify HEAD exists and file has no uncommitted changes
   if ! git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
     echo "ERROR: repository has no HEAD commit" >&2
+    return 1
+  fi
+
+  local head_blob
+  head_blob="$(git -C "$repo_root" rev-parse "HEAD:$rel_path" 2>/dev/null || true)"
+  if [[ -z "$head_blob" ]]; then
+    echo "ERROR: prereg file has uncommitted changes (not in HEAD commit): $rel_path" >&2
+    return 1
+  fi
+
+  local file_hash
+  file_hash="$(git -C "$repo_root" hash-object "$prereg_path" 2>/dev/null || true)"
+  if [[ "$file_hash" != "$head_blob" ]]; then
+    echo "ERROR: prereg file has uncommitted changes (worktree hash $file_hash != HEAD blob $head_blob): $rel_path" >&2
     return 1
   fi
 
@@ -124,116 +153,140 @@ check_prereg() {
   fi
 
   # 4. Determine remote and remote ref candidates
-  local remote=""
-  if [[ -n "$target_remote_ref" ]]; then
-    if [[ "$target_remote_ref" == */* ]]; then
-      remote="${target_remote_ref%%/*}"
-    else
-      remote="origin"
-      target_remote_ref="origin/$target_remote_ref"
-    fi
-  else
-    # Default remote is origin, or first available remote
-    if git -C "$repo_root" remote | grep -qx "origin"; then
-      remote="origin"
-    else
-      remote="$(git -C "$repo_root" remote | head -n 1)"
-    fi
-  fi
-
-  if [[ -z "$remote" ]]; then
+  local available_remotes
+  available_remotes="$(git -C "$repo_root" remote)"
+  if [[ -z "$available_remotes" ]]; then
     echo "ERROR: no git remotes configured in repository" >&2
     return 1
   fi
 
-  # 5. Fetch from remote if requested
-  if [[ $no_fetch -eq 0 ]]; then
-    if ! git -C "$repo_root" fetch "$remote" >/dev/null 2>&1; then
-      echo "ERROR: git fetch failed for remote '$remote'" >&2
-      return 1
+  local remote=""
+  local target_branch=""
+
+  if [[ -n "$target_remote_ref" ]]; then
+    local r
+    for r in $available_remotes; do
+      if [[ "$target_remote_ref" == "$r"/* ]]; then
+        remote="$r"
+        target_branch="${target_remote_ref#$r/}"
+        break
+      elif [[ "$target_remote_ref" == "refs/remotes/$r"/* ]]; then
+        remote="$r"
+        target_branch="${target_remote_ref#refs/remotes/$r/}"
+        break
+      fi
+    done
+
+    if [[ -z "$remote" ]]; then
+      if grep -qx "origin" <<< "$available_remotes"; then
+        remote="origin"
+      else
+        remote="$(head -n 1 <<< "$available_remotes")"
+      fi
+      target_branch="$target_remote_ref"
+      target_remote_ref="$remote/$target_branch"
+    fi
+  else
+    if grep -qx "origin" <<< "$available_remotes"; then
+      remote="origin"
+    else
+      remote="$(head -n 1 <<< "$available_remotes")"
     fi
   fi
 
-  # 6. Verify commit reachability from pushed remote ref
+  # 5. Verify commit reachability from pushed remote ref
   local matched_ref=""
-  local checked_refs=()
 
   if [[ -n "$target_remote_ref" ]]; then
-    checked_refs+=("$target_remote_ref")
-    local resolved_ref="$target_remote_ref"
-    if ! git -C "$repo_root" rev-parse --verify "$resolved_ref" >/dev/null 2>&1; then
-      if git -C "$repo_root" rev-parse --verify "refs/remotes/$resolved_ref" >/dev/null 2>&1; then
-        resolved_ref="refs/remotes/$resolved_ref"
-      else
-        echo "ERROR: remote ref '$target_remote_ref' not found on remote '$remote'" >&2
-        return 1
+    local ls_out=""
+    if [[ "$target_branch" == refs/* ]]; then
+      ls_out="$(git -C "$repo_root" ls-remote "$remote" "$target_branch" 2>/dev/null || true)"
+    else
+      ls_out="$(git -C "$repo_root" ls-remote "$remote" "refs/heads/$target_branch" 2>/dev/null || true)"
+      if [[ -z "$ls_out" ]]; then
+        ls_out="$(git -C "$repo_root" ls-remote "$remote" "$target_branch" 2>/dev/null || true)"
       fi
     fi
 
-    if git -C "$repo_root" merge-base --is-ancestor "$prereg_commit" "$resolved_ref" 2>/dev/null; then
+    if [[ -z "$ls_out" ]]; then
+      echo "ERROR: remote ref '$target_remote_ref' not found on remote '$remote'" >&2
+      return 1
+    fi
+
+    local remote_sha
+    remote_sha="$(awk '{print $1}' <<< "$ls_out" | head -n 1)"
+    if [[ -z "$remote_sha" ]]; then
+      echo "ERROR: failed to get SHA for remote ref '$target_remote_ref' on remote '$remote'" >&2
+      return 1
+    fi
+
+    if ! git -C "$repo_root" rev-parse --verify "$remote_sha" >/dev/null 2>&1; then
+      if [[ $no_fetch -eq 0 ]]; then
+        git -C "$repo_root" fetch "$remote" "$remote_sha" >/dev/null 2>&1 || \
+          git -C "$repo_root" fetch "$remote" "refs/heads/$target_branch" >/dev/null 2>&1 || true
+      fi
+    fi
+
+    if ! git -C "$repo_root" rev-parse --verify "$remote_sha" >/dev/null 2>&1; then
+      echo "ERROR: remote commit $remote_sha for ref '$target_remote_ref' not found in local repository" >&2
+      return 1
+    fi
+
+    if git -C "$repo_root" merge-base --is-ancestor "$prereg_commit" "$remote_sha" 2>/dev/null; then
       matched_ref="$target_remote_ref"
     else
       echo "ERROR: prereg commit $prereg_commit is not reachable from remote ref $target_remote_ref" >&2
       return 1
     fi
   else
-    # Build candidate list:
-    #   1. Current upstream tracking branch (if on remote)
-    #   2. remote/<current-branch>
-    #   3. remote/main
-    #   4. remote/master
-    #   5. Any other remote branch containing the commit
+    local candidate_branches=()
     local upstream
     upstream="$(git -C "$repo_root" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)"
     if [[ -n "$upstream" && "$upstream" == "$remote/"* ]]; then
-      checked_refs+=("$upstream")
+      candidate_branches+=("${upstream#$remote/}")
     fi
 
     local curr_branch
     curr_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
     if [[ -n "$curr_branch" && "$curr_branch" != "HEAD" ]]; then
-      local candidate="$remote/$curr_branch"
-      if [[ " ${checked_refs[*]} " != *" $candidate "* ]]; then
-        checked_refs+=("$candidate")
+      if [[ " ${candidate_branches[*]} " != *" $curr_branch "* ]]; then
+        candidate_branches+=("$curr_branch")
       fi
     fi
 
-    if [[ " ${checked_refs[*]} " != *" $remote/main "* ]]; then
-      checked_refs+=("$remote/main")
-    fi
-    if [[ " ${checked_refs[*]} " != *" $remote/master "* ]]; then
-      checked_refs+=("$remote/master")
+    if [[ " ${candidate_branches[*]} " != *" main "* ]]; then
+      candidate_branches+=("main")
     fi
 
-    # Check candidates
-    local ref
-    for ref in "${checked_refs[@]}"; do
-      if git -C "$repo_root" rev-parse --verify "$ref" >/dev/null 2>&1; then
-        if git -C "$repo_root" merge-base --is-ancestor "$prereg_commit" "$ref" 2>/dev/null; then
-          matched_ref="$ref"
-          break
+    local b
+    for b in "${candidate_branches[@]}"; do
+      local ls_out=""
+      ls_out="$(git -C "$repo_root" ls-remote "$remote" "refs/heads/$b" 2>/dev/null || true)"
+      [[ -z "$ls_out" ]] && continue
+      local remote_sha
+      remote_sha="$(awk '{print $1}' <<< "$ls_out" | head -n 1)"
+      [[ -z "$remote_sha" ]] && continue
+
+      if ! git -C "$repo_root" rev-parse --verify "$remote_sha" >/dev/null 2>&1; then
+        if [[ $no_fetch -eq 0 ]]; then
+          git -C "$repo_root" fetch "$remote" "$remote_sha" >/dev/null 2>&1 || \
+            git -C "$repo_root" fetch "$remote" "refs/heads/$b" >/dev/null 2>&1 || true
         fi
+      fi
+
+      if ! git -C "$repo_root" rev-parse --verify "$remote_sha" >/dev/null 2>&1; then
+        continue
+      fi
+
+      if git -C "$repo_root" merge-base --is-ancestor "$prereg_commit" "$remote_sha" 2>/dev/null; then
+        matched_ref="$remote/$b"
+        break
       fi
     done
 
-    # If still not found, check if ANY branch on this remote contains the commit
-    if [[ -z "$matched_ref" ]]; then
-      local any_branch
-      while IFS= read -r any_branch; do
-        [[ -z "$any_branch" ]] && continue
-        if [[ " ${checked_refs[*]} " != *" $any_branch "* ]]; then
-          checked_refs+=("$any_branch")
-          if git -C "$repo_root" merge-base --is-ancestor "$prereg_commit" "$any_branch" 2>/dev/null; then
-            matched_ref="$any_branch"
-            break
-          fi
-        fi
-      done < <(git -C "$repo_root" branch -r --contains "$prereg_commit" 2>/dev/null | sed -e 's/^[ *]*//' -e 's/ -> .*//' | grep "^$remote/" || true)
-    fi
-
     if [[ -z "$matched_ref" ]]; then
       echo "ERROR: prereg commit $prereg_commit is not reachable from pushed remote branch" >&2
-      echo "Checked remote refs: ${checked_refs[*]}" >&2
+      echo "Checked remote branches on $remote: ${candidate_branches[*]}" >&2
       echo "Ensure the commit containing $rel_path is pushed to $remote before launching." >&2
       return 1
     fi
