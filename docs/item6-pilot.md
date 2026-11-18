@@ -71,54 +71,62 @@ The pilot batch must be selected mechanically from repository history before run
 ## 5. Task Formulation & Information Isolation
 
 To prevent leakage and ensure clean measurement:
-1. **Task Environment**: Each PR task is evaluated in a fresh, isolated git worktree (`git worktree add --detach <wt_dir> <base_commit>`) checked out strictly at its `base_commit`.
+1. **Standalone Scratch Repository (`create_isolated_scratch_repo`)**:
+   - Each PR task is evaluated in a fresh, standalone directory populated strictly from `base_commit` via `git archive --format=tar <base_commit> | tar -x`, followed by `git init` and a single base commit.
+   - It does **not** use `git worktree add`, does not share the main repository's `.git` object store, and writes nothing into `.git/worktrees`. Consequently, `merged_commit` and all later history do not exist in the scratch repo's object store (`git show <merged_commit>` fails), preventing any in-loop script from reading the merged answer.
+   - All file edits and unified patches applied by `apply_updates` are strictly path-confined to the scratch root (`resolve_confined_path`, `validate_patch_paths`), rejecting absolute paths, `..` traversal, `.git` modifications, and symlink escapes (including mode `120000` patches).
 2. **Task Prompt Input**:
    - Repository background and working rules (no GPU load, stage named paths, measured numbers).
    - Task requirements extracted from original PR issue / title / instructions.
-   - List of expected files to edit or add, plus their base contents at `base_commit`.
+   - List of expected files to edit or add, plus their base contents at `base_commit` (with the literal fresh-grading seed `104729` redacted to `<REDACTED_SEED>`).
    - Verification commands to run (only when `has_tests = true`).
 3. **Hidden Information Isolation (Leak Prevention)**:
-   - The merged diff (`hidden_diff`), commit log after `base_commit`, and merge commit SHA (`merged_commit`) are strictly held out.
+   - The merged diff (`hidden_diff`), commit log after `base_commit`, merge commit SHA (`merged_commit`), and literal grading seed `104729` are strictly held out from prompts.
    - Task definitions strip hidden fields (`strip_hidden(task)`) before passing to the loop runner.
-   - A prompt leak tripwire (`check_prompt_leak(prompt, task)`) runs on **every** prompt right before it is sent to the model inside `run_task_loop`, raising `AssertionError` if any hidden field or sentinel appears.
+   - A prompt leak tripwire (`check_prompt_leak(prompt, task)`) runs on **every** prompt right before it is sent to the model inside `run_task_loop`, raising `AssertionError` if any hidden field, sentinel, or literal `104729` appears.
    - An exploding dictionary tripwire test (`bench/loop/test_pilot_pr.py`) enforces that accessing `hidden_diff` or `merged_commit` during prompt construction or in-loop execution immediately raises `AssertionError`.
-   - Hidden diffs are read solely by the post-loop offline `grade` subcommand.
+   - Hidden diffs and `merged_commit` test files are read solely by the post-loop offline `grade` subcommand.
 
 ## 6. Output Evaluation & Review Gate
 
 The output of the local loop is judged through the standing repository quality gate:
 1. **Worktree Diff Capture (Uncommitted & New Files Included)**:
-   - At the end of each task's loop (before removing the scratch worktree), the runner marks any untracked new files with intent-to-add (`git add -N .`) and records `git diff <base_commit>` against the working tree.
+   - At the end of each task's loop (before removing the standalone scratch directory), the runner marks any untracked new files with intent-to-add (`git add -N .`) and records `git diff` against the base commit.
    - The per-PR diff is saved to `bench/loop/results/<label>.diffs/<task_id>.diff` and stored in `bench/loop/results/<label>.jsonl`.
-2. **Tier 1: Automated Test Gate (Repo Tests Outrank the Judge)**:
-   - For tasks with `has_tests = true`: The worktree test suite (`test_cmd`) is executed on CPU. If tests fail, the task is marked as a test failure regardless of model explanations.
-   - For tasks with `has_tests = false`: `test_cmd` is `""` and `run_tests` is not executed; evaluation relies on Tier 2 and Tier 3.
-3. **Tier 2: Adversarial Reviewer Gate (Grok 4.7 high, outside the GPU run)**:
-   - After the GPU session ends (`scripts/llmctl.py bye`), the per-PR diffs written to `bench/loop/results/<label>.diffs/<task_id>.diff` are reviewed offline by the standing `adversarial-reviewer` seat (Grok 4.7 high, `.claude/agents/adversarial-reviewer.md`).
-   - Review verdicts (`APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`) and AJ hand-fix line counts are recorded in a reviews JSON file (`bench/loop/results/<label>.reviews.json`, or passed via `--reviews-file` to `pilot_pr.py grade`).
-   - If `REQUEST-CHANGES`, at most 1 repair turn is allowed on the local model with the reviewer's findings fed back.
+2. **Tier 1: Automated Test Gate & Anti-Self-Grading (`regrade_task_diff`)**:
+   - **In-loop feedback vs. authoritative graded tests**: Inside the loop (`pilot_pr.py run`), `test_cmd` runs whatever test files exist in the task's scratch tree at `base_commit` (plus the model's in-loop edits) purely to give execution feedback. However, the loop's own `passed` flag is **not** trusted for scoring, because a model could modify a test file (e.g. overwriting a test script with `exit 0`).
+   - **Authoritative graded tests (`merged_commit` version)**: During offline grading (`pilot_pr.py grade`), `regrade_task_diff` creates a fresh standalone copy of `base_commit`, applies the model's `final_diff`, and **restores all test files (`test_files` / `grade_test_cmd` selftest harness) from `merged_commit`**, ignoring any model edits to test files. The merged PR's tests are the authoritative graded version and are used strictly in `grade`, never inside the loop.
+   - For tasks with `has_tests = false` (`item6_pr15`): `test_cmd` is `""` and `run_tests` is not executed; evaluation relies on Tier 2 and Tier 3.
+3. **Tier 2: Offline Adversarial Reviewer & Hand-Fix Gate (Grok 4.7 high, outside the GPU run)**:
+   - After the GPU session ends (`scripts/llmctl.py bye`), the per-PR diffs in `bench/loop/results/<label>.diffs/<task_id>.diff` are reviewed offline by the standing `adversarial-reviewer` seat (Grok 4.7 high, `.claude/agents/adversarial-reviewer.md`).
+   - **Blind Review Protocol**: For each task, the Grok 4.7 reviewer is given the task prompt (`prompt`, `title`, target `files`), the Automated Test Gate result from Tier 1, and the model's candidate diff (`<label>.diffs/<task_id>.diff`), **without seeing the merged PR or `hidden_diff`**.
+   - **Reviewer Outputs**: The reviewer outputs:
+     1. A verdict: `APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES` (where `APPROVE` and `APPROVE-WITH-NITS` count as approved).
+     2. `hand_fix_lines` (integer): the number of lines (added + deleted/changed) that would need to be changed by hand to make the candidate diff acceptable to merge.
+   - **Verbatim Storage**: The reviewer's outputs are stored verbatim in `bench/loop/results/<label>.reviews.json` (keyed by `task_id` with `verdict`, `hand_fix_lines`, and raw `review_text`); the orchestrator / harness never edits or filters them.
+   - **No Review-Repair Turn**: There is no post-review repair turn on the local model in the pilot. The model's final diff from the $K \le 4$ test-feedback loop is the single diff judged by the reviewer.
 4. **Tier 3: Offline Grading & Keep/Drop Computation (`pilot_pr.py grade`)**:
-   - `python3 bench/loop/pilot_pr.py grade --label <label> [--reviews-file <path>]` computes test pass rates ($S_{\text{test}} / N_{\text{test}}$), diff overlap against `hidden_diff`, reviewer approval rates ($A_1 / N$, $A_{\text{final}} / N$), average AJ hand-fix lines per approved PR, and the pre-registered keep/drop verdict (`KEEP`, `DROP`, `INCONCLUSIVE`, or `PENDING_REVIEW` if reviewer verdicts have not yet been supplied), writing `bench/loop/results/<label>.grade.json`.
+   - After the GPU run ends (`scripts/llmctl.py bye`) and `<label>.reviews.json` is written, `python3 bench/loop/pilot_pr.py grade --label <label> [--reviews-file <path>]` re-runs the authoritative `merged_commit` tests on a clean tree per testable PR ($S_{\text{test}} / N_{\text{test}}$), computes diff overlap against `hidden_diff`, reads `<label>.reviews.json` to compute the reviewer approval rate ($A / N$) and average hand-fix lines per approved PR, and outputs the pre-registered keep/drop verdict (`KEEP`, `DROP`, `INCONCLUSIVE`, or `PENDING_REVIEW` if `<label>.reviews.json` is not yet present) to `bench/loop/results/<label>.grade.json`.
 
 ## 7. Metrics
 
-1. **Test Pass Rate ($S_{\text{test}} / N_{\text{test}}$)**:
-   - Fraction of testable tasks ($N_{\text{test}} = 6$) passing their automated test suite.
-2. **First-Pass Approve Rate ($A_1 / N$)**:
-   - Fraction of tasks ($N = 7$) receiving `APPROVE` or `APPROVE-WITH-NITS` on the initial turn.
-3. **Final Approve Rate ($A_{\text{final}} / N$)**:
-   - Fraction of tasks receiving approval after at most 1 repair turn.
-4. **Accepted-Findings Rate**:
-   - Ratio of valid, accepted reviewer findings to total reviewer findings.
-5. **Wall Time per PR**:
+1. **Authoritative Test Pass Rate ($S_{\text{test}} / N_{\text{test}}$)**:
+   - Fraction of testable tasks ($N_{\text{test}} = 6$) passing the authoritative `merged_commit` test suite in `pilot_pr.py grade` (with model edits to test files ignored).
+2. **Reviewer Approve Rate ($A / N$)**:
+   - Fraction of tasks ($N = 7$) receiving `APPROVE` or `APPROVE-WITH-NITS` from the blind Grok 4.7 `adversarial-reviewer` pass on the loop's final diff.
+3. **Accepted-Findings Rate**:
+   - Ratio of valid reviewer findings to total reviewer findings across the 7 diffs.
+4. **Wall Time per PR**:
    - Generation seconds, prompt evaluation seconds, test execution seconds, and clock wall time.
-6. **AJ Hand-Fix Amount**:
-   - Number of PRs requiring manual intervention, and total lines added/deleted in hand-fixes.
+5. **Hand-Fix Line Count (`hand_fix_lines`)**:
+   - Number of lines the Grok 4.7 reviewer reports would need to be changed by hand to make an approved diff acceptable (averaged across approved PRs).
 
 ## 8. GPU Time and Resource Estimate
 
 - **Hardware**: Framework Desktop, Ryzen AI Max+ 395, Radeon 8060S gfx1151 (108 GiB GTT).
-- **Memory Footprint**: Qwen3.6-35B-A3B uses 22.4 GiB GTT. Preflight requires `llama-deepseek=inactive` and `READY`. Idle GTT headroom is >80 GiB.
+- **Memory Footprint & Preflight**:
+  - `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` file size is 20.8 GiB (`scripts/llmctl.py` records `gtt_need = 22.4` GiB delta from the 4-slot `--ctx 65536 --np 4` measurement: 28.2 GiB total over 5.8 GiB baseline).
+  - The launcher (`bench/loop/runs/item6-pilot/run.sh`) invokes `bash scripts/preflight.sh /data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, which enforces `llama-deepseek=inactive`, `gtt_used <= 16.0 GiB`, and both `MemAvailable` and `gtt_free >= 36.8 GiB` (20.8 GiB model + 16.0 GiB KV/buffer margin, which comfortably covers the `--ctx 65536 --np 2` KV cache). Because `llmctl.py` stores a single `gtt_need` figure (22.4 GiB at `--np 4`) rather than a separate 2-slot entry, `preflight.sh` and `llmctl invite qwen --ctx 65536 --np 2` will log the measured GTT delta at load time without modifying `llmctl.py`'s serving code.
 - **Model Speed**:
   - Generation speed: ~35 tokens/s.
   - Prompt processing: ~500 tokens/s.
@@ -131,9 +139,9 @@ The output of the local loop is judged through the standing repository quality g
   - Expected turns per PR: ~2.5 turns (average 200 s).
   - Expected GPU time for 7 PRs: $7 \times 200 \text{ s} \approx 1,400 \text{ s} \approx 23.3 \text{ minutes} \approx \mathbf{0.39\text{ GPU-hours}}$.
 - **Worst-Case Ceiling**:
-  - Max $K=4$ turns + 1 review repair turn = 5 turns per task.
-  - Worst-case GPU time for 7 PRs: $7 \times 5 \times 80 \text{ s} \approx 2,800 \text{ s} \approx 46.7 \text{ minutes} \approx \mathbf{0.78\text{ GPU-hours}}$.
-  - Conservative ceiling: $< \mathbf{1.5\text{ GPU-hours}}$.
+  - Max $K=4$ turns per task (no post-review repair turn).
+  - Worst-case GPU time for 7 PRs: $7 \times 4 \times 80 \text{ s} \approx 2,240 \text{ s} \approx 37.3 \text{ minutes} \approx \mathbf{0.62\text{ GPU-hours}}$.
+  - Conservative ceiling: $< \mathbf{1.2\text{ GPU-hours}}$.
 
 ## 9. Keep / Drop Bars (Worth Scaling to Full Test)
 

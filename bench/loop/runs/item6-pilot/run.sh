@@ -14,14 +14,25 @@
 # - Clean worktree and expected HEAD verified before any GPU activity.
 set -euo pipefail
 
-WT="${WT:-/tmp/wt-item6-pilot}"
+WT="${WT:-<path-to-clean-worktree>}"
 DIR="${DIR:-/tmp/lab-seats/item6-pilot}"
 LOG="$DIR/run.log"
 EXPECT_HEAD="${EXPECT_HEAD:-<expected-git-commit-sha>}"
 PREREG_FILE="docs/item6-pilot.md"
 REMOTE_REF="${REMOTE_REF:-origin/main}"
+QWEN_MODEL_PATH="/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
 INVITE_OPTS=(--ctx 65536 --np 2)
 PARALLEL=2
+
+# Refuse to run when WT or EXPECT_HEAD is still the placeholder or empty
+if [[ -z "$WT" || "$WT" == "<path-to-clean-worktree>" || "$WT" == "<"*">" ]]; then
+  echo "ERROR: WT must be set to a real worktree path (got '$WT')" >&2
+  exit 1
+fi
+if [[ -z "$EXPECT_HEAD" || "$EXPECT_HEAD" == "<expected-git-commit-sha>" || "$EXPECT_HEAD" == "<"*">" ]]; then
+  echo "ERROR: EXPECT_HEAD must be set to the expected git commit SHA (got '$EXPECT_HEAD')" >&2
+  exit 1
+fi
 
 mkdir -p "$DIR"
 cd "$WT"
@@ -50,9 +61,7 @@ on_exit() {
 trap on_exit EXIT
 
 # 1. Clean worktree and expected HEAD checks
-if [[ "$EXPECT_HEAD" != "<expected-git-commit-sha>" ]]; then
-  [[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
-fi
+[[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "ERROR: worktree dirty"; exit 1; }
 [[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]] || { echo "ERROR: worktree contains skip-worktree or assume-unchanged files"; exit 1; }
 [[ -f "$PREREG_FILE" ]] || { echo "ERROR: prereg file does not exist: $PREREG_FILE"; exit 1; }
@@ -62,11 +71,11 @@ fi
 # 2. Pre-registered bar guard: verifies file is tracked, clean, committed, and reachable from pushed remote ref
 bash scripts/prereg-guard.sh --head "$PREREG_FILE" "$REMOTE_REF"
 
-# 3. Memory preflight check before model load
+# 3. Memory preflight check before model load (passes QWEN_MODEL_PATH so preflight checks model size + 16 GiB KV/buffer margin covering --ctx 65536 --np 2)
 preflight() {
   local out rc
   set +e
-  out=$(bash scripts/preflight.sh 2>&1)
+  out=$(bash scripts/preflight.sh "$QWEN_MODEL_PATH" 2>&1)
   rc=$?
   set -e
   printf '%s\n' "$out"

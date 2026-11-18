@@ -564,6 +564,22 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(scratch_dir, ignore_errors=True)
             shutil.rmtree(results_dir, ignore_errors=True)
 
+    def test_launcher_refuses_placeholder_wt_and_expect_head(self):
+        """Verify bench/loop/runs/item6-pilot/run.sh refuses to run when WT or EXPECT_HEAD is a placeholder."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        run_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
+
+        # 1. Default invocation (WT is placeholder) -> exits non-zero
+        r1 = subprocess.run(["bash", run_sh], cwd=repo_root, capture_output=True, text=True)
+        self.assertNotEqual(r1.returncode, 0)
+        self.assertIn("WT must be set", r1.stderr)
+
+        # 2. WT set, but EXPECT_HEAD is still placeholder -> exits non-zero
+        env2 = dict(os.environ, WT=repo_root, EXPECT_HEAD="<expected-git-commit-sha>")
+        r2 = subprocess.run(["bash", run_sh], cwd=repo_root, env=env2, capture_output=True, text=True)
+        self.assertNotEqual(r2.returncode, 0)
+        self.assertIn("EXPECT_HEAD must be set", r2.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
