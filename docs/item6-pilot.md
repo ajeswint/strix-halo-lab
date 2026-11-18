@@ -93,9 +93,11 @@ The output of the local loop is judged through the standing repository quality g
 1. **Worktree Diff Capture (Uncommitted & New Files Included)**:
    - At the end of each task's loop (before removing the standalone scratch directory), the runner marks any untracked new files with intent-to-add (`git add -N .`) and records `git diff` against the base commit.
    - The per-PR diff is saved to `bench/loop/results/<label>.diffs/<task_id>.diff` and stored in `bench/loop/results/<label>.jsonl`.
-2. **Tier 1: Automated Test Gate & Anti-Self-Grading (`regrade_task_diff`)**:
-   - **In-loop feedback vs. authoritative graded tests**: Inside the loop (`pilot_pr.py run`), `test_cmd` runs whatever test files exist in the task's scratch tree at `base_commit` (plus the model's in-loop edits) purely to give execution feedback. However, the loop's own `passed` flag is **not** trusted for scoring, because a model could modify a test file (e.g. overwriting a test script with `exit 0`).
-   - **Authoritative graded tests (`merged_commit` version)**: During offline grading (`pilot_pr.py grade`), `regrade_task_diff` creates a fresh standalone copy of `base_commit`, applies the model's `final_diff`, and **restores all test files (`test_files` / `grade_test_cmd` selftest harness) from `merged_commit`**, ignoring any model edits to test files. The merged PR's tests are the authoritative graded version and are used strictly in `grade`, never inside the loop.
+2. **Tier 1: Automated Test Gate & Anti-Self-Grading (`regrade_task_diff`, `_run_harness_grade_spec`)**:
+   - **In-loop feedback vs. authoritative graded tests**: Inside the loop (`pilot_pr.py run`), `test_cmd` runs whatever test files exist in the task's scratch tree at `base_commit` (plus the model's in-loop edits) purely to give execution feedback. However, the loop's own `passed` flag and bare exit code `0` are **not** trusted for scoring, because a model could modify a test file or insert `sys.exit(0)` / `os._exit(0)` at module import time.
+   - **Authoritative graded tests & positive completion proof**: During offline grading (`pilot_pr.py grade`), `regrade_task_diff` creates a fresh standalone copy of `base_commit`, applies the model's `final_diff`, restores all `test_files` and in-module `def selftest():` harnesses from `merged_commit` (writing `_pilot_merged_selftest.py` directly from the parent process), and runs a harness-owned grade wrapper (`_run_harness_grade_spec`) under a minimal allowlisted environment (`build_minimal_env()`: no `PILOT_REPO_ROOT`, no `GIT_*` variables, no main repo paths).
+   - **Exact test count + sentinel requirement**: To grade as `test_passed = True`, the harness wrapper requires (a) exit code 0, (b) the exact expected test/check count recorded per task in `tasks_item6.py` (`grade_spec["expected_test_count"]`, plus `expected_selftest_count` on PR #16) with zero failures, errors, or skips, and (c) a per-run random sentinel printed only after all tests complete. Any `sys.exit(0)` or `os._exit(0)` at module import or inside a function terminates before the wrapper reaches the count verification and sentinel write, and therefore grades as `FAIL`.
+   - **Remaining Python in-process limit**: Because Python unit tests and `selftest()` import the model's candidate module in the same Python process as the test runner, a candidate module that actively introspects the Python stack or monkey-patches `unittest` / `sys.stdout` inside the child process could theoretically forge output lines; the offline Grok 4.7 `adversarial-reviewer` gate (Tier 2) inspects every per-PR diff directly and catches any such adversarial code.
    - For tasks with `has_tests = false` (`item6_pr15`): `test_cmd` is `""` and `run_tests` is not executed; evaluation relies on Tier 2 and Tier 3.
 3. **Tier 2: Offline Adversarial Reviewer & Hand-Fix Gate (Grok 4.7 high, outside the GPU run)**:
    - After the GPU session ends (`scripts/llmctl.py bye`), the per-PR diffs in `bench/loop/results/<label>.diffs/<task_id>.diff` are reviewed offline by the standing `adversarial-reviewer` seat (Grok 4.7 high, `.claude/agents/adversarial-reviewer.md`).
@@ -151,13 +153,13 @@ The pilot's purpose is to decide whether local agentic loops on real PRs justify
 
 | Outcome | Criteria | Decision |
 | :--- | :--- | :--- |
-| **KEEP** (Scale to Full Test) | - Test Pass Rate on testable PRs $\ge 3/6$ ($50.0\%$); **AND**<br>- Final Reviewer Approval $\ge 3/7$ ($42.9\%$); **AND**<br>- Average AJ hand-fix $\le 20$ lines per approved PR. | Scale to full Roadmap Item 6 test. Local small model is viable for real repo tasks with execution feedback. |
-| **DROP** (Do Not Scale) | - Test Pass Rate on testable PRs $< 2/6$ ($< 33.3\%$); **OR**<br>- Final Reviewer Approval $< 2/7$ ($< 28.6\%$). | Drop real-PR test line. The small model cannot generalize from synthetic puzzles to repo engineering. |
-| **INCONCLUSIVE** | Intermediate result (e.g. exactly 2/6 test passes or 2/7 approvals). | Defaults to **DROP** per `measure` skill, unless AJ explicitly approves a bounded extension. |
+| **KEEP** (Scale to Full Test) | - Test Pass Rate on testable PRs $\ge 3/6$ ($50.0\%$); **AND**<br>- Reviewer Approval $\ge 3/7$ ($42.9\%$); **AND**<br>- Average Grok reviewer `hand_fix_lines` $\le 20$ lines per approved PR. | Scale to full Roadmap Item 6 test. Local small model is viable for real repo tasks with execution feedback. |
+| **DROP** (Do Not Scale) | - Test Pass Rate on testable PRs $< 2/6$ ($< 33.3\%$); **OR**<br>- Reviewer Approval $< 2/7$ ($< 28.6\%$). | Drop real-PR test line. The small model cannot generalize from synthetic puzzles to repo engineering. |
+| **INCONCLUSIVE** | Intermediate result (e.g. exactly 2/6 test passes or 2/7 approvals, or average `hand_fix_lines` $> 20$). | Defaults to **DROP** per `measure` skill, unless AJ explicitly approves a bounded extension. |
 
 ### Worked Examples
-- 4/6 tests pass, 4/7 approved, 0 hand-fix lines $\rightarrow$ **KEEP**
-- 3/6 tests pass, 3/7 approved, 15 hand-fix lines $\rightarrow$ **KEEP**
+- 4/6 tests pass, 4/7 approved, 0 reviewer `hand_fix_lines` $\rightarrow$ **KEEP**
+- 3/6 tests pass, 3/7 approved, 15 reviewer `hand_fix_lines` $\rightarrow$ **KEEP**
 - 1/6 tests pass, 2/7 approved $\rightarrow$ **DROP** (fails test pass threshold)
 - 3/6 tests pass, 1/7 approved $\rightarrow$ **DROP** (fails reviewer threshold)
 - 2/6 tests pass, 2/7 approved $\rightarrow$ **INCONCLUSIVE** (defaults to DROP)

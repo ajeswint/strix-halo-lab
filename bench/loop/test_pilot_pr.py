@@ -277,6 +277,8 @@ class TestPilotPr(unittest.TestCase):
 
     def test_run_and_grade_subcommands_end_to_end(self):
         """Test pilot_pr.py run and grade subcommands with a mocked model client and keep/drop bars."""
+        if not pilot_pr.has_bwrap():
+            self.skipTest("bwrap sandbox required for #6 and #16 selftests in end-to-end grade test")
         temp_dir = tempfile.mkdtemp(prefix="pilot_pr_e2e_")
         results_dir = tempfile.mkdtemp(prefix="pilot_pr_res_")
         try:
@@ -579,6 +581,138 @@ class TestPilotPr(unittest.TestCase):
         r2 = subprocess.run(["bash", run_sh], cwd=repo_root, env=env2, capture_output=True, text=True)
         self.assertNotEqual(r2.returncode, 0)
         self.assertIn("EXPECT_HEAD must be set", r2.stderr)
+
+    def test_import_time_exit_stubs_fail_grade_on_6_13_16(self):
+        """Verify sys.exit(0) and os._exit(0) stubs of model modules grade FAIL for PRs #6, #13, and #16."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        cases = [
+            ("item6_pr06", "bench/loop/debate.py"),
+            ("item6_pr13", "bench/loop/tasks_v10.py"),
+            ("item6_pr16", "bench/loop/ground.py"),
+        ]
+        stubs = [
+            ("sys.exit(0)", "import sys\nsys.exit(0)\n"),
+            ("os._exit(0)", "import os\nos._exit(0)\n"),
+        ]
+        for task_id, target_file in cases:
+            task = tasks_item6.get_task(task_id)
+            for stub_name, stub_code in stubs:
+                scratch_dir = tempfile.mkdtemp(prefix=f"stub_{task_id}_")
+                try:
+                    pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+                    full_target = os.path.join(scratch_dir, target_file)
+                    os.makedirs(os.path.dirname(full_target), exist_ok=True)
+                    with open(full_target, "w", encoding="utf-8") as f:
+                        f.write(stub_code)
+                    stub_diff = pilot_pr.capture_worktree_diff(scratch_dir, task["base_commit"])
+                    self.assertTrue(len(stub_diff) > 0)
+
+                    passed, out = pilot_pr.regrade_task_diff(task, stub_diff, repo_root=repo_root, timeout=30)
+                    self.assertFalse(
+                        passed,
+                        f"Stub {stub_name} in {target_file} ({task_id}) must grade FAIL, but got passed=True! out={out}",
+                    )
+                finally:
+                    shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_env_isolation_no_repo_root_and_no_git_alternate_leak(self):
+        """Verify model code under grade cannot see PILOT_REPO_ROOT/GIT_*, and GIT_ALTERNATE_OBJECT_DIRECTORIES cannot leak merged SHA."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        main_git_objects = subprocess.check_output(
+            ["git", "-C", repo_root, "rev-parse", "--git-path", "objects"],
+            text=True,
+        ).strip()
+        if not os.path.isabs(main_git_objects):
+            main_git_objects = os.path.abspath(os.path.join(repo_root, main_git_objects))
+
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_env_iso_")
+        old_env = os.environ.copy()
+        try:
+            # Poison parent os.environ with GIT_ALTERNATE_OBJECT_DIRECTORIES and PILOT_REPO_ROOT
+            os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = main_git_objects
+            os.environ["PILOT_REPO_ROOT"] = repo_root
+            os.environ["GIT_DIR"] = os.path.join(repo_root, ".git")
+
+            # 1. Verify build_minimal_env strips all of them
+            min_env = pilot_pr.build_minimal_env()
+            self.assertNotIn("PILOT_REPO_ROOT", min_env)
+            self.assertNotIn("GIT_ALTERNATE_OBJECT_DIRECTORIES", min_env)
+            self.assertNotIn("GIT_DIR", min_env)
+            self.assertFalse(any(k.startswith("GIT_") for k in min_env))
+            self.assertFalse(any(repo_root in str(v) for v in min_env.values()))
+
+            # 2. Create isolated scratch repo while parent env is poisoned
+            task = tasks_item6.get_task("item6_pr06")
+            pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+
+            # Using build_minimal_env() (as run_tests and grade do), merged_commit must be unresolvable
+            res_cat = subprocess.run(
+                ["git", "cat-file", "-e", task["merged_commit"]],
+                cwd=scratch_dir,
+                env=min_env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_cat.returncode, 0, "Scratch repo must not resolve merged SHA even when parent has GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+            # 3. Verify model code running under regrade_task_diff sees neither PILOT_REPO_ROOT nor GIT_* nor repo_root in env
+            probe_code = (
+                "import os, sys\n"
+                "for k, v in os.environ.items():\n"
+                f"    if k == 'PILOT_REPO_ROOT' or k.startswith('GIT_') or {repo_root!r} in v:\n"
+                "        print('LEAKED_ENV:', k, v)\n"
+                "        sys.exit(0)\n"
+                "sys.exit(1)\n"
+            )
+            full_target = os.path.join(scratch_dir, "bench", "loop", "debate.py")
+            with open(full_target, "w", encoding="utf-8") as f:
+                f.write(probe_code)
+            probe_diff = pilot_pr.capture_worktree_diff(scratch_dir, task["base_commit"])
+
+            passed, out = pilot_pr.regrade_task_diff(task, probe_diff, repo_root=repo_root, timeout=30)
+            self.assertFalse(passed)
+            self.assertNotIn("LEAKED_ENV:", out)
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_review_record_missing_fields_raises_error(self):
+        """Verify grade raises ValueError when a review record is missing verdict or hand_fix_lines."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_rev_err_")
+        try:
+            task = tasks_item6.get_task("item6_pr15")  # non-testable task for fast check
+            jsonl_path = os.path.join(results_dir, "revcheck.jsonl")
+            with open(jsonl_path, "w") as f:
+                f.write(
+                    pilot_pr.json.dumps({
+                        "task_id": task["id"],
+                        "pr_number": task["pr_number"],
+                        "has_tests": False,
+                        "passed": True,
+                        "stop_reason": "applied_no_tests",
+                        "turns_executed": 1,
+                        "total_completion_tokens": 50,
+                        "wall_s": 1.0,
+                        "final_diff": "+line\n",
+                    }) + "\n"
+                )
+
+            # 1. Missing hand_fix_lines -> must raise ValueError, not default to 0
+            rev_missing_hf = os.path.join(results_dir, "missing_hf.json")
+            with open(rev_missing_hf, "w") as f:
+                pilot_pr.json.dump({task["id"]: {"verdict": "APPROVE"}}, f)
+            with self.assertRaises(ValueError):
+                pilot_pr.grade_subcommand("revcheck", reviews_file=rev_missing_hf, results_dir=results_dir, tasks_override=[task])
+
+            # 2. Missing verdict -> must raise ValueError
+            rev_missing_v = os.path.join(results_dir, "missing_v.json")
+            with open(rev_missing_v, "w") as f:
+                pilot_pr.json.dump({task["id"]: {"hand_fix_lines": 5}}, f)
+            with self.assertRaises(ValueError):
+                pilot_pr.grade_subcommand("revcheck", reviews_file=rev_missing_v, results_dir=results_dir, tasks_override=[task])
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

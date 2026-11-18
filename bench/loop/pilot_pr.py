@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,38 @@ MAX_TOKENS = 8192
 MAX_TURNS_DEFAULT = 4
 TASK_BUDGET_TOKENS = 32768
 BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
+
+SAFE_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "USER", "LOGNAME")
+
+
+def build_minimal_env():
+    """Return a minimal allowlisted environment with no GIT_*, no PILOT_REPO_ROOT, and no repo paths."""
+    env = {"PYTHONDONTWRITEBYTECODE": "1"}
+    for k in SAFE_ENV_KEYS:
+        val = os.environ.get(k)
+        if val is not None:
+            env[k] = val
+    if "PATH" not in env:
+        env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    return env
+
+
+def has_bwrap():
+    """Return True if bwrap is installed and can create a basic user/mount namespace sandbox."""
+    if shutil.which("bwrap") is None:
+        return False
+    try:
+        res = subprocess.run(
+            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+             "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-all", "true"],
+            capture_output=True,
+            timeout=5,
+            env=build_minimal_env(),
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
 
 
 def check_prompt_leak(prompt, task):
@@ -226,6 +259,7 @@ def apply_updates(worktree_dir, updates):
             res = subprocess.run(
                 ["git", "apply", "--whitespace=nowarn", patch_file],
                 cwd=worktree_dir,
+                env=build_minimal_env(),
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -274,7 +308,7 @@ def run_tests(task, worktree_dir, timeout=60):
     if not cmd:
         return True, "No test command defined for task."
 
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = build_minimal_env()
     try:
         res = subprocess.run(
             ["bash", "-c", cmd],
@@ -295,9 +329,11 @@ def run_tests(task, worktree_dir, timeout=60):
 
 def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
     """Capture full diff of worktree against base_commit (or HEAD in standalone scratch repo), including untracked files."""
+    clean_env = build_minimal_env()
     subprocess.run(
         ["git", "add", "-N", "."],
         cwd=worktree_dir,
+        env=clean_env,
         capture_output=True,
         text=True,
     )
@@ -305,6 +341,7 @@ def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
     check_ref = subprocess.run(
         ["git", "rev-parse", "--verify", f"{base_commit}^{{commit}}"],
         cwd=worktree_dir,
+        env=clean_env,
         capture_output=True,
         text=True,
     )
@@ -313,6 +350,7 @@ def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
     diff_res = subprocess.run(
         ["git", "diff", target_ref],
         cwd=worktree_dir,
+        env=clean_env,
         capture_output=True,
         text=True,
     )
@@ -326,16 +364,19 @@ def create_isolated_scratch_repo(repo_root, base_commit, scratch_dir):
     (including merged_commit) do not exist in the scratch repo's object database.
     """
     os.makedirs(scratch_dir, exist_ok=True)
+    clean_env = build_minimal_env()
     p1 = subprocess.Popen(
         ["git", "-C", repo_root, "archive", "--format=tar", base_commit],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=clean_env,
     )
     p2 = subprocess.Popen(
         ["tar", "-x", "-C", scratch_dir],
         stdin=p1.stdout,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=clean_env,
     )
     p1.stdout.close()
     _, err2 = p2.communicate()
@@ -345,17 +386,18 @@ def create_isolated_scratch_repo(repo_root, base_commit, scratch_dir):
     if p2.returncode != 0:
         raise RuntimeError(f"tar extract failed: {err2.decode(errors='replace')}")
 
-    subprocess.run(["git", "init", "-q"], cwd=scratch_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "pilot-runner"], cwd=scratch_dir, check=True)
-    subprocess.run(["git", "config", "user.email", "pilot@localhost"], cwd=scratch_dir, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=scratch_dir, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=scratch_dir, env=clean_env, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "pilot-runner"], cwd=scratch_dir, env=clean_env, check=True)
+    subprocess.run(["git", "config", "user.email", "pilot@localhost"], cwd=scratch_dir, env=clean_env, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=scratch_dir, env=clean_env, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-q", "--allow-empty", "-m", f"base {base_commit}"],
         cwd=scratch_dir,
+        env=clean_env,
         check=True,
         capture_output=True,
     )
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=scratch_dir, text=True).strip()
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=scratch_dir, env=clean_env, text=True).strip()
 
 
 
@@ -783,15 +825,195 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
     return results
 
 
+def _extract_selftest_block(repo_root, merged_sha, rel_path):
+    """Extract the authoritative `def selftest():` block from `merged_sha:rel_path` in the main repo."""
+    src = subprocess.check_output(
+        ["git", "-C", repo_root, "show", f"{merged_sha}:{rel_path}"],
+        env=build_minimal_env(),
+        text=True,
+    )
+    body = src.split("def selftest():", 1)[1].split("def main():", 1)[0]
+    return "def selftest():" + body
+
+
+def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
+    """Execute a harness-owned grade wrapper in grade_dir with positive completion proof and exact test counts.
+
+    Never exports PILOT_REPO_ROOT or GIT_* to the child process. Requires:
+    - Exit code 0;
+    - Exact expected test count and zero failures/errors;
+    - A cryptographic per-run sentinel written to an unlinked file or stdout only after all checks pass.
+    Any sys.exit(0) or os._exit(0) inside a model module during import or test execution aborts before
+    the wrapper reaches the sentinel/count write, causing grade to return False.
+    """
+    clean_env = build_minimal_env()
+    merged_sha = dict.__getitem__(task, "merged_commit")
+    spec = task.get("grade_spec")
+    sentinel = f"@@PILOT_GRADE_OK_{secrets.token_hex(16)}@@"
+
+    if not spec:
+        cmd = task.get("test_cmd")
+        if not cmd:
+            return True, ""
+        res = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return (res.returncode == 0), (res.stdout or "") + (res.stderr or "")
+
+    mode = spec["mode"]
+
+    if mode == "shell":
+        wrapper_cmd = f"set -e\n{spec['cmd']}\necho '{sentinel}'\n"
+        res = subprocess.run(
+            ["bash", "-c", wrapper_cmd],
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = (res.stdout or "") + (res.stderr or "")
+        if res.returncode != 0 or sentinel not in output:
+            return False, output + "\n[grade_wrapper: missing sentinel or non-zero exit]"
+        lines_without_sentinel = [ln.rstrip("\r\n") for ln in output.splitlines() if ln.strip() and ln.strip() != sentinel]
+        pat = re.compile(spec["count_pattern"])
+        matched_count = sum(1 for ln in lines_without_sentinel if pat.search(ln))
+        if matched_count != spec["expected_test_count"]:
+            return False, output + f"\n[grade_wrapper: expected count {spec['expected_test_count']}, got {matched_count}]"
+        req_last = spec.get("required_last_line")
+        if req_last and (not lines_without_sentinel or lines_without_sentinel[-1].strip() != req_last):
+            return False, output + f"\n[grade_wrapper: expected last line {req_last!r}]"
+        return True, output
+
+    if mode == "selftest_file":
+        st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+        st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
+        with open(st_path, "w", encoding="utf-8") as f:
+            f.write(st_code)
+        driver = (
+            "import contextlib, io, sys\n"
+            f"sys.path.insert(0, {spec['module_dir']!r})\n"
+            f"import {spec['module_name']} as mod\n"
+            "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
+            "    st_src = f.read()\n"
+            "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+            "buf = io.StringIO()\n"
+            "with contextlib.redirect_stdout(buf):\n"
+            "    rc = mod.selftest()\n"
+            "out = buf.getvalue()\n"
+            "sys.stdout.write(out)\n"
+            "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
+            "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
+            f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_test_count']}:\n"
+            f"    print({sentinel!r})\n"
+            "else:\n"
+            f"    print(f'[grade_wrapper: rc={{rc}} ok={{ok_count}}/{spec['expected_test_count']} fail={{fail_count}}]')\n"
+            "    sys.exit(1)\n"
+        )
+        res = subprocess.run(
+            ["python3", "-c", driver],
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if os.path.exists(st_path):
+            os.remove(st_path)
+        output = (res.stdout or "") + (res.stderr or "")
+        return (res.returncode == 0 and sentinel in output), output
+
+    if mode == "unittest":
+        driver = (
+            "import subprocess, sys, unittest\n"
+            "sys.path.insert(0, 'bench/loop')\n"
+            f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+            "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
+            "result = runner.run(suite)\n"
+            f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
+            f"    print(f'[grade_wrapper: ran={{result.testsRun}}/{spec['expected_test_count']} skipped={{len(result.skipped)}}]')\n"
+            "    sys.exit(1)\n"
+        )
+        if spec.get("extra_cmd"):
+            # For tasks_v10.py, verify TASKS count in-process after unittest succeeds so exit(0) in tasks_v10.py cannot bypass
+            driver += (
+                "import tasks_v10\n"
+                "assert len(tasks_v10.TASKS) == 90\n"
+            )
+        driver += f"print({sentinel!r})\n"
+        res = subprocess.run(
+            ["python3", "-c", driver],
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = (res.stdout or "") + (res.stderr or "")
+        return (res.returncode == 0 and sentinel in output), output
+
+    if mode == "unittest_and_selftest_file":
+        st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+        st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
+        with open(st_path, "w", encoding="utf-8") as f:
+            f.write(st_code)
+        driver = (
+            "import contextlib, io, sys, unittest\n"
+            f"sys.path.insert(0, {spec['module_dir']!r})\n"
+            f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+            "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
+            "result = runner.run(suite)\n"
+            f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
+            f"    print(f'[grade_wrapper: unittest ran={{result.testsRun}}/{spec['expected_test_count']}]')\n"
+            "    sys.exit(1)\n"
+            f"import {spec['module_name']} as mod\n"
+            "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
+            "    st_src = f.read()\n"
+            "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+            "buf = io.StringIO()\n"
+            "with contextlib.redirect_stdout(buf):\n"
+            "    rc = mod.selftest()\n"
+            "out = buf.getvalue()\n"
+            "sys.stdout.write(out)\n"
+            "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
+            "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
+            f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_selftest_count']}:\n"
+            f"    print({sentinel!r})\n"
+            "else:\n"
+            f"    print(f'[grade_wrapper: selftest rc={{rc}} ok={{ok_count}}/{spec['expected_selftest_count']} fail={{fail_count}}]')\n"
+            "    sys.exit(1)\n"
+        )
+        res = subprocess.run(
+            ["python3", "-c", driver],
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if os.path.exists(st_path):
+            os.remove(st_path)
+        output = (res.stdout or "") + (res.stderr or "")
+        return (res.returncode == 0 and sentinel in output), output
+
+    raise ValueError(f"Unknown grade_spec mode: {mode}")
+
+
 def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
     """Independently grade a task's final_diff in a fresh clean copy of base_commit with test files restored from merged_commit.
 
-    Never trusts the in-loop `passed` flag:
+    Never trusts the in-loop `passed` flag or bare exit code 0:
     1. Creates a fresh standalone scratch tree at `base_commit`.
     2. Applies `final_diff` (if non-empty) with path confinement checks.
     3. Overwrites any `test_files` in the scratch tree with their authoritative versions from `merged_commit`
        so model edits to test files (e.g. an `exit 0` bypass) are ignored for grading.
-    4. Runs `grade_test_cmd` (if defined on task, e.g. merged selftest harness) or `test_cmd`.
+    4. Runs the harness-owned grade wrapper (`_run_harness_grade_spec`) with a minimal allowlisted environment
+       (no PILOT_REPO_ROOT, no GIT_*), requiring exact expected test counts and a post-completion sentinel.
     """
     if not task.get("has_tests"):
         return None, "Not a testable task"
@@ -801,6 +1023,7 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
     base_sha = dict.__getitem__(task, "base_commit")
     merged_sha = dict.__getitem__(task, "merged_commit")
     grade_dir = tempfile.mkdtemp(prefix=f"grade_{task['id']}_")
+    clean_env = build_minimal_env()
     try:
         create_isolated_scratch_repo(repo_root, base_sha, grade_dir)
         if final_diff and final_diff.strip():
@@ -814,6 +1037,7 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
             os.makedirs(os.path.dirname(full_tf), exist_ok=True)
             show_res = subprocess.run(
                 ["git", "-C", repo_root, "show", f"{merged_sha}:{tf}"],
+                env=clean_env,
                 capture_output=True,
             )
             if show_res.returncode != 0:
@@ -821,22 +1045,7 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
             with open(full_tf, "wb") as f:
                 f.write(show_res.stdout)
 
-        grade_cmd = task.get("grade_test_cmd") or task.get("test_cmd")
-        if not grade_cmd:
-            return True, ""
-        # Run grade_cmd with REPO_ROOT exported in case grade_test_cmd inspects merged_commit for in-module selftest
-        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PILOT_REPO_ROOT=repo_root)
-        res = subprocess.run(
-            ["bash", "-c", grade_cmd],
-            cwd=grade_dir,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        passed = (res.returncode == 0)
-        output = (res.stdout or "") + (res.stderr or "")
-        return passed, output
+        return _run_harness_grade_spec(task, grade_dir, repo_root, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, f"ERROR: grade test command timed out after {timeout} seconds."
     except Exception as e:
@@ -908,10 +1117,20 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
-        if rev:
-            v1 = rev.get("first_verdict", rev.get("verdict"))
+        if rev is not None:
+            if not isinstance(rev, dict):
+                raise ValueError(f"Review record for {tid} must be a dict, got {type(rev).__name__}")
+            v1 = rev.get("verdict") if "verdict" in rev else rev.get("first_verdict")
             v_final = rev.get("final_verdict", v1)
-            hf_lines = rev.get("hand_fix_lines", 0)
+            if v1 not in ("APPROVE", "APPROVE-WITH-NITS", "REQUEST-CHANGES") or v_final not in (
+                "APPROVE",
+                "APPROVE-WITH-NITS",
+                "REQUEST-CHANGES",
+            ):
+                raise ValueError(f"Review record for {tid} has missing or invalid verdict: {rev!r}")
+            if "hand_fix_lines" not in rev or rev["hand_fix_lines"] is None or isinstance(rev["hand_fix_lines"], bool) or not isinstance(rev["hand_fix_lines"], (int, float)):
+                raise ValueError(f"Review record for {tid} is missing numeric hand_fix_lines: {rev!r}")
+            hf_lines = rev["hand_fix_lines"]
             is_app1 = v1 in ("APPROVE", "APPROVE-WITH-NITS")
             is_app_final = v_final in ("APPROVE", "APPROVE-WITH-NITS")
             if is_app1:

@@ -73,6 +73,10 @@ bash scripts/prereg-guard.sh --head "$PREREG_FILE" "$REMOTE_REF"
 
 # 3. Memory preflight check before model load (passes QWEN_MODEL_PATH so preflight checks model size + 16 GiB KV/buffer margin covering --ctx 65536 --np 2)
 preflight() {
+  if ! command -v bwrap >/dev/null 2>&1; then
+    echo "ERROR: bwrap (bubblewrap) is required for task selftest sandboxes (#6, #13, #16) but is not installed"
+    return 1
+  fi
   local out rc
   set +e
   out=$(bash scripts/preflight.sh "$QWEN_MODEL_PATH" 2>&1)
