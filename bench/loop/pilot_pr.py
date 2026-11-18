@@ -32,19 +32,89 @@ MAX_TURNS_DEFAULT = 4
 TASK_BUDGET_TOKENS = 32768
 BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
 
-SAFE_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "USER", "LOGNAME")
+FIXED_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+SAFE_ENV_KEYS = ("LANG", "LC_ALL", "LC_CTYPE", "TERM")
 
 
-def build_minimal_env():
-    """Return a minimal allowlisted environment with no GIT_*, no PILOT_REPO_ROOT, and no repo paths."""
-    env = {"PYTHONDONTWRITEBYTECODE": "1"}
+def build_minimal_env(home_dir=None, tmp_dir=None):
+    """Return a minimal allowlisted environment with fixed system PATH, no GIT_*, no PYTHON*, and no repo paths."""
+    env = {
+        "PATH": FIXED_SYSTEM_PATH,
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
     for k in SAFE_ENV_KEYS:
         val = os.environ.get(k)
         if val is not None:
             env[k] = val
-    if "PATH" not in env:
-        env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    if home_dir is not None:
+        env["HOME"] = home_dir
+    if tmp_dir is not None:
+        env["TMPDIR"] = tmp_dir
     return env
+
+
+def prepare_isolated_home_and_tmp(base_dir):
+    """Create or recreate fresh empty HOME and TMPDIR directories sibling to base_dir."""
+    root = os.path.abspath(base_dir)
+    home_dir = root + "_home"
+    tmp_dir = root + "_tmp"
+    for d in (home_dir, tmp_dir):
+        if os.path.exists(d):
+            shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
+    return home_dir, tmp_dir
+
+
+def cleanup_isolated_home_and_tmp(base_dir):
+    """Remove the sibling _home and _tmp directories for base_dir."""
+    root = os.path.abspath(base_dir)
+    for suffix in ("_home", "_tmp"):
+        d = root + suffix
+        if os.path.exists(d):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _wrap_shell_with_isolated_python3(cmd, task_dir):
+    """Prepend a bash function `python3` that always invokes `/usr/bin/python3 -I` with `task_dir` added to sys.path."""
+    import base64
+    real_py = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else (shutil.which("python3") or "/usr/bin/python3")
+    td = os.path.abspath(task_dir)
+    runner = (
+        "import os, runpy, sys\n"
+        f"td = {td!r}\n"
+        f"real_py = {real_py!r}\n"
+        "args = sys.argv[1:]\n"
+        "while args and args[0] in ('-I', '-B'):\n"
+        "    args = args[1:]\n"
+        "if not args:\n"
+        "    os.execv(real_py, [real_py, '-I', '-B'])\n"
+        "if args[0] == '-c' and len(args) >= 2:\n"
+        "    code = args[1]\n"
+        "    sys.argv = ['-c'] + args[2:]\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    exec(compile(code, '<string>', 'exec'), {'__name__': '__main__'})\n"
+        "elif args[0] == '-m' and len(args) >= 2:\n"
+        "    mod = args[1]\n"
+        "    sys.argv = [mod] + args[2:]\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    runpy.run_module(mod, run_name='__main__', alter_sys=True)\n"
+        "elif not args[0].startswith('-'):\n"
+        "    sp = os.path.abspath(args[0])\n"
+        "    sd = os.path.dirname(sp)\n"
+        "    sys.argv = args\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    if sd not in sys.path: sys.path.insert(0, sd)\n"
+        "    runpy.run_path(sp, run_name='__main__')\n"
+        "else:\n"
+        "    os.execv(real_py, [real_py, '-I', '-B'] + args)\n"
+    )
+    b64 = base64.b64encode(runner.encode("utf-8")).decode("ascii")
+    func_def = (
+        f"python3() {{ {real_py} -I -B -c \"import base64; exec(base64.b64decode('{b64}').decode('utf-8'), {{'__name__': '__main__'}})\" \"$@\"; }}\n"
+        "export -f python3\n"
+    )
+    return func_def + cmd
+
 
 
 def has_bwrap():
@@ -308,10 +378,12 @@ def run_tests(task, worktree_dir, timeout=60):
     if not cmd:
         return True, "No test command defined for task."
 
-    env = build_minimal_env()
+    iso_cmd = _wrap_shell_with_isolated_python3(cmd, worktree_dir)
+    home_dir, tmp_dir = prepare_isolated_home_and_tmp(worktree_dir)
+    env = build_minimal_env(home_dir=home_dir, tmp_dir=tmp_dir)
     try:
         res = subprocess.run(
-            ["bash", "-c", cmd],
+            ["bash", "-c", iso_cmd],
             cwd=worktree_dir,
             env=env,
             capture_output=True,
@@ -325,6 +397,8 @@ def run_tests(task, worktree_dir, timeout=60):
         return False, f"ERROR: test command timed out after {timeout} seconds."
     except Exception as e:
         return False, f"ERROR executing test command: {e}"
+    finally:
+        cleanup_isolated_home_and_tmp(worktree_dir)
 
 
 def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
@@ -839,169 +913,201 @@ def _extract_selftest_block(repo_root, merged_sha, rel_path):
 def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
     """Execute a harness-owned grade wrapper in grade_dir with positive completion proof and exact test counts.
 
-    Never exports PILOT_REPO_ROOT or GIT_* to the child process. Requires:
-    - Exit code 0;
-    - Exact expected test count and zero failures/errors;
-    - A cryptographic per-run sentinel written to an unlinked file or stdout only after all checks pass.
-    Any sys.exit(0) or os._exit(0) inside a model module during import or test execution aborts before
-    the wrapper reaches the sentinel/count write, causing grade to return False.
+    Security & Isolation properties:
+    - Never puts the per-run sentinel token in argv (/proc/self/cmdline) or os.environ (/proc/self/environ).
+      Instead, the parent writes the sentinel token to standard input; the child wrapper reads the token from
+      stdin and closes/replaces fd 0 with /dev/null BEFORE importing or executing any model-owned code.
+    - Runs Python with `-I` (isolated mode: no user-site packages, no PYTHON* env vars, no automatic cwd on sys.path;
+      the wrapper explicitly adds the task scratch root and module_dir to sys.path).
+    - Creates a fresh empty HOME and TMPDIR for every grade invocation and uses a fixed system PATH.
+    - Any sys.exit(0) or os._exit(0) inside a model module during import or test execution aborts before
+      the wrapper reaches the count verification and sentinel write, causing grade to return False.
     """
-    clean_env = build_minimal_env()
+    home_dir, tmp_dir = prepare_isolated_home_and_tmp(grade_dir)
+    clean_env = build_minimal_env(home_dir=home_dir, tmp_dir=tmp_dir)
     merged_sha = dict.__getitem__(task, "merged_commit")
     spec = task.get("grade_spec")
     sentinel = f"@@PILOT_GRADE_OK_{secrets.token_hex(16)}@@"
 
-    if not spec:
-        cmd = task.get("test_cmd")
-        if not cmd:
-            return True, ""
-        res = subprocess.run(
-            ["bash", "-c", cmd],
-            cwd=grade_dir,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return (res.returncode == 0), (res.stdout or "") + (res.stderr or "")
-
-    mode = spec["mode"]
-
-    if mode == "shell":
-        wrapper_cmd = f"set -e\n{spec['cmd']}\necho '{sentinel}'\n"
-        res = subprocess.run(
-            ["bash", "-c", wrapper_cmd],
-            cwd=grade_dir,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = (res.stdout or "") + (res.stderr or "")
-        if res.returncode != 0 or sentinel not in output:
-            return False, output + "\n[grade_wrapper: missing sentinel or non-zero exit]"
-        lines_without_sentinel = [ln.rstrip("\r\n") for ln in output.splitlines() if ln.strip() and ln.strip() != sentinel]
-        pat = re.compile(spec["count_pattern"])
-        matched_count = sum(1 for ln in lines_without_sentinel if pat.search(ln))
-        if matched_count != spec["expected_test_count"]:
-            return False, output + f"\n[grade_wrapper: expected count {spec['expected_test_count']}, got {matched_count}]"
-        req_last = spec.get("required_last_line")
-        if req_last and (not lines_without_sentinel or lines_without_sentinel[-1].strip() != req_last):
-            return False, output + f"\n[grade_wrapper: expected last line {req_last!r}]"
-        return True, output
-
-    if mode == "selftest_file":
-        st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
-        st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
-        with open(st_path, "w", encoding="utf-8") as f:
-            f.write(st_code)
-        driver = (
-            "import contextlib, io, sys\n"
-            f"sys.path.insert(0, {spec['module_dir']!r})\n"
-            f"import {spec['module_name']} as mod\n"
-            "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
-            "    st_src = f.read()\n"
-            "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
-            "buf = io.StringIO()\n"
-            "with contextlib.redirect_stdout(buf):\n"
-            "    rc = mod.selftest()\n"
-            "out = buf.getvalue()\n"
-            "sys.stdout.write(out)\n"
-            "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
-            "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
-            f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_test_count']}:\n"
-            f"    print({sentinel!r})\n"
-            "else:\n"
-            f"    print(f'[grade_wrapper: rc={{rc}} ok={{ok_count}}/{spec['expected_test_count']} fail={{fail_count}}]')\n"
-            "    sys.exit(1)\n"
-        )
-        res = subprocess.run(
-            ["python3", "-c", driver],
-            cwd=grade_dir,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if os.path.exists(st_path):
-            os.remove(st_path)
-        output = (res.stdout or "") + (res.stderr or "")
-        return (res.returncode == 0 and sentinel in output), output
-
-    if mode == "unittest":
-        driver = (
-            "import subprocess, sys, unittest\n"
-            "sys.path.insert(0, 'bench/loop')\n"
-            f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
-            "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
-            "result = runner.run(suite)\n"
-            f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
-            f"    print(f'[grade_wrapper: ran={{result.testsRun}}/{spec['expected_test_count']} skipped={{len(result.skipped)}}]')\n"
-            "    sys.exit(1)\n"
-        )
-        if spec.get("extra_cmd"):
-            # For tasks_v10.py, verify TASKS count in-process after unittest succeeds so exit(0) in tasks_v10.py cannot bypass
-            driver += (
-                "import tasks_v10\n"
-                "assert len(tasks_v10.TASKS) == 90\n"
+    try:
+        if not spec:
+            cmd = task.get("test_cmd")
+            if not cmd:
+                return True, ""
+            res = subprocess.run(
+                ["bash", "-c", _wrap_shell_with_isolated_python3(cmd, grade_dir)],
+                cwd=grade_dir,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
-        driver += f"print({sentinel!r})\n"
-        res = subprocess.run(
-            ["python3", "-c", driver],
-            cwd=grade_dir,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = (res.stdout or "") + (res.stderr or "")
-        return (res.returncode == 0 and sentinel in output), output
+            return (res.returncode == 0), (res.stdout or "") + (res.stderr or "")
 
-    if mode == "unittest_and_selftest_file":
-        st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
-        st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
-        with open(st_path, "w", encoding="utf-8") as f:
-            f.write(st_code)
-        driver = (
-            "import contextlib, io, sys, unittest\n"
-            f"sys.path.insert(0, {spec['module_dir']!r})\n"
-            f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
-            "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
-            "result = runner.run(suite)\n"
-            f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
-            f"    print(f'[grade_wrapper: unittest ran={{result.testsRun}}/{spec['expected_test_count']}]')\n"
-            "    sys.exit(1)\n"
-            f"import {spec['module_name']} as mod\n"
-            "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
-            "    st_src = f.read()\n"
-            "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
-            "buf = io.StringIO()\n"
-            "with contextlib.redirect_stdout(buf):\n"
-            "    rc = mod.selftest()\n"
-            "out = buf.getvalue()\n"
-            "sys.stdout.write(out)\n"
-            "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
-            "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
-            f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_selftest_count']}:\n"
-            f"    print({sentinel!r})\n"
-            "else:\n"
-            f"    print(f'[grade_wrapper: selftest rc={{rc}} ok={{ok_count}}/{spec['expected_selftest_count']} fail={{fail_count}}]')\n"
-            "    sys.exit(1)\n"
-        )
-        res = subprocess.run(
-            ["python3", "-c", driver],
-            cwd=grade_dir,
-            env=clean_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if os.path.exists(st_path):
-            os.remove(st_path)
-        output = (res.stdout or "") + (res.stderr or "")
-        return (res.returncode == 0 and sentinel in output), output
+        mode = spec["mode"]
 
-    raise ValueError(f"Unknown grade_spec mode: {mode}")
+        if mode == "shell":
+            iso_shell_cmd = _wrap_shell_with_isolated_python3(spec["cmd"], grade_dir)
+            wrapper_cmd = (
+                "set -e\n"
+                "IFS= read -r _PILOT_TOK\n"
+                "exec </dev/null\n"
+                f"{iso_shell_cmd}\n"
+                "printf '%s\\n' \"$_PILOT_TOK\"\n"
+            )
+            res = subprocess.run(
+                ["bash", "-c", wrapper_cmd],
+                input=sentinel + "\n",
+                cwd=grade_dir,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            output = (res.stdout or "") + (res.stderr or "")
+            if res.returncode != 0 or sentinel not in output:
+                return False, output + "\n[grade_wrapper: missing sentinel or non-zero exit]"
+            lines_without_sentinel = [ln.rstrip("\r\n") for ln in output.splitlines() if ln.strip() and ln.strip() != sentinel]
+            pat = re.compile(spec["count_pattern"])
+            matched_count = sum(1 for ln in lines_without_sentinel if pat.search(ln))
+            if matched_count != spec["expected_test_count"]:
+                return False, output + f"\n[grade_wrapper: expected count {spec['expected_test_count']}, got {matched_count}]"
+            req_last = spec.get("required_last_line")
+            if req_last and (not lines_without_sentinel or lines_without_sentinel[-1].strip() != req_last):
+                return False, output + f"\n[grade_wrapper: expected last line {req_last!r}]"
+            return True, output
+
+        # Common Python preamble that reads the secret token from stdin and points fd 0 to /dev/null
+        # before any model module is imported.
+        stdin_token_preamble = (
+            "import os, sys\n"
+            "_tok = sys.stdin.readline().rstrip('\\r\\n')\n"
+            "_devnull = os.open(os.devnull, os.O_RDONLY)\n"
+            "os.dup2(_devnull, 0)\n"
+            "os.close(_devnull)\n"
+            "sys.stdin = open(os.devnull, 'r')\n"
+            "sys.path.insert(0, os.getcwd())\n"
+        )
+
+        if mode == "selftest_file":
+            st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+            st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
+            with open(st_path, "w", encoding="utf-8") as f:
+                f.write(st_code)
+            driver = (
+                stdin_token_preamble
+                + "import contextlib, io\n"
+                + f"sys.path.insert(0, os.path.join(os.getcwd(), {spec['module_dir']!r}))\n"
+                + f"import {spec['module_name']} as mod\n"
+                + "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
+                + "    st_src = f.read()\n"
+                + "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+                + "buf = io.StringIO()\n"
+                + "with contextlib.redirect_stdout(buf):\n"
+                + "    rc = mod.selftest()\n"
+                + "out = buf.getvalue()\n"
+                + "sys.stdout.write(out)\n"
+                + "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
+                + "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
+                + f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_test_count']}:\n"
+                + "    print(_tok)\n"
+                + "else:\n"
+                + f"    print(f'[grade_wrapper: rc={{rc}} ok={{ok_count}}/{spec['expected_test_count']} fail={{fail_count}}]')\n"
+                + "    sys.exit(1)\n"
+            )
+            res = subprocess.run(
+                ["python3", "-I", "-B", "-c", driver],
+                input=sentinel + "\n",
+                cwd=grade_dir,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if os.path.exists(st_path):
+                os.remove(st_path)
+            output = (res.stdout or "") + (res.stderr or "")
+            return (res.returncode == 0 and sentinel in output), output
+
+        if mode == "unittest":
+            driver = (
+                stdin_token_preamble
+                + "import unittest\n"
+                + "sys.path.insert(0, os.path.join(os.getcwd(), 'bench/loop'))\n"
+                + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+                + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
+                + "result = runner.run(suite)\n"
+                + f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
+                + f"    print(f'[grade_wrapper: ran={{result.testsRun}}/{spec['expected_test_count']} skipped={{len(result.skipped)}}]')\n"
+                + "    sys.exit(1)\n"
+            )
+            if spec.get("extra_cmd"):
+                driver += (
+                    "import tasks_v10\n"
+                    "assert len(tasks_v10.TASKS) == 90\n"
+                )
+            driver += "print(_tok)\n"
+            res = subprocess.run(
+                ["python3", "-I", "-B", "-c", driver],
+                input=sentinel + "\n",
+                cwd=grade_dir,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            output = (res.stdout or "") + (res.stderr or "")
+            return (res.returncode == 0 and sentinel in output), output
+
+        if mode == "unittest_and_selftest_file":
+            st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+            st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
+            with open(st_path, "w", encoding="utf-8") as f:
+                f.write(st_code)
+            driver = (
+                stdin_token_preamble
+                + "import contextlib, io, unittest\n"
+                + f"sys.path.insert(0, os.path.join(os.getcwd(), {spec['module_dir']!r}))\n"
+                + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+                + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
+                + "result = runner.run(suite)\n"
+                + f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
+                + f"    print(f'[grade_wrapper: unittest ran={{result.testsRun}}/{spec['expected_test_count']}]')\n"
+                + "    sys.exit(1)\n"
+                + f"import {spec['module_name']} as mod\n"
+                + "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
+                + "    st_src = f.read()\n"
+                + "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+                + "buf = io.StringIO()\n"
+                + "with contextlib.redirect_stdout(buf):\n"
+                + "    rc = mod.selftest()\n"
+                + "out = buf.getvalue()\n"
+                + "sys.stdout.write(out)\n"
+                + "ok_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('ok '))\n"
+                + "fail_count = sum(1 for ln in out.splitlines() if ln.strip().startswith('FAIL '))\n"
+                + f"if rc == 0 and fail_count == 0 and ok_count == {spec['expected_selftest_count']}:\n"
+                + "    print(_tok)\n"
+                + "else:\n"
+                + f"    print(f'[grade_wrapper: selftest rc={{rc}} ok={{ok_count}}/{spec['expected_selftest_count']} fail={{fail_count}}]')\n"
+                + "    sys.exit(1)\n"
+            )
+            res = subprocess.run(
+                ["python3", "-I", "-B", "-c", driver],
+                input=sentinel + "\n",
+                cwd=grade_dir,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if os.path.exists(st_path):
+                os.remove(st_path)
+            output = (res.stdout or "") + (res.stderr or "")
+            return (res.returncode == 0 and sentinel in output), output
+
+        raise ValueError(f"Unknown grade_spec mode: {mode}")
+    finally:
+        cleanup_isolated_home_and_tmp(grade_dir)
 
 
 def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):

@@ -714,6 +714,93 @@ class TestPilotPr(unittest.TestCase):
         finally:
             shutil.rmtree(results_dir, ignore_errors=True)
 
+    def test_sentinel_token_not_in_cmdline_environ_or_stdin(self):
+        """Verify a model module reading /proc/self/cmdline, /proc/self/environ, and sys.stdin cannot find the grade token."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_tok_probe_")
+        try:
+            task = tasks_item6.get_task("item6_pr06")
+            pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+
+            # Join marker dynamically so the literal '@@PILOT_GRADE_OK_' does not appear in the probe source itself
+            probe_code = (
+                "import os, sys\n"
+                "cmdline = open('/proc/self/cmdline', 'rb').read().decode('utf-8', 'replace')\n"
+                "environ = open('/proc/self/environ', 'rb').read().decode('utf-8', 'replace')\n"
+                "stdin_data = sys.stdin.read()\n"
+                "needle = '@@PILOT_' + 'GRADE_OK_'\n"
+                "if needle in cmdline or needle in environ or needle in stdin_data:\n"
+                "    print('TOKEN_LEAK_FOUND')\n"
+                "else:\n"
+                "    print('TOKEN_CLEAN')\n"
+                "sys.exit(0)\n"
+            )
+            full_target = os.path.join(scratch_dir, "bench", "loop", "debate.py")
+            with open(full_target, "w", encoding="utf-8") as f:
+                f.write(probe_code)
+            probe_diff = pilot_pr.capture_worktree_diff(scratch_dir, task["base_commit"])
+
+            passed, out = pilot_pr.regrade_task_diff(task, probe_diff, repo_root=repo_root, timeout=30)
+            self.assertFalse(passed, "Probe that exits before running tests must grade FAIL")
+            self.assertIn("TOKEN_CLEAN", out)
+            self.assertNotIn("TOKEN_LEAK_FOUND", out)
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_isolated_python_usercustomize_and_clean_home_path_tmpdir(self):
+        """Verify usercustomize.py planted in HOME does not run under grade, and HOME/PATH/TMPDIR in grade child do not contain repo_root."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_usercust_")
+        old_env = os.environ.copy()
+        try:
+            # 1. Poison parent HOME, PATH, TMPDIR, and PYTHONPATH with repo_root
+            os.environ["HOME"] = os.path.join(repo_root, "fake_home")
+            os.environ["PATH"] = f"{repo_root}/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
+            os.environ["TMPDIR"] = os.path.join(repo_root, "fake_tmp")
+            os.environ["PYTHONPATH"] = repo_root
+
+            task = tasks_item6.get_task("item6_pr13")
+            pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+
+            # 2. Simulate an in-loop command that plants usercustomize.py in its HOME user-site directory
+            # and verify that even if planted during loop run_tests, it does not survive or execute during grade
+            plant_task = dict(
+                task,
+                test_cmd=(
+                    "python3 -c \"import os, site, sys; "
+                    "us = os.path.expanduser(f'~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'); "
+                    "os.makedirs(us, exist_ok=True); "
+                    "open(os.path.join(us, 'usercustomize.py'), 'w').write('print(\\\"USERCUSTOMIZE_RAN\\\")\\n')\""
+                ),
+            )
+            ok_loop, _ = pilot_pr.run_tests(plant_task, scratch_dir)
+            self.assertTrue(ok_loop)
+
+            # 3. Now run regrade_task_diff with a probe module that checks if USERCUSTOMIZE_RAN or if repo_root is in HOME/PATH/TMPDIR
+            probe_code = (
+                "import os, sys\n"
+                "for k in ('HOME', 'PATH', 'TMPDIR', 'PYTHONPATH'):\n"
+                f"    val = os.environ.get(k, '')\n"
+                f"    if {repo_root!r} in val:\n"
+                "        print('REPO_IN_ENV:', k, val)\n"
+                "print('ENV_CHECK_DONE')\n"
+                "TASKS = []\n"
+            )
+            full_target = os.path.join(scratch_dir, "bench", "loop", "tasks_v10.py")
+            with open(full_target, "w", encoding="utf-8") as f:
+                f.write(probe_code)
+            probe_diff = pilot_pr.capture_worktree_diff(scratch_dir, task["base_commit"])
+
+            passed, out = pilot_pr.regrade_task_diff(task, probe_diff, repo_root=repo_root, timeout=30)
+            self.assertFalse(passed)
+            self.assertIn("ENV_CHECK_DONE", out)
+            self.assertNotIn("USERCUSTOMIZE_RAN", out)
+            self.assertNotIn("REPO_IN_ENV:", out)
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
