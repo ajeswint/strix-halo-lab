@@ -482,6 +482,46 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
             shutil.rmtree(outside_dir, ignore_errors=True)
 
+    def test_git_isolation_cannot_resolve_merged_commit(self):
+        """Verify create_isolated_scratch_repo creates a standalone tree that cannot resolve merged_commit."""
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_pr_iso_")
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        try:
+            task = tasks_item6.get_task("item6_pr06")
+            base_sha = task["base_commit"]
+            merged_sha = task["merged_commit"]
+
+            pilot_pr.create_isolated_scratch_repo(repo_root, base_sha, scratch_dir)
+
+            # 1. Verify target files exist at base state
+            self.assertTrue(os.path.exists(os.path.join(scratch_dir, "bench", "loop", "debate.py")))
+
+            # 2. Verify merged_commit and base_commit SHAs from main repo are unknown objects in scratch_dir
+            res_show = subprocess.run(
+                ["git", "cat-file", "-e", merged_sha],
+                cwd=scratch_dir,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_show.returncode, 0, "Scratch repo must NOT contain merged_commit in object store!")
+
+            res_log = subprocess.run(
+                ["git", "show", merged_sha],
+                cwd=scratch_dir,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_log.returncode, 0, "git show merged_commit must fail in isolated scratch repo!")
+
+            # 3. Verify capture_worktree_diff works cleanly on edits and new files in the isolated scratch repo
+            with open(os.path.join(scratch_dir, "new_isolated.txt"), "w") as f:
+                f.write("isolated content\n")
+            diff_out = pilot_pr.capture_worktree_diff(scratch_dir, base_sha)
+            self.assertIn("new_isolated.txt", diff_out)
+            self.assertIn("+isolated content", diff_out)
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

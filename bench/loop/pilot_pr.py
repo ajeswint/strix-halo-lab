@@ -293,21 +293,70 @@ def run_tests(task, worktree_dir, timeout=60):
         return False, f"ERROR executing test command: {e}"
 
 
-def capture_worktree_diff(worktree_dir, base_commit):
-    """Capture full diff of worktree against base_commit, including uncommitted and untracked new files."""
+def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
+    """Capture full diff of worktree against base_commit (or HEAD in standalone scratch repo), including untracked files."""
     subprocess.run(
         ["git", "add", "-N", "."],
         cwd=worktree_dir,
         capture_output=True,
         text=True,
     )
+    target_ref = base_commit
+    check_ref = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{base_commit}^{{commit}}"],
+        cwd=worktree_dir,
+        capture_output=True,
+        text=True,
+    )
+    if check_ref.returncode != 0:
+        target_ref = "HEAD"
     diff_res = subprocess.run(
-        ["git", "diff", base_commit],
+        ["git", "diff", target_ref],
         cwd=worktree_dir,
         capture_output=True,
         text=True,
     )
     return diff_res.stdout or ""
+
+
+def create_isolated_scratch_repo(repo_root, base_commit, scratch_dir):
+    """Create a standalone git repository in scratch_dir populated strictly from base_commit via git archive.
+
+    Does NOT share the main repository's object store or write to .git/worktrees, so later commits
+    (including merged_commit) do not exist in the scratch repo's object database.
+    """
+    os.makedirs(scratch_dir, exist_ok=True)
+    p1 = subprocess.Popen(
+        ["git", "-C", repo_root, "archive", "--format=tar", base_commit],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    p2 = subprocess.Popen(
+        ["tar", "-x", "-C", scratch_dir],
+        stdin=p1.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    p1.stdout.close()
+    _, err2 = p2.communicate()
+    _, err1 = p1.communicate()
+    if p1.returncode != 0:
+        raise RuntimeError(f"git archive failed for {base_commit}: {err1.decode(errors='replace')}")
+    if p2.returncode != 0:
+        raise RuntimeError(f"tar extract failed: {err2.decode(errors='replace')}")
+
+    subprocess.run(["git", "init", "-q"], cwd=scratch_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "pilot-runner"], cwd=scratch_dir, check=True)
+    subprocess.run(["git", "config", "user.email", "pilot@localhost"], cwd=scratch_dir, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=scratch_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", f"base {base_commit}"],
+        cwd=scratch_dir,
+        check=True,
+        capture_output=True,
+    )
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=scratch_dir, text=True).strip()
+
 
 
 def evaluate_diff(local_diff, hidden_diff):
@@ -691,12 +740,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
         t_start = time.time()
         try:
-            subprocess.run(
-                ["git", "-C", repo_root, "worktree", "add", "--detach", wt_dir, base_sha],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            create_isolated_scratch_repo(repo_root, base_sha, wt_dir)
             res = run_task_loop(
                 clean_task,
                 ask_fn,
@@ -722,11 +766,6 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 flush=True,
             )
         finally:
-            subprocess.run(
-                ["git", "-C", repo_root, "worktree", "remove", "--force", wt_dir],
-                capture_output=True,
-                text=True,
-            )
             if os.path.exists(wt_dir):
                 shutil.rmtree(wt_dir, ignore_errors=True)
 
