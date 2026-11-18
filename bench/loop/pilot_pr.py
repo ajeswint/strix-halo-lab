@@ -33,7 +33,7 @@ BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
 
 
 def check_prompt_leak(prompt, task):
-    """Tripwire: assert no hidden fields or sentinels appear in a prompt sent to the model."""
+    """Tripwire: assert no hidden fields, sentinels, or unredacted grading seeds appear in a prompt."""
     for hidden_key in ("hidden_diff", "merged_commit"):
         if dict.__contains__(task, hidden_key):
             val = dict.__getitem__(task, hidden_key)
@@ -41,6 +41,13 @@ def check_prompt_leak(prompt, task):
                 raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!")
     if "LEAK_SENTINEL" in prompt or "ORACLE-SENTINEL" in prompt:
         raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
+    if "104729" in prompt:
+        raise AssertionError("LEAK TRIPWIRE TRIGGERED: literal grading seed 104729 leaked into prompt!")
+
+
+def redact_grading_seed(text):
+    """Redact the literal grading seed 104729 from any context sent to the model."""
+    return (text or "").replace("104729", "<REDACTED_SEED>")
 
 
 def build_worktree_context(task, worktree_dir, max_chars_per_file=12000):
@@ -48,11 +55,14 @@ def build_worktree_context(task, worktree_dir, max_chars_per_file=12000):
     clean_task = tasks_item6.strip_hidden(task)
     sections = []
     for rel_path in clean_task.get("files", []):
-        full_path = os.path.join(worktree_dir, rel_path)
-        if os.path.exists(full_path) and os.path.isfile(full_path):
+        try:
+            full_path = resolve_confined_path(worktree_dir, rel_path)
+        except ValueError:
+            continue
+        if os.path.exists(full_path) and os.path.isfile(full_path) and not os.path.islink(full_path):
             try:
                 with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                    body = f.read()
+                    body = redact_grading_seed(f.read())
                 if len(body) > max_chars_per_file:
                     body = body[:max_chars_per_file] + "\n... [truncated] ...\n"
                 sections.append(f"### Existing file: {rel_path}\n```\n{body}\n```")
@@ -90,7 +100,7 @@ def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None)
         check_prompt_leak(prompt, task)
         return prompt
 
-    err_text = (test_error or "").strip()
+    err_text = redact_grading_seed((test_error or "").strip())
     if len(err_text) > 2500:
         err_text = "... [truncated] ...\n" + err_text[-2500:]
 
@@ -102,6 +112,61 @@ def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None)
     )
     check_prompt_leak(prompt, task)
     return prompt
+
+
+def resolve_confined_path(worktree_dir, rel_path):
+    """Resolve rel_path inside worktree_dir and reject absolute paths, '..', or symlink escapes."""
+    if not rel_path or not isinstance(rel_path, str):
+        raise ValueError("Empty or non-string path")
+    norm_input = rel_path.replace("\\", "/").strip()
+    if os.path.isabs(norm_input) or norm_input.startswith("/"):
+        raise ValueError(f"Absolute path rejected: {rel_path}")
+    parts = [p for p in norm_input.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise ValueError(f"Path traversal ('..') rejected: {rel_path}")
+    if parts[0] == ".git":
+        raise ValueError(f"Modification of .git rejected: {rel_path}")
+
+    root_real = os.path.realpath(worktree_dir)
+    curr = root_real
+    for part in parts:
+        candidate = os.path.join(curr, part)
+        if os.path.islink(candidate):
+            raise ValueError(f"Symlink component rejected: {rel_path} ({candidate})")
+        curr_real = os.path.realpath(candidate)
+        if curr_real != root_real and not curr_real.startswith(root_real + os.sep):
+            raise ValueError(f"Path escapes scratch root: {rel_path}")
+        curr = candidate
+
+    final_real = os.path.realpath(curr)
+    if final_real == root_real or not final_real.startswith(root_real + os.sep):
+        raise ValueError(f"Resolved path outside scratch root: {rel_path}")
+    return curr
+
+
+def validate_patch_paths(worktree_dir, patch_text):
+    """Verify every path in a unified diff patch is confined to worktree_dir and patch contains no symlinks."""
+    if re.search(r"^(?:new|old|deleted) file mode 120000\b", patch_text, re.M):
+        raise ValueError("Symlink mode 120000 in patch rejected")
+    paths_found = []
+    for line in patch_text.splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"^diff --git a/(\S+) b/(\S+)", line)
+            if not m:
+                raise ValueError(f"Malformed diff --git header: {line}")
+            paths_found.extend([m.group(1), m.group(2)])
+        elif line.startswith("--- ") or line.startswith("+++ "):
+            tok = line[4:].split("\t")[0].strip()
+            if tok == "/dev/null":
+                continue
+            if tok.startswith("a/") or tok.startswith("b/"):
+                tok = tok[2:]
+            paths_found.append(tok)
+    if not paths_found:
+        raise ValueError("No valid file headers found in patch")
+    for p in paths_found:
+        resolve_confined_path(worktree_dir, p)
+
 
 
 def extract_file_updates(response_text):
@@ -144,12 +209,16 @@ def extract_file_updates(response_text):
 
 
 def apply_updates(worktree_dir, updates):
-    """Apply extracted files or unified patch to worktree_dir."""
+    """Apply extracted files or unified patch to worktree_dir with strict path confinement."""
     if not updates:
         return False, "No file updates or patch found in model response."
 
     if "__patch__" in updates:
         patch_text = updates["__patch__"]
+        try:
+            validate_patch_paths(worktree_dir, patch_text)
+        except ValueError as e:
+            return False, f"Rejected unsafe patch path: {e}"
         patch_file = os.path.join(worktree_dir, "_agent_update.patch")
         with open(patch_file, "w", encoding="utf-8") as f:
             f.write(patch_text + "\n")
@@ -161,22 +230,28 @@ def apply_updates(worktree_dir, updates):
                 text=True,
                 timeout=15,
             )
+            if os.path.exists(patch_file):
+                os.remove(patch_file)
             if res.returncode == 0:
-                os.remove(patch_file)
                 return True, "Patch applied successfully."
-            else:
-                os.remove(patch_file)
-                return False, f"git apply failed: {res.stderr}"
+            return False, f"git apply failed: {res.stderr}"
         except Exception as e:
             if os.path.exists(patch_file):
                 os.remove(patch_file)
             return False, f"Exception applying patch: {e}"
 
-    # Multiple files dict
+    # Validate all paths before writing any file
+    resolved_items = []
+    for rel_path, content in updates.items():
+        try:
+            full_path = resolve_confined_path(worktree_dir, rel_path)
+            resolved_items.append((rel_path, full_path, content))
+        except ValueError as e:
+            return False, f"Rejected unsafe file path: {e}"
+
     written = []
     try:
-        for rel_path, content in updates.items():
-            full_path = os.path.join(worktree_dir, rel_path)
+        for rel_path, full_path, content in resolved_items:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(content)

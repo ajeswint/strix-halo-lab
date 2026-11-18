@@ -378,6 +378,110 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
             shutil.rmtree(results_dir, ignore_errors=True)
 
+    def test_path_confinement_and_seed_redaction(self):
+        """Verify apply_updates rejects absolute paths, '..', and symlink escapes, and prompts redact seed 104729."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_pr_confine_")
+        outside_dir = tempfile.mkdtemp(prefix="pilot_pr_outside_")
+        try:
+            outside_target = os.path.join(outside_dir, "pwned.txt")
+            with open(outside_target, "w") as f:
+                f.write("original")
+
+            # 1. Direct file updates with absolute path or '..'
+            ok_abs, msg_abs = pilot_pr.apply_updates(temp_dir, {outside_target: "hacked"})
+            self.assertFalse(ok_abs)
+            self.assertIn("Absolute path rejected", msg_abs)
+
+            ok_trav, msg_trav = pilot_pr.apply_updates(temp_dir, {"../pwned.txt": "hacked"})
+            self.assertFalse(ok_trav)
+            self.assertIn("Path traversal", msg_trav)
+
+            ok_sub_trav, msg_sub_trav = pilot_pr.apply_updates(temp_dir, {"sub/../../pwned.txt": "hacked"})
+            self.assertFalse(ok_sub_trav)
+            self.assertIn("Path traversal", msg_sub_trav)
+
+            ok_git, msg_git = pilot_pr.apply_updates(temp_dir, {".git/config": "hacked"})
+            self.assertFalse(ok_git)
+            self.assertIn(".git rejected", msg_git)
+
+            # 2. Symlink escape (both symlink file and symlink directory)
+            os.symlink(outside_target, os.path.join(temp_dir, "link_file.txt"))
+            os.symlink(outside_dir, os.path.join(temp_dir, "link_dir"))
+
+            ok_symf, msg_symf = pilot_pr.apply_updates(temp_dir, {"link_file.txt": "hacked"})
+            self.assertFalse(ok_symf)
+            self.assertIn("Symlink component rejected", msg_symf)
+
+            ok_symd, msg_symd = pilot_pr.apply_updates(temp_dir, {"link_dir/pwned.txt": "hacked"})
+            self.assertFalse(ok_symd)
+            self.assertIn("Symlink component rejected", msg_symd)
+
+            with open(outside_target) as f:
+                self.assertEqual(f.read(), "original")
+
+            # 3. Unified diff patch with traversal or symlink mode
+            bad_patch_trav = (
+                "diff --git a/../pwned.txt b/../pwned.txt\n"
+                "--- a/../pwned.txt\n"
+                "+++ b/../pwned.txt\n"
+                "@@ -1 +1 @@\n"
+                "-original\n"
+                "+hacked\n"
+            )
+            ok_pt, msg_pt = pilot_pr.apply_updates(temp_dir, {"__patch__": bad_patch_trav})
+            self.assertFalse(ok_pt)
+            self.assertIn("Rejected unsafe patch path", msg_pt)
+
+            bad_patch_sym = (
+                "diff --git a/link_file.txt b/link_file.txt\n"
+                "--- a/link_file.txt\n"
+                "+++ b/link_file.txt\n"
+                "@@ -1 +1 @@\n"
+                "-original\n"
+                "+hacked\n"
+            )
+            ok_ps, msg_ps = pilot_pr.apply_updates(temp_dir, {"__patch__": bad_patch_sym})
+            self.assertFalse(ok_ps)
+            self.assertIn("Rejected unsafe patch path", msg_ps)
+
+            bad_patch_mode = (
+                "diff --git a/newlink b/newlink\n"
+                "new file mode 120000\n"
+                "--- /dev/null\n"
+                "+++ b/newlink\n"
+                "@@ -0,0 +1 @@\n"
+                "+/etc/passwd\n"
+            )
+            ok_pm, msg_pm = pilot_pr.apply_updates(temp_dir, {"__patch__": bad_patch_mode})
+            self.assertFalse(ok_pm)
+            self.assertIn("Symlink mode 120000", msg_pm)
+
+            # 4. Grading seed 104729 redaction from worktree file context and error feedback
+            seeded_file = os.path.join(temp_dir, "agent.py")
+            with open(seeded_file, "w") as f:
+                f.write("FRESH_SEED = 104729\n")
+            task = {
+                "id": "item6_seed_test",
+                "pr_number": 903,
+                "title": "Seed redaction test",
+                "base_commit": "0" * 40,
+                "merged_commit": "1" * 40,
+                "has_tests": True,
+                "test_cmd": "true",
+                "prompt": "Check agent.py",
+                "files": ["agent.py"],
+            }
+            p0 = pilot_pr.format_turn_prompt(task, worktree_dir=temp_dir)
+            self.assertNotIn("104729", p0)
+            self.assertIn("FRESH_SEED = <REDACTED_SEED>", p0)
+
+            p1 = pilot_pr.format_turn_prompt(task, last_code="x", test_error="Failed at seed 104729", worktree_dir=temp_dir)
+            self.assertNotIn("104729", p1)
+            self.assertIn("<REDACTED_SEED>", p1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
