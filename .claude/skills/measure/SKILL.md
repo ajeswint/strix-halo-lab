@@ -14,7 +14,34 @@ description: Protocol for any keep/drop decision based on numbers. Covers tuning
 3. **Metric and threshold**: what you count, and the delta that would justify keeping the change. Example: "keep if best-of-8 beats pass@1 by >= 10 points on the held-out set". State it before the run, never after.
 4. **n**: repetitions or tasks, enough for the delta to exceed run-to-run spread. llama-bench: `-r 3` minimum. Task evals: a held-out set of fixed size, named.
 5. **Cost**: GPU minutes, and whether DeepSeek must be unloaded. The user's yes covers this cost.
-6. **Commit 1-4 and the fixed settings before any GPU work** (before preflight and the server start), in their own commit with no results. The result cites that hash. Written down first but committed together with the results, the history cannot show the order (loop-v0, 1035d5e).
+6. **Commit and push 1-4, the pre-registered bar, and fixed settings before any GPU work** (before preflight and the server start), in their own commit with no results. The pre-registered bar (e.g. `bench/loop/runs/<label>/prereg.md`) must be committed AND pushed to the remote branch (`origin/<branch>` or `origin/main`) before launch. The result cites that hash. Written down first but committed together with the results, or committed only locally after launch (e.g. crawdad-v8-d2p2, where the bar was first committed 75 min post-launch), the history cannot show the order or guarantee that the bar was fixed before seeing outcomes.
+
+## Launcher convention (GPU run launchers)
+
+All GPU run launchers (e.g. `run.sh` under `bench/loop/runs/<label>/`, template in `scripts/launcher-template.sh`) must enforce a clean worktree, expected HEAD, pre-registered bar reachability, and memory preflight before starting GPU work:
+
+```bash
+# 1. Clean worktree and expected HEAD checks
+[[ "$(git rev-parse HEAD)" == "$EXPECT_HEAD" ]] || { echo "ERROR: head not $EXPECT_HEAD"; exit 1; }
+[[ -z "$(git status --porcelain)" ]] || { echo "ERROR: worktree dirty"; exit 1; }
+[[ -z "$(git ls-files -v | grep -E '^[hSs]' || true)" ]] || { echo "ERROR: worktree contains skip-worktree or assume-unchanged files"; exit 1; }
+[[ -f "$PREREG_FILE" ]] || { echo "ERROR: prereg file does not exist: $PREREG_FILE"; exit 1; }
+[[ -s "$PREREG_FILE" ]] || { echo "ERROR: prereg file is empty: $PREREG_FILE"; exit 1; }
+[[ "$(git hash-object "$PREREG_FILE")" == "$(git rev-parse "HEAD:$PREREG_FILE")" ]] || { echo "ERROR: $PREREG_FILE does not match HEAD"; exit 1; }
+
+# 2. Pre-registered bar guard: verifies file is tracked, clean, committed, and reachable from pushed remote ref
+bash scripts/prereg-guard.sh --head "bench/loop/runs/<label>/prereg.md" [origin/<branch>|origin/main]
+
+# 3. Memory preflight check before model load
+preflight
+```
+
+The guard script `scripts/prereg-guard.sh [--head] <prereg-path> [remote-ref]` verifies:
+- The prereg file exists, is inside the repository, and is not empty.
+- The file is tracked by git without skip-worktree or assume-unchanged flags.
+- Has no uncommitted changes (worktree hash matches HEAD blob).
+- The commit containing it (or HEAD if `--head`) is reachable from the pushed remote branch (`origin/<branch>` or `origin/main`), verified via `git ls-remote` and `git merge-base --is-ancestor`.
+- Prints the prereg commit SHA and remote ref on success; exits non-zero with a clear message otherwise.
 
 ## During
 
