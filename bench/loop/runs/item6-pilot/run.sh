@@ -23,6 +23,7 @@ REMOTE_REF="${REMOTE_REF:-origin/main}"
 QWEN_MODEL_PATH="/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
 INVITE_OPTS=(--ctx 65536 --np 2)
 PARALLEL=2
+CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
 
 # Refuse to run when WT or EXPECT_HEAD is still the placeholder or empty
 if [[ -z "$WT" || "$WT" == "<path-to-clean-worktree>" || "$WT" == "<"*">" ]]; then
@@ -127,12 +128,32 @@ TASKS=(
 )
 
 export PYTHONUNBUFFERED=1
+gpu_start=$(date +%s)
 for task_id in "${TASKS[@]}"; do
-  echo "=== Starting task $task_id $(date -Iseconds) ==="
+  elapsed=$(( $(date +%s) - gpu_start ))
+  remaining=$(( CEILING_SECONDS - elapsed ))
+  if [[ $remaining -le 0 ]]; then
+    echo "incomplete ceiling_exceeded wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
+    echo "ERROR: GPU run exceeded the 1.2 h ceiling (${CEILING_SECONDS}s) before task $task_id; stopping and recording incomplete run."
+    exit 124
+  fi
+  echo "=== Starting task $task_id $(date -Iseconds) (remaining_ceiling=${remaining}s) ==="
   t0=$(date +%s.%N)
   echo "STEP_START item6-pilot $task_id $(date -u +%FT%TZ) $t0"
   
-  scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label item6-pilot --tasks "$task_id"
+  set +e
+  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label item6-pilot --tasks "$task_id"
+  step_rc=$?
+  set -e
+  if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
+    elapsed=$(( $(date +%s) - gpu_start ))
+    echo "incomplete ceiling_exceeded task=$task_id wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
+    echo "ERROR: GPU run hit the 1.2 h ceiling (${CEILING_SECONDS}s) during task $task_id (rc=$step_rc); stopping and recording incomplete run."
+    exit 124
+  elif [[ $step_rc -ne 0 ]]; then
+    echo "ERROR: task $task_id exited with rc=$step_rc"
+    exit "$step_rc"
+  fi
   
   t1=$(date +%s.%N)
   echo "STEP_END item6-pilot $task_id $(date -u +%FT%TZ) $t1"

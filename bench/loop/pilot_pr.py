@@ -54,58 +54,126 @@ def build_minimal_env(home_dir=None, tmp_dir=None):
 
 
 def prepare_isolated_home_and_tmp(base_dir):
-    """Create or recreate fresh empty HOME and TMPDIR directories sibling to base_dir."""
+    """Create fresh empty HOME, TMPDIR, and private (mode 0700) inner-bwrap wrapper directories."""
     root = os.path.abspath(base_dir)
     home_dir = root + "_home"
     tmp_dir = root + "_tmp"
-    for d in (home_dir, tmp_dir):
+    shim_dir = root + "_shim"
+    for d in (home_dir, tmp_dir, shim_dir):
         if os.path.exists(d):
             shutil.rmtree(d, ignore_errors=True)
-        os.makedirs(d, exist_ok=True)
-    return home_dir, tmp_dir
+    os.makedirs(home_dir, mode=0o700, exist_ok=False)
+    os.makedirs(tmp_dir, mode=0o700, exist_ok=False)
+    os.makedirs(shim_dir, mode=0o700, exist_ok=False)
+    _write_inner_bwrap_wrapper(shim_dir)
+    return home_dir, tmp_dir, shim_dir
 
 
 def cleanup_isolated_home_and_tmp(base_dir):
-    """Remove the sibling _home, _tmp, and _bwrap_outer directories for base_dir."""
+    """Remove the sibling _home, _tmp, and _shim directories for base_dir."""
     root = os.path.abspath(base_dir)
-    for suffix in ("_home", "_tmp", "_bwrap_outer"):
+    for suffix in ("_home", "_tmp", "_shim"):
         d = root + suffix
         if os.path.exists(d):
             shutil.rmtree(d, ignore_errors=True)
 
 
-def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, inner_argv, env_dict):
-    """Wrap inner_argv in an outer bubblewrap sandbox that isolates filesystem, PID, and network namespaces.
+def _write_inner_bwrap_wrapper(shim_dir):
+    """Write a fresh inner `bwrap` wrapper script in shim_dir (mode 0700, created exclusively).
+
+    When running inside the outer `/usr/bin/bwrap` sandbox (which already isolates the user, mount,
+    PID, network, IPC, and UTS namespaces), inner `bwrap` calls from `run.py` cannot create a second
+    user namespace under Ubuntu AppArmor's `bwrap//&unpriv_bwrap` profile. This wrapper parses
+    `run.py`'s bwrap arguments (`--bind`, `--chdir`, `--clearenv`, `--setenv`, `--new-session`) and
+    execs the candidate payload directly inside the existing namespace in its isolated scratch directory
+    (`/tmp/loopgrade-*`), while `grade` unlinks the graded test files from `/work` before running the
+    tests so the candidate cannot see the graded test files.
+    """
+    shim_path = os.path.join(shim_dir, "bwrap")
+    script = (
+        "#!/usr/bin/env bash\n"
+        "set -e\n"
+        "chdir_to=\"\"\n"
+        "new_sess=0\n"
+        "declare -A bind_map\n"
+        "env_args=()\n"
+        "clear_env=0\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    --bind)\n"
+        "      bind_map[\"$3\"]=\"$2\"\n"
+        "      shift 3 ;;\n"
+        "    --ro-bind|--symlink)\n"
+        "      shift 3 ;;\n"
+        "    --proc|--dev|--tmpfs|--dir)\n"
+        "      shift 2 ;;\n"
+        "    --chdir)\n"
+        "      chdir_to=\"$2\"\n"
+        "      shift 2 ;;\n"
+        "    --setenv)\n"
+        "      env_args+=(\"$2=$3\")\n"
+        "      shift 3 ;;\n"
+        "    --clearenv)\n"
+        "      clear_env=1\n"
+        "      shift ;;\n"
+        "    --new-session)\n"
+        "      new_sess=1\n"
+        "      shift ;;\n"
+        "    --*)\n"
+        "      shift ;;\n"
+        "    *)\n"
+        "      break ;;\n"
+        "  esac\n"
+        "done\n"
+        "if [[ -n \"$chdir_to\" ]]; then\n"
+        "  target_cwd=\"${bind_map[$chdir_to]:-$chdir_to}\"\n"
+        "  cd \"$target_cwd\"\n"
+        "fi\n"
+        "cmd=(\"$@\")\n"
+        "if [[ $clear_env -eq 1 ]]; then\n"
+        "  cmd=(/usr/bin/env -i \"${env_args[@]}\" \"${cmd[@]}\")\n"
+        "elif [[ ${#env_args[@]} -gt 0 ]]; then\n"
+        "  cmd=(/usr/bin/env \"${env_args[@]}\" \"${cmd[@]}\")\n"
+        "fi\n"
+        "if [[ $new_sess -eq 1 ]]; then\n"
+        "  exec /usr/bin/setsid \"${cmd[@]}\"\n"
+        "else\n"
+        "  exec \"${cmd[@]}\"\n"
+        "fi\n"
+    )
+    fd = os.open(shim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(script)
+    return shim_path
+
+
+def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict):
+    """Wrap inner_argv in an outer /usr/bin/bwrap sandbox that isolates filesystem, PID, and network namespaces.
 
     Sandbox invariants:
-    - Fails closed if /usr/bin/bwrap (or bwrap in PATH) is missing.
-    - Copies /usr/bin/bwrap to a temporary executable path outside /usr/bin/bwrap so Ubuntu AppArmor's
-      /usr/bin/bwrap profile does not stack `unpriv_bwrap` (which denies CAP_SYS_ADMIN to nested bwrap
-      invocations inside #6, #13, and #16 selftests).
-    - Read-only binds /usr, /bin, /lib, /lib64, /etc; mounts fresh --dev /dev and --proc /proc;
-      mounts fresh --tmpfs over /tmp, /home, and /data so the main checkout (/home/aj/projects/strix-halo-lab),
-      this worktree, /data, and the real user home directory are completely absent and unreadable.
-    - Writable binds ONLY task_dir (at /work), home_dir (at /home/pilot), and tmp_dir (at /tmp), with --chdir /work.
-    - Uses --unshare-user, --unshare-pid, --unshare-net, --unshare-ipc, --unshare-uts, --die-with-parent, --clearenv.
+    - Always invokes the system `/usr/bin/bwrap` directly (never copies the binary).
+    - Fails closed if `/usr/bin/bwrap` is missing.
+    - Read-only binds `/usr`, `/bin`, `/lib`, `/lib64`, `/etc` and mounts the private `shim_dir` read-only at
+      `/pilot_shim` (placed first on `PATH` so inner `bwrap` calls from `run.py` invoke the wrapper in the
+      already-isolated namespace without creating a second user namespace).
+    - Mounts fresh `--dev /dev` and `--proc /proc`, and fresh `--tmpfs` over `/tmp`, `/home`, and `/data`
+      so the main checkout (`/home/aj/projects/strix-halo-lab`), this worktree, `/data`, and the real user
+      home directory are absent and unreadable.
+    - Writable binds ONLY `task_dir` (at `/work`), `home_dir` (at `/home/pilot`), and `tmp_dir` (at `/tmp`),
+      with `--chdir /work`.
     """
-    bwrap_bin = "/usr/bin/bwrap" if os.path.exists("/usr/bin/bwrap") else shutil.which("bwrap")
-    if not bwrap_bin or not os.path.exists(bwrap_bin):
-        raise RuntimeError("bwrap (/usr/bin/bwrap) is required for sandboxed execution; refusing to run unsandboxed")
-
-    outer_bin_dir = os.path.abspath(task_dir) + "_bwrap_outer"
-    os.makedirs(outer_bin_dir, exist_ok=True)
-    outer_bwrap = os.path.join(outer_bin_dir, "bwrap_outer")
-    if not os.path.exists(outer_bwrap):
-        shutil.copy2(bwrap_bin, outer_bwrap)
-        os.chmod(outer_bwrap, 0o755)
+    bwrap_bin = "/usr/bin/bwrap"
+    if not os.path.exists(bwrap_bin):
+        raise RuntimeError("/usr/bin/bwrap is required for sandboxed execution; refusing to run unsandboxed")
 
     cmd = [
-        outer_bwrap,
+        bwrap_bin,
         "--ro-bind", "/usr", "/usr",
         "--symlink", "usr/lib", "/lib",
         "--symlink", "usr/lib64", "/lib64",
         "--symlink", "usr/bin", "/bin",
         "--ro-bind", "/etc", "/etc",
+        "--ro-bind", os.path.abspath(shim_dir), "/pilot_shim",
         "--proc", "/proc",
         "--dev", "/dev",
         "--tmpfs", "/tmp",
@@ -126,7 +194,7 @@ def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, inner_argv, env_dict):
     sandbox_env = dict(env_dict)
     sandbox_env["HOME"] = "/home/pilot"
     sandbox_env["TMPDIR"] = "/tmp"
-    sandbox_env["PATH"] = FIXED_SYSTEM_PATH
+    sandbox_env["PATH"] = f"/pilot_shim:{FIXED_SYSTEM_PATH}"
     for k, v in sorted(sandbox_env.items()):
         cmd.extend(["--setenv", str(k), str(v)])
     cmd.extend(inner_argv)
@@ -177,17 +245,13 @@ def _wrap_shell_with_isolated_python3(cmd, task_dir="/work"):
 
 
 def has_bwrap():
-    """Return True if bwrap is installed and can create a basic user/mount namespace sandbox (including via a temporary copy for nested bwrap)."""
-    bwrap_bin = "/usr/bin/bwrap" if os.path.exists("/usr/bin/bwrap") else shutil.which("bwrap")
-    if not bwrap_bin or not os.path.exists(bwrap_bin):
+    """Return True if /usr/bin/bwrap is installed and can create a user/mount namespace sandbox directly."""
+    bwrap_bin = "/usr/bin/bwrap"
+    if not os.path.exists(bwrap_bin):
         return False
-    tmp_d = tempfile.mkdtemp(prefix="pilot_bwrap_chk_")
     try:
-        outer_bw = os.path.join(tmp_d, "bwrap_outer")
-        shutil.copy2(bwrap_bin, outer_bw)
-        os.chmod(outer_bw, 0o755)
         res = subprocess.run(
-            [outer_bw, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+            [bwrap_bin, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
              "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-all", "true"],
             capture_output=True,
             timeout=5,
@@ -196,8 +260,6 @@ def has_bwrap():
         return res.returncode == 0
     except Exception:
         return False
-    finally:
-        shutil.rmtree(tmp_d, ignore_errors=True)
 
 
 
@@ -447,9 +509,9 @@ def run_tests(task, worktree_dir, timeout=60):
         raise RuntimeError("bwrap sandbox is unavailable; refusing to execute run_tests unsandboxed")
 
     iso_cmd = _wrap_shell_with_isolated_python3(cmd, "/work")
-    home_dir, tmp_dir = prepare_isolated_home_and_tmp(worktree_dir)
+    home_dir, tmp_dir, shim_dir = prepare_isolated_home_and_tmp(worktree_dir)
     env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
-    bwrap_argv = build_outer_bwrap_cmd(worktree_dir, home_dir, tmp_dir, ["bash", "-c", iso_cmd], env)
+    bwrap_argv = build_outer_bwrap_cmd(worktree_dir, home_dir, tmp_dir, shim_dir, ["bash", "-c", iso_cmd], env)
     try:
         res = subprocess.run(
             bwrap_argv,
@@ -994,14 +1056,14 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
     """
     if not has_bwrap():
         raise RuntimeError("bwrap sandbox is unavailable; refusing to execute grade unsandboxed")
-    home_dir, tmp_dir = prepare_isolated_home_and_tmp(grade_dir)
+    home_dir, tmp_dir, shim_dir = prepare_isolated_home_and_tmp(grade_dir)
     clean_env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
     merged_sha = dict.__getitem__(task, "merged_commit")
     spec = task.get("grade_spec")
     sentinel = f"@@PILOT_GRADE_OK_{secrets.token_hex(16)}@@"
 
     def run_in_sandbox(inner_argv, stdin_data=None):
-        bwrap_cmd = build_outer_bwrap_cmd(grade_dir, home_dir, tmp_dir, inner_argv, clean_env)
+        bwrap_cmd = build_outer_bwrap_cmd(grade_dir, home_dir, tmp_dir, shim_dir, inner_argv, clean_env)
         return subprocess.run(
             bwrap_cmd,
             input=stdin_data,
@@ -1059,17 +1121,13 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
 
         if mode == "selftest_file":
             st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
-            st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
-            with open(st_path, "w", encoding="utf-8") as f:
-                f.write(st_code)
             driver = (
                 stdin_token_preamble
                 + "import contextlib, io\n"
+                + f"st_src = {st_code!r}\n"
                 + f"sys.path.insert(0, os.path.join('/work', {spec['module_dir']!r}))\n"
                 + f"import {spec['module_name']} as mod\n"
-                + "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
-                + "    st_src = f.read()\n"
-                + "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+                + "exec(compile(st_src, '<merged_selftest>', 'exec'), mod.__dict__)\n"
                 + "buf = io.StringIO()\n"
                 + "with contextlib.redirect_stdout(buf):\n"
                 + "    rc = mod.selftest()\n"
@@ -1084,17 +1142,30 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + "    sys.exit(1)\n"
             )
             res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
-            if os.path.exists(st_path):
-                os.remove(st_path)
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 
         if mode == "unittest":
+            test_mod_path = os.path.join(grade_dir, spec["test_module"])
+            with open(test_mod_path, "r", encoding="utf-8") as f:
+                test_mod_src = f.read()
+            for tf in task.get("test_files", []):
+                tf_p = os.path.join(grade_dir, tf)
+                if os.path.exists(tf_p) and tf != spec["test_module"]:
+                    pass
+            os.remove(test_mod_path)
             driver = (
                 stdin_token_preamble
-                + "import unittest\n"
+                + "import os, types, unittest\n"
                 + "sys.path.insert(0, os.path.join('/work', 'bench/loop'))\n"
-                + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+                + "tmod = types.ModuleType('_graded_tests')\n"
+                + f"tmod.__file__ = {os.path.join('/work', spec['test_module'])!r}\n"
+                + f"exec(compile({test_mod_src!r}, '<graded_tests>', 'exec'), tmod.__dict__)\n"
+                + f"for _tf in {task.get('test_files', [])!r}:\n"
+                + "    _p = os.path.join('/work', _tf)\n"
+                + "    if os.path.exists(_p):\n"
+                + "        os.remove(_p)\n"
+                + "suite = unittest.defaultTestLoader.loadTestsFromModule(tmod)\n"
                 + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
                 + "result = runner.run(suite)\n"
                 + f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
@@ -1113,23 +1184,26 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
 
         if mode == "unittest_and_selftest_file":
             st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
-            st_path = os.path.join(grade_dir, "_pilot_merged_selftest.py")
-            with open(st_path, "w", encoding="utf-8") as f:
-                f.write(st_code)
+            test_mod_path = os.path.join(grade_dir, spec["test_module"])
+            with open(test_mod_path, "r", encoding="utf-8") as f:
+                test_mod_src = f.read()
+            os.remove(test_mod_path)
             driver = (
                 stdin_token_preamble
-                + "import contextlib, io, unittest\n"
+                + "import contextlib, io, types, unittest\n"
                 + f"sys.path.insert(0, os.path.join('/work', {spec['module_dir']!r}))\n"
-                + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
+                + "tmod = types.ModuleType('_graded_tests')\n"
+                + f"tmod.__file__ = {os.path.join('/work', spec['test_module'])!r}\n"
+                + f"exec(compile({test_mod_src!r}, '<graded_tests>', 'exec'), tmod.__dict__)\n"
+                + "suite = unittest.defaultTestLoader.loadTestsFromModule(tmod)\n"
                 + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
                 + "result = runner.run(suite)\n"
                 + f"if not result.wasSuccessful() or result.testsRun != {spec['expected_test_count']} or len(result.skipped) > 0:\n"
                 + f"    print(f'[grade_wrapper: unittest ran={{result.testsRun}}/{spec['expected_test_count']}]')\n"
                 + "    sys.exit(1)\n"
                 + f"import {spec['module_name']} as mod\n"
-                + "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
-                + "    st_src = f.read()\n"
-                + "exec(compile(st_src, '_pilot_merged_selftest.py', 'exec'), mod.__dict__)\n"
+                + f"st_src = {st_code!r}\n"
+                + "exec(compile(st_src, '<merged_selftest>', 'exec'), mod.__dict__)\n"
                 + "buf = io.StringIO()\n"
                 + "with contextlib.redirect_stdout(buf):\n"
                 + "    rc = mod.selftest()\n"
@@ -1144,8 +1218,6 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + "    sys.exit(1)\n"
             )
             res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
-            if os.path.exists(st_path):
-                os.remove(st_path)
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 
@@ -1259,8 +1331,6 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         if has_tests:
             testable_total += 1
             passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
-            if passed:
-                testable_passed += 1
         else:
             passed = None
             grade_test_out = ""
@@ -1282,9 +1352,21 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
                 raise ValueError(f"Review record for {tid} has missing or invalid verdict: {rev!r}")
             if "hand_fix_lines" not in rev or rev["hand_fix_lines"] is None or isinstance(rev["hand_fix_lines"], bool) or not isinstance(rev["hand_fix_lines"], (int, float)):
                 raise ValueError(f"Review record for {tid} is missing numeric hand_fix_lines: {rev!r}")
+            if "tamper" not in rev or not isinstance(rev["tamper"], bool):
+                raise ValueError(f"Review record for {tid} is missing required boolean 'tamper' field: {rev!r}")
+            tamper = rev["tamper"]
+            fresh_session = rev.get("fresh_session")
+            if fresh_session is False:
+                raise ValueError(f"Review record for {tid} must use a fresh reviewer session (fresh_session=False)")
             hf_lines = rev["hand_fix_lines"]
-            is_app1 = v1 in ("APPROVE", "APPROVE-WITH-NITS")
-            is_app_final = v_final in ("APPROVE", "APPROVE-WITH-NITS")
+            if tamper:
+                if has_tests:
+                    passed = False
+                is_app1 = False
+                is_app_final = False
+            else:
+                is_app1 = v1 in ("APPROVE", "APPROVE-WITH-NITS")
+                is_app_final = v_final in ("APPROVE", "APPROVE-WITH-NITS")
             if is_app1:
                 approved_first += 1
             if is_app_final:
@@ -1295,6 +1377,11 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             v1 = None
             v_final = None
             hf_lines = None
+            tamper = None
+            fresh_session = None
+
+        if has_tests and passed:
+            testable_passed += 1
 
         per_task.append({
             "task_id": tid,
@@ -1302,6 +1389,8 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             "has_tests": has_tests,
             "in_loop_passed": in_loop_passed,
             "test_passed": passed,
+            "tamper": tamper,
+            "fresh_session": fresh_session,
             "stop_reason": row.get("stop_reason"),
             "turns_executed": row.get("turns_executed"),
             "total_completion_tokens": row.get("total_completion_tokens"),

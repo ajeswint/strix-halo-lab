@@ -353,7 +353,7 @@ class TestPilotPr(unittest.TestCase):
             self.assertEqual(g_pending["testable_tasks"], 6)
             self.assertEqual(g_pending["decision"], "PENDING_REVIEW")
 
-            # 2) With reviews meeting KEEP bar (4/6 tests pass, 4/7 approved, avg hand-fix 5 <= 20)
+            # 2) With reviews meeting KEEP bar (4/6 tests pass, 4/7 approved, avg hand-fix 5 <= 20, tamper=False)
             rev_path = os.path.join(results_dir, "full-batch.reviews.json")
             reviews = {}
             for i, t in enumerate(all_tasks):
@@ -361,6 +361,8 @@ class TestPilotPr(unittest.TestCase):
                     "first_verdict": "APPROVE" if i < 3 else "REQUEST-CHANGES",
                     "final_verdict": "APPROVE-WITH-NITS" if i < 4 else "REQUEST-CHANGES",
                     "hand_fix_lines": 5 if i < 4 else 0,
+                    "tamper": False,
+                    "fresh_session": True,
                 }
             with open(rev_path, "w") as rf:
                 pilot_pr.json.dump(reviews, rf)
@@ -701,16 +703,60 @@ class TestPilotPr(unittest.TestCase):
             # 1. Missing hand_fix_lines -> must raise ValueError, not default to 0
             rev_missing_hf = os.path.join(results_dir, "missing_hf.json")
             with open(rev_missing_hf, "w") as f:
-                pilot_pr.json.dump({task["id"]: {"verdict": "APPROVE"}}, f)
+                pilot_pr.json.dump({task["id"]: {"verdict": "APPROVE", "tamper": False}}, f)
             with self.assertRaises(ValueError):
                 pilot_pr.grade_subcommand("revcheck", reviews_file=rev_missing_hf, results_dir=results_dir, tasks_override=[task])
 
             # 2. Missing verdict -> must raise ValueError
             rev_missing_v = os.path.join(results_dir, "missing_v.json")
             with open(rev_missing_v, "w") as f:
-                pilot_pr.json.dump({task["id"]: {"hand_fix_lines": 5}}, f)
+                pilot_pr.json.dump({task["id"]: {"hand_fix_lines": 5, "tamper": False}}, f)
             with self.assertRaises(ValueError):
                 pilot_pr.grade_subcommand("revcheck", reviews_file=rev_missing_v, results_dir=results_dir, tasks_override=[task])
+
+            # 3. Missing tamper -> must raise ValueError
+            rev_missing_tamper = os.path.join(results_dir, "missing_tamper.json")
+            with open(rev_missing_tamper, "w") as f:
+                pilot_pr.json.dump({task["id"]: {"verdict": "APPROVE", "hand_fix_lines": 5}}, f)
+            with self.assertRaises(ValueError):
+                pilot_pr.grade_subcommand("revcheck", reviews_file=rev_missing_tamper, results_dir=results_dir, tasks_override=[task])
+
+            # 4. Tamper=True on a passing testable task -> forces test_passed=False and approved=0
+            t_testable = tasks_item6.get_task("item6_pr14")
+            hd14 = tasks_item6.get_hidden_diff(t_testable)
+            with open(jsonl_path, "w") as f:
+                f.write(
+                    pilot_pr.json.dumps({
+                        "task_id": t_testable["id"],
+                        "pr_number": t_testable["pr_number"],
+                        "has_tests": True,
+                        "passed": True,
+                        "stop_reason": "pass",
+                        "turns_executed": 1,
+                        "total_completion_tokens": 50,
+                        "wall_s": 1.0,
+                        "final_diff": hd14,
+                    }) + "\n"
+                )
+            rev_tamper_true = os.path.join(results_dir, "tamper_true.json")
+            with open(rev_tamper_true, "w") as f:
+                pilot_pr.json.dump({
+                    t_testable["id"]: {
+                        "verdict": "APPROVE",
+                        "hand_fix_lines": 0,
+                        "tamper": True,
+                        "fresh_session": True,
+                    }
+                }, f)
+            g_tamper = pilot_pr.grade_subcommand(
+                "revcheck",
+                reviews_file=rev_tamper_true,
+                results_dir=results_dir,
+                tasks_override=[t_testable],
+            )
+            self.assertEqual(g_tamper["testable_passed"], 0, "tamper=True must count as test FAIL!")
+            self.assertFalse(g_tamper["per_task"][0]["test_passed"])
+            self.assertEqual(g_tamper["approved_final"], 0, "tamper=True must count as non-approved!")
         finally:
             shutil.rmtree(results_dir, ignore_errors=True)
 
@@ -872,12 +918,62 @@ class TestPilotPr(unittest.TestCase):
             self.assertFalse(os.path.exists(host_tmp_probe), "/tmp write during grade must not appear on host /tmp!")
             self.assertFalse(os.path.exists(host_home_probe), "HOME write during grade must not appear in real HOME!")
 
-            # 2. Verify nested bwrap works for real PR #6 and PR #16 regrades
-            for tid in ("item6_pr06", "item6_pr16"):
+            # 2. Verify inner bwrap wrapper works for real PR #6, #13, and #16 regrades,
+            #    that graded test files are not visible to candidate code under test,
+            #    and that only ONE user namespace is created per run (comparing /proc/self/ns/user).
+            for tid in ("item6_pr06", "item6_pr13", "item6_pr16"):
                 t_nested = tasks_item6.get_task(tid)
                 hd = tasks_item6.get_hidden_diff(t_nested, repo_root=repo_root)
-                ok_nested, out_nested = pilot_pr.regrade_task_diff(t_nested, hd, repo_root=repo_root, timeout=120)
-                self.assertTrue(ok_nested, f"Nested bwrap regrade failed for {tid}: {out_nested[-600:]}")
+                ok_nested, out_nested = pilot_pr.regrade_task_diff(t_nested, hd, repo_root=repo_root, timeout=180)
+                self.assertTrue(ok_nested, f"Inner bwrap wrapper regrade failed for {tid}: {out_nested[-600:]}")
+
+            # Verify only ONE user namespace is created (outer /proc/self/ns/user == inner candidate /proc/self/ns/user != host /proc/self/ns/user)
+            # and graded test files (e.g. /work/bench/loop/test_ground.py, /work/_pilot_merged_selftest.py) are absent inside candidate
+            host_userns = os.readlink("/proc/self/ns/user")
+            home_d, tmp_d, shim_d = pilot_pr.prepare_isolated_home_and_tmp(scratch_dir)
+            try:
+                env_ns = pilot_pr.build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+                ns_check_py = (
+                    "import os, subprocess, sys\n"
+                    "outer_ns = os.readlink('/proc/self/ns/user')\n"
+                    "inner_out = subprocess.check_output(['bwrap', '--ro-bind', '/usr', '/usr', '--bind', '/tmp', '/w', '--chdir', '/w', '--unshare-all', 'python3', '-I', '-c', 'import os; print(os.readlink(\"/proc/self/ns/user\"))'], text=True).strip()\n"
+                    "print('OUTER_NS=' + outer_ns)\n"
+                    "print('INNER_NS=' + inner_out)\n"
+                    "assert outer_ns == inner_out, f'Expected 1 userns, got {outer_ns} vs {inner_out}'\n"
+                )
+                bw_cmd = pilot_pr.build_outer_bwrap_cmd(
+                    scratch_dir, home_d, tmp_d, shim_d, ["python3", "-I", "-c", ns_check_py], env_ns
+                )
+                # Confirm /usr/bin/bwrap is invoked directly as argv[0]
+                self.assertEqual(bw_cmd[0], "/usr/bin/bwrap")
+                res_ns = subprocess.run(bw_cmd, capture_output=True, text=True, timeout=15)
+                self.assertEqual(res_ns.returncode, 0, res_ns.stderr)
+                self.assertIn("OUTER_NS=", res_ns.stdout)
+                outer_ns_line = [l.split("=", 1)[1] for l in res_ns.stdout.splitlines() if l.startswith("OUTER_NS=")][0]
+                inner_ns_line = [l.split("=", 1)[1] for l in res_ns.stdout.splitlines() if l.startswith("INNER_NS=")][0]
+                self.assertEqual(outer_ns_line, inner_ns_line, "Inner bwrap wrapper must reuse the outer user namespace!")
+                self.assertNotEqual(outer_ns_line, host_userns, "Outer bwrap must create a new user namespace distinct from host!")
+            finally:
+                pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
+
+            # Verify graded test files are not visible on disk inside /work during grade
+            t16 = tasks_item6.get_task("item6_pr16")
+            pilot_pr.create_isolated_scratch_repo(repo_root, t16["base_commit"], scratch_dir)
+            check_hidden_tests_code = (
+                "import os, sys\n"
+                "if os.path.exists('/work/bench/loop/test_ground.py') or os.path.exists('/work/_pilot_merged_selftest.py'):\n"
+                "    print('GRADED_TEST_FILE_VISIBLE')\n"
+                "else:\n"
+                "    print('GRADED_TEST_FILE_HIDDEN')\n"
+                "sys.exit(1)\n"
+            )
+            with open(os.path.join(scratch_dir, "bench", "loop", "ground.py"), "w") as f:
+                f.write(check_hidden_tests_code)
+            diff_t16 = pilot_pr.capture_worktree_diff(scratch_dir, t16["base_commit"])
+            ok16, out16 = pilot_pr.regrade_task_diff(t16, diff_t16, repo_root=repo_root, timeout=30)
+            self.assertFalse(ok16)
+            self.assertIn("GRADED_TEST_FILE_HIDDEN", out16)
+            self.assertNotIn("GRADED_TEST_FILE_VISIBLE", out16)
 
             # 3. Verify fail-closed when bwrap is unavailable
             orig_has_bwrap = pilot_pr.has_bwrap
