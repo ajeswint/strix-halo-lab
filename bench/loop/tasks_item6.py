@@ -6,13 +6,20 @@ Each task defines:
   - id, pr_number, title
   - base_commit, merged_commit
   - has_tests (bool): whether reproducible test/check command exists
-  - test_cmd (str): automated verification command to run on CPU
+  - test_cmd (str): automated verification command to run on CPU (must be "" when has_tests is False)
   - prompt (str): instructions shown to the model loop (task statement, rules, target files)
   - files (list[str]): expected target paths
   - hidden_diff: ground truth merged diff (held out, stripped from model loop via strip_hidden)
 """
 import copy
+from datetime import datetime, timezone
+import os
+import re
 import subprocess
+
+PR_SELECTION_WINDOW_START = "2026-11-06T00:00:00Z"
+PR_SELECTION_WINDOW_END = "2026-11-18T05:00:00Z"
+PR_SELECTION_HEAD_COMMIT = "dbf6a2cb442188dd8ad41811f548541130ae6320"  # PR #20 merge commit on main
 
 PR_TASKS = [
     {
@@ -139,7 +146,7 @@ PR_TASKS = [
         "base_commit": "af2b1a5c4ca765fd411f9e9f9d48c2d099420722",
         "merged_commit": "6c56cc09eaafb2376422e73515b39f8193893740",
         "has_tests": False,
-        "test_cmd": "bash tools/lab-seats/test.sh",
+        "test_cmd": "",
         "files": [
             ".claude/agents/evaluator.md",
             ".claude/agents/systems.md",
@@ -166,8 +173,7 @@ PR_TASKS = [
             "Requirements:\n"
             "1. Fix stale paths, references, and descriptions in `.claude/agents/`, `.claude/skills/`, and `docs/`.\n"
             "2. Update the writer seat from Argon to Gemini 3.8 Flash (`gemini-3.8-flash-high`) across "
-            "`docs/review-roles.md`, `docs/antigravity-writer.md`, `AGENTS.md`, and `CLAUDE.md`.\n"
-            "3. Verify lab-seats launcher test passes with `bash tools/lab-seats/test.sh`."
+            "`docs/review-roles.md`, `docs/antigravity-writer.md`, `AGENTS.md`, and `CLAUDE.md`."
         ),
     },
     {
@@ -243,19 +249,21 @@ def get_task(task_id_or_number):
 def strip_hidden(task):
     """Strip reference diff and merge commits to prevent leakage into model loops.
 
-    Returns a shallow copy containing only prompt, id, pr_number, title, base_commit,
-    has_tests, test_cmd, and target files.
+    Safe to call on tripwire dictionary subclasses without triggering __getitem__ or get()
+    for hidden keys ('hidden_diff', 'merged_commit').
     """
-    clean = dict(task)
-    clean.pop("hidden_diff", None)
-    clean.pop("merged_commit", None)
+    allowed_keys = ("id", "pr_number", "title", "base_commit", "has_tests", "test_cmd", "files", "prompt")
+    clean = {}
+    for k in allowed_keys:
+        if dict.__contains__(task, k):
+            clean[k] = dict.__getitem__(task, k)
     return clean
 
 
 def get_hidden_diff(task, repo_root=None):
     """Retrieve ground truth diff between base_commit and merged_commit for offline grading."""
-    base = task["base_commit"]
-    merged = task["merged_commit"]
+    base = dict.__getitem__(task, "base_commit")
+    merged = dict.__getitem__(task, "merged_commit")
     cmd = ["git", "diff", f"{base}..{merged}"]
     if repo_root:
         cmd = ["git", "-C", repo_root, "diff", f"{base}..{merged}"]
@@ -263,3 +271,126 @@ def get_hidden_diff(task, repo_root=None):
         return subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
     except Exception as e:
         return f"# Error retrieving hidden diff: {e}"
+
+
+def enumerate_and_filter_prs(repo_root=None, head_ref=PR_SELECTION_HEAD_COMMIT):
+    """Mechanically enumerate merged PRs from git history and apply the pre-registered selection filter.
+
+    Filter criteria (docs/item6-pilot.md Section 4):
+    1. First-parent merge commits on main up to head_ref with subject matching 'Merge (pull request|PR) #N'.
+    2. Merge commit timestamp within [2026-11-06T00:00:00Z, 2026-11-18T05:00:00Z].
+    3. Exclusions:
+       a. Pre-Antigravity bootstrap / soft-nit chase under the retired dual-Claude Sonnet roster:
+          `docs/antigravity-writer.md` does not exist in the merged commit (`! git cat-file -e <merged>:docs/antigravity-writer.md`)
+          AND `tools/lab-seats/launch.sh` is among modified files (excludes PR #4 and PR #5, which built/chased
+          the retired dual-Claude launcher before Antigravity became the standing writer seat in PR #8).
+       b. GPU benchmark run result check-ins: >50% of modified files are under `bench/loop/results/` or `bench/loop/runs/`
+          (excludes PR #17, PR #18, PR #19).
+       c. Single-file `README.md`-only updates (`changed_files == ["README.md"]`, excludes PR #7, PR #9, PR #10).
+
+    Returns (selected_prs: list[dict], excluded_prs: list[dict]).
+    """
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+    t_start = datetime.fromisoformat(PR_SELECTION_WINDOW_START.replace("Z", "+00:00"))
+    t_end = datetime.fromisoformat(PR_SELECTION_WINDOW_END.replace("Z", "+00:00"))
+
+    log_out = subprocess.check_output(
+        ["git", "-C", repo_root, "log", "--merges", "--first-parent", "--format=%H|%P|%cI|%s", head_ref],
+        text=True,
+    )
+
+    selected = []
+    excluded = []
+
+    for line in log_out.strip().splitlines():
+        if not line.strip():
+            continue
+        sha, parents_str, ts_str, subj = line.split("|", 3)
+        m = re.search(r"Merge (?:pull request|PR) #(\d+)", subj)
+        if not m:
+            continue
+        pr_num = int(m.group(1))
+        parents = parents_str.split()
+        base_sha = parents[0]
+
+        commit_dt = datetime.fromisoformat(ts_str).astimezone(timezone.utc)
+        if not (t_start <= commit_dt <= t_end):
+            excluded.append({"pr_number": pr_num, "reason": "outside_date_window", "merged_commit": sha, "base_commit": base_sha})
+            continue
+
+        files_out = subprocess.check_output(
+            ["git", "-C", repo_root, "diff", "--name-only", f"{base_sha}..{sha}"],
+            text=True,
+        )
+        changed_files = sorted(f.strip() for f in files_out.splitlines() if f.strip())
+
+        # Check (a): Pre-Antigravity dual-Claude seat bootstrap / soft-nit chase
+        ag_writer_in_merged = (
+            subprocess.run(
+                ["git", "-C", repo_root, "cat-file", "-e", f"{sha}:docs/antigravity-writer.md"],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+        if not ag_writer_in_merged and "tools/lab-seats/launch.sh" in changed_files:
+            excluded.append({
+                "pr_number": pr_num,
+                "reason": "pre_antigravity_claude_seat_setup",
+                "merged_commit": sha,
+                "base_commit": base_sha,
+                "files": changed_files,
+            })
+            continue
+
+        # Check (b): GPU benchmark result check-ins (>50% files in bench/loop/results/ or bench/loop/runs/)
+        result_files = [
+            f for f in changed_files if f.startswith("bench/loop/results/") or f.startswith("bench/loop/runs/")
+        ]
+        if changed_files and (len(result_files) / len(changed_files)) > 0.5:
+            excluded.append({
+                "pr_number": pr_num,
+                "reason": "gpu_result_checkin",
+                "merged_commit": sha,
+                "base_commit": base_sha,
+                "files": changed_files,
+            })
+            continue
+
+        # Check (c): Single-file README.md-only note/nit updates
+        if changed_files == ["README.md"]:
+            excluded.append({
+                "pr_number": pr_num,
+                "reason": "single_file_readme_only",
+                "merged_commit": sha,
+                "base_commit": base_sha,
+                "files": changed_files,
+            })
+            continue
+
+        selected.append({
+            "pr_number": pr_num,
+            "merged_commit": sha,
+            "base_commit": base_sha,
+            "merged_at_utc": commit_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "files": changed_files,
+            "subject": subj,
+        })
+
+    selected.sort(key=lambda x: x["pr_number"])
+    excluded.sort(key=lambda x: x["pr_number"])
+    return selected, excluded
+
+
+if __name__ == "__main__":
+    sel, exc = enumerate_and_filter_prs()
+    sel_nums = [p["pr_number"] for p in sel]
+    task_nums = [t["pr_number"] for t in PR_TASKS]
+    assert sel_nums == task_nums, f"Selected PRs {sel_nums} != PR_TASKS {task_nums}"
+    for p, t in zip(sel, PR_TASKS):
+        assert p["base_commit"] == t["base_commit"], f"PR #{p['pr_number']} base mismatch"
+        assert p["merged_commit"] == t["merged_commit"], f"PR #{p['pr_number']} merged mismatch"
+        assert p["files"] == sorted(t["files"]), f"PR #{p['pr_number']} files mismatch"
+    print(f"OK: mechanical PR selection verified ({len(sel)} selected: {sel_nums}; {len(exc)} excluded)")
+

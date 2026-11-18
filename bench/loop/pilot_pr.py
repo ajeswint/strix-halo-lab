@@ -17,27 +17,65 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import tasks_item6  # noqa: E402
 
 API_URL = "http://127.0.0.1:8081"
+SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}
+REASONING_BUDGET = 4096
+MAX_TOKENS = 8192
 MAX_TURNS_DEFAULT = 4
 TASK_BUDGET_TOKENS = 32768
+BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
 
 
-def format_turn_prompt(task, last_code=None, test_error=None):
+def check_prompt_leak(prompt, task):
+    """Tripwire: assert no hidden fields or sentinels appear in a prompt sent to the model."""
+    for hidden_key in ("hidden_diff", "merged_commit"):
+        if dict.__contains__(task, hidden_key):
+            val = dict.__getitem__(task, hidden_key)
+            if val and isinstance(val, str) and len(val) >= 7 and val in prompt:
+                raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!")
+    if "LEAK_SENTINEL" in prompt or "ORACLE-SENTINEL" in prompt:
+        raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
+
+
+def build_worktree_context(task, worktree_dir, max_chars_per_file=12000):
+    """Read target files from worktree_dir at base_commit so the model can edit them accurately."""
+    clean_task = tasks_item6.strip_hidden(task)
+    sections = []
+    for rel_path in clean_task.get("files", []):
+        full_path = os.path.join(worktree_dir, rel_path)
+        if os.path.exists(full_path) and os.path.isfile(full_path):
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    body = f.read()
+                if len(body) > max_chars_per_file:
+                    body = body[:max_chars_per_file] + "\n... [truncated] ...\n"
+                sections.append(f"### Existing file: {rel_path}\n```\n{body}\n```")
+            except OSError:
+                pass
+        else:
+            sections.append(f"### Target file (new): {rel_path}")
+    return "\n\n".join(sections)
+
+
+def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None):
     """Format the turn prompt for the agentic loop.
 
     Never includes reference diffs or oracle solutions.
     """
     clean_task = tasks_item6.strip_hidden(task)
     base_prompt = clean_task["prompt"]
+    file_ctx = build_worktree_context(clean_task, worktree_dir) if worktree_dir else ""
+    ctx_block = f"\n\nBase files in worktree:\n\n{file_ctx}" if file_ctx else ""
 
     if last_code is None and test_error is None:
-        return (
-            f"{base_prompt}\n\n"
+        prompt = (
+            f"{base_prompt}{ctx_block}\n\n"
             "Working directory: Clean git worktree at base commit.\n"
             "Instructions:\n"
             "- Implement all required changes.\n"
@@ -49,17 +87,21 @@ def format_turn_prompt(task, last_code=None, test_error=None):
             "- Or provide a valid unified git diff in a ```diff block.\n"
             "- Standard library or repository dependencies only; no unrequested subagents; no GPU work."
         )
+        check_prompt_leak(prompt, task)
+        return prompt
 
     err_text = (test_error or "").strip()
     if len(err_text) > 2500:
         err_text = "... [truncated] ...\n" + err_text[-2500:]
 
-    return (
-        f"{base_prompt}\n\n"
+    prompt = (
+        f"{base_prompt}{ctx_block}\n\n"
         "Your previous changes failed automated verification with the following error:\n"
         f"```\n{err_text}\n```\n\n"
         "Analyze the error, locate the cause, and output the corrected files or unified diff."
     )
+    check_prompt_leak(prompt, task)
+    return prompt
 
 
 def extract_file_updates(response_text):
@@ -148,8 +190,11 @@ def run_tests(task, worktree_dir, timeout=60):
     """Run test command for the task in worktree_dir.
 
     Returns (passed: bool, output_str: str).
+    Should only be called when task['has_tests'] is True.
     """
     clean_task = tasks_item6.strip_hidden(task)
+    if not clean_task.get("has_tests"):
+        raise AssertionError("run_tests must not be executed when has_tests is False")
     cmd = clean_task.get("test_cmd")
     if not cmd:
         return True, "No test command defined for task."
@@ -171,6 +216,23 @@ def run_tests(task, worktree_dir, timeout=60):
         return False, f"ERROR: test command timed out after {timeout} seconds."
     except Exception as e:
         return False, f"ERROR executing test command: {e}"
+
+
+def capture_worktree_diff(worktree_dir, base_commit):
+    """Capture full diff of worktree against base_commit, including uncommitted and untracked new files."""
+    subprocess.run(
+        ["git", "add", "-N", "."],
+        cwd=worktree_dir,
+        capture_output=True,
+        text=True,
+    )
+    diff_res = subprocess.run(
+        ["git", "diff", base_commit],
+        cwd=worktree_dir,
+        capture_output=True,
+        text=True,
+    )
+    return diff_res.stdout or ""
 
 
 def evaluate_diff(local_diff, hidden_diff):
@@ -198,6 +260,7 @@ def evaluate_diff(local_diff, hidden_diff):
 def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_budget=TASK_BUDGET_TOKENS):
     """Execute the agentic loop on a task in worktree_dir."""
     clean_task = tasks_item6.strip_hidden(task)
+    has_tests = bool(clean_task.get("has_tests"))
     history = []
     seen_code_hashes = set()
     last_code = None
@@ -207,12 +270,14 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
 
     for turn in range(max_turns):
         t0 = time.time()
-        prompt = format_turn_prompt(clean_task, last_code, last_err)
+        prompt = format_turn_prompt(clean_task, last_code, last_err, worktree_dir=worktree_dir)
+        check_prompt_leak(prompt, task)
         seed = 6000 + clean_task["pr_number"] * 10 + turn
 
         reply = ask_fn(prompt, seed)
         gen_s = round(time.time() - t0, 2)
-        comp_tokens = reply.get("usage", {}).get("completion_tokens", 0)
+        comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
+        prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or 0
         accumulated_completion_tokens += comp_tokens
 
         content = reply.get("content", "")
@@ -222,11 +287,13 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         if code_hash in seen_code_hashes:
             history.append({
                 "turn": turn,
+                "seed": seed,
                 "passed": False,
                 "err": "repeat_code",
                 "stop": "repeat_code",
                 "gen_s": gen_s,
                 "tokens": comp_tokens,
+                "prompt_tokens": prompt_tokens,
             })
             stop_reason = "repeat_code"
             break
@@ -239,33 +306,41 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         if not ok:
             passed = False
             test_out = f"Failed to apply updates: {msg}"
+        elif not has_tests:
+            # No test command when has_tests is False: do not call run_tests
+            passed = True
+            test_out = ""
         else:
             # Run automated tests
             passed, test_out = run_tests(clean_task, worktree_dir)
 
         # Stop check: repeat error
-        if last_err is not None and test_out.strip() == last_err.strip():
+        if not passed and last_err is not None and test_out.strip() == last_err.strip():
             history.append({
                 "turn": turn,
+                "seed": seed,
                 "passed": False,
                 "err": test_out,
                 "stop": "repeat_error",
                 "gen_s": gen_s,
                 "tokens": comp_tokens,
+                "prompt_tokens": prompt_tokens,
             })
             stop_reason = "repeat_error"
             break
 
         history.append({
             "turn": turn,
+            "seed": seed,
             "passed": passed,
             "err": "" if passed else test_out,
             "gen_s": gen_s,
             "tokens": comp_tokens,
+            "prompt_tokens": prompt_tokens,
         })
 
         if passed:
-            stop_reason = "pass"
+            stop_reason = "pass" if has_tests else "applied_no_tests"
             break
 
         if accumulated_completion_tokens >= task_budget:
@@ -275,18 +350,12 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         last_code = content
         last_err = test_out
 
-    # Collect final local diff
-    diff_res = subprocess.run(
-        ["git", "diff", clean_task["base_commit"], "HEAD"],
-        cwd=worktree_dir,
-        capture_output=True,
-        text=True,
-    )
-    final_diff = diff_res.stdout or ""
+    final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
 
     return {
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
+        "has_tests": has_tests,
         "passed": history[-1]["passed"] if history else False,
         "stop_reason": stop_reason,
         "turns_executed": len(history),
@@ -419,18 +488,363 @@ def selftest():
     return 0
 
 
-def main():
+def served_model(requested=None, api=None):
+    """Query GET /v1/models on the served endpoint (matching run.py / agent.py convention)."""
+    api = api or API_URL
+    with urllib.request.urlopen(f"{api}/v1/models", timeout=10) as r:
+        ids = [m["id"] for m in json.load(r)["data"]]
+    if len(ids) != 1:
+        raise SystemExit(f"expected exactly one served model at {api}, got {ids}")
+    if requested and requested != ids[0]:
+        raise SystemExit(f"--model {requested} but {api} serves {ids[0]}")
+    return ids[0]
+
+
+def server_info(api=None):
+    """Query GET /props on the served endpoint."""
+    with urllib.request.urlopen(f"{api or API_URL}/props", timeout=10) as r:
+        p = json.load(r)
+    return {k: p.get(k) for k in ("build_info", "model_path", "model_alias")}
+
+
+def server_ask(model, api=None):
+    """Return an ask_fn(prompt, seed) that queries /v1/chat/completions on the served model."""
+    api = api or API_URL
+
+    def ask(prompt, seed):
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_TOKENS,
+            "reasoning_budget_tokens": REASONING_BUDGET,
+            "reasoning_budget_message": BUDGET_MESSAGE,
+            "seed": seed,
+            **SAMPLING,
+        }
+        req = urllib.request.Request(
+            f"{api}/v1/chat/completions",
+            json.dumps(body).encode(),
+            {"Content-Type": "application/json"},
+        )
+        t = time.time()
+        with urllib.request.urlopen(req, timeout=3600) as r:
+            resp = json.load(r)
+        ch = resp["choices"][0]
+        return {
+            "content": ch["message"].get("content") or "",
+            "reasoning_chars": len(ch["message"].get("reasoning_content") or ""),
+            "finish": ch.get("finish_reason"),
+            "usage": resp.get("usage", {}),
+            "gen_s": round(time.time() - t, 2),
+        }
+
+    return ask
+
+
+def compute_keep_drop(testable_passed, testable_total, approved_final, total_tasks, avg_hand_fix_lines):
+    """Compute pre-registered KEEP / DROP / INCONCLUSIVE / PENDING_REVIEW decision (docs/item6-pilot.md Section 9).
+
+    Bars:
+    - KEEP: test_pass >= 3/6 (50.0%) AND final_approve >= 3/7 (42.9%) AND avg_hand_fix_lines <= 20.
+    - DROP: test_pass < 2/6 (33.3%) OR (approved_final is not None and final_approve < 2/7 (28.6%)).
+    - INCONCLUSIVE: intermediate (defaults to DROP unless extended).
+    - PENDING_REVIEW: tests meet >= 2/6, but adversarial-reviewer verdicts have not been supplied yet.
+    """
+    test_rate = (testable_passed / testable_total) if testable_total > 0 else 0.0
+    if test_rate < (2.0 / 6.0 - 1e-9):
+        return "DROP"
+    if approved_final is None:
+        return "PENDING_REVIEW"
+    app_rate = (approved_final / total_tasks) if total_tasks > 0 else 0.0
+    if app_rate < (2.0 / 7.0 - 1e-9):
+        return "DROP"
+    if (
+        test_rate >= (3.0 / 6.0 - 1e-9)
+        and app_rate >= (3.0 / 7.0 - 1e-9)
+        and (avg_hand_fix_lines is None or avg_hand_fix_lines <= 20.0)
+    ):
+        return "KEEP"
+    return "INCONCLUSIVE"
+
+
+
+def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
+                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None):
+    """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+    if results_dir is None:
+        results_dir = os.path.join(HERE, "results")
+    os.makedirs(results_dir, exist_ok=True)
+    diffs_dir = os.path.join(results_dir, f"{label}.diffs")
+    os.makedirs(diffs_dir, exist_ok=True)
+    jsonl_path = os.path.join(results_dir, f"{label}.jsonl")
+
+    all_tasks = tasks_item6.load_tasks()
+    if tasks_arg:
+        want = [x.strip() for x in tasks_arg.split(",") if x.strip()]
+        by_id = {t["id"]: t for t in all_tasks}
+        unknown = [w for w in want if w not in by_id]
+        if unknown:
+            raise SystemExit(f"unknown task ids: {unknown}")
+        selected_tasks = [by_id[w] for w in want]
+    else:
+        selected_tasks = all_tasks
+
+    if ask_fn is None:
+        resolved_model = served_model(model, api=api)
+        srv_info = server_info(api=api)
+        ask_fn = server_ask(resolved_model, api=api)
+    else:
+        resolved_model = model or "mock"
+        srv_info = {"build_info": "mock", "model_path": "mock", "model_alias": resolved_model}
+
+    # Load existing rows so running one task at a time updates/appends cleanly
+    existing_by_id = {}
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    row = json.loads(line)
+                    existing_by_id[row["task_id"]] = row
+
+    results = []
+    for task in selected_tasks:
+        clean_task = tasks_item6.strip_hidden(task)
+        task_id = clean_task["id"]
+        base_sha = clean_task["base_commit"]
+        wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
+        t_start = time.time()
+        try:
+            subprocess.run(
+                ["git", "-C", repo_root, "worktree", "add", "--detach", wt_dir, base_sha],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            res = run_task_loop(
+                clean_task,
+                ask_fn,
+                wt_dir,
+                max_turns=max_turns,
+                task_budget=task_budget,
+            )
+            res["wall_s"] = round(time.time() - t_start, 2)
+            res["model"] = resolved_model
+            res["server"] = srv_info
+
+            diff_file = os.path.join(diffs_dir, f"{task_id}.diff")
+            with open(diff_file, "w", encoding="utf-8") as df:
+                df.write(res["final_diff"])
+            res["diff_file"] = os.path.relpath(diff_file, repo_root) if diff_file.startswith(repo_root) else diff_file
+
+            existing_by_id[task_id] = res
+            results.append(res)
+            print(
+                f"{task_id:14} pr=#{res['pr_number']:<2} has_tests={str(res['has_tests']):<5} "
+                f"passed={str(res['passed']):<5} stop={res['stop_reason']:<16} turns={res['turns_executed']} "
+                f"tok={res['total_completion_tokens']} diff_lines={len(res['final_diff'].splitlines())}",
+                flush=True,
+            )
+        finally:
+            subprocess.run(
+                ["git", "-C", repo_root, "worktree", "remove", "--force", wt_dir],
+                capture_output=True,
+                text=True,
+            )
+            if os.path.exists(wt_dir):
+                shutil.rmtree(wt_dir, ignore_errors=True)
+
+    # Write updated JSONL in canonical task order
+    order_ids = [t["id"] for t in all_tasks]
+    ordered_rows = [existing_by_id[tid] for tid in order_ids if tid in existing_by_id]
+    for tid, r in existing_by_id.items():
+        if tid not in order_ids:
+            ordered_rows.append(r)
+
+    with open(jsonl_path, "w", encoding="utf-8") as f:
+        for r in ordered_rows:
+            f.write(json.dumps(r) + "\n")
+
+    return results
+
+
+def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None, tasks_override=None):
+    """Execute the `grade` subcommand: score recorded diffs against hidden diffs, merge review verdicts, compute KEEP/DROP."""
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+    if results_dir is None:
+        results_dir = os.path.join(HERE, "results")
+
+    jsonl_path = os.path.join(results_dir, f"{label}.jsonl")
+    if not os.path.exists(jsonl_path):
+        raise SystemExit(f"Results file not found: {jsonl_path}")
+
+    rows_by_id = {}
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                r = json.loads(line)
+                rows_by_id[r["task_id"]] = r
+
+    if reviews_file is None:
+        default_rev = os.path.join(results_dir, f"{label}.reviews.json")
+        if os.path.exists(default_rev):
+            reviews_file = default_rev
+
+    reviews_by_id = {}
+    if reviews_file and os.path.exists(reviews_file):
+        with open(reviews_file, "r", encoding="utf-8") as rf:
+            rev_data = json.load(rf)
+            if isinstance(rev_data, dict):
+                reviews_by_id = rev_data.get("reviews", rev_data)
+            elif isinstance(rev_data, list):
+                reviews_by_id = {item["task_id"]: item for item in rev_data}
+
+    all_tasks = tasks_override if tasks_override is not None else tasks_item6.load_tasks()
+    per_task = []
+    testable_total = 0
+    testable_passed = 0
+    approved_first = 0
+    approved_final = 0
+    has_all_reviews = True
+    hand_fix_lines_approved = []
+
+    for task in all_tasks:
+        tid = task["id"]
+        if tid not in rows_by_id:
+            continue
+        row = rows_by_id[tid]
+        has_tests = bool(task.get("has_tests"))
+        passed = bool(row.get("passed")) if has_tests else None
+        if has_tests:
+            testable_total += 1
+            if passed:
+                testable_passed += 1
+
+        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=repo_root)
+        local_diff = row.get("final_diff", "")
+        diff_metrics = evaluate_diff(local_diff, hidden_diff)
+
+        rev = reviews_by_id.get(tid)
+        if rev:
+            v1 = rev.get("first_verdict", rev.get("verdict"))
+            v_final = rev.get("final_verdict", v1)
+            hf_lines = rev.get("hand_fix_lines", 0)
+            is_app1 = v1 in ("APPROVE", "APPROVE-WITH-NITS")
+            is_app_final = v_final in ("APPROVE", "APPROVE-WITH-NITS")
+            if is_app1:
+                approved_first += 1
+            if is_app_final:
+                approved_final += 1
+                hand_fix_lines_approved.append(hf_lines)
+        else:
+            has_all_reviews = False
+            v1 = None
+            v_final = None
+            hf_lines = None
+
+        per_task.append({
+            "task_id": tid,
+            "pr_number": task["pr_number"],
+            "has_tests": has_tests,
+            "test_passed": passed,
+            "stop_reason": row.get("stop_reason"),
+            "turns_executed": row.get("turns_executed"),
+            "total_completion_tokens": row.get("total_completion_tokens"),
+            "wall_s": row.get("wall_s"),
+            "diff_file": row.get("diff_file"),
+            "diff_metrics": diff_metrics,
+            "first_verdict": v1,
+            "final_verdict": v_final,
+            "hand_fix_lines": hf_lines,
+        })
+
+    total_evaluated = len(per_task)
+    final_app_count = approved_final if (has_all_reviews and total_evaluated > 0) else None
+    avg_hf = (sum(hand_fix_lines_approved) / len(hand_fix_lines_approved)) if hand_fix_lines_approved else 0.0
+
+    decision = compute_keep_drop(
+        testable_passed=testable_passed,
+        testable_total=testable_total,
+        approved_final=final_app_count,
+        total_tasks=total_evaluated,
+        avg_hand_fix_lines=avg_hf if final_app_count is not None else None,
+    )
+
+    grade_summary = {
+        "label": label,
+        "tasks_evaluated": total_evaluated,
+        "testable_tasks": testable_total,
+        "testable_passed": testable_passed,
+        "test_pass_rate": round(testable_passed / testable_total, 4) if testable_total > 0 else 0.0,
+        "reviews_complete": has_all_reviews and total_evaluated > 0,
+        "approved_first_pass": approved_first if has_all_reviews else None,
+        "approved_final": final_app_count,
+        "final_approve_rate": round(final_app_count / total_evaluated, 4) if (final_app_count is not None and total_evaluated > 0) else None,
+        "avg_hand_fix_lines_per_approved": round(avg_hf, 2) if final_app_count is not None else None,
+        "decision": decision,
+        "per_task": per_task,
+    }
+
+    grade_path = os.path.join(results_dir, f"{label}.grade.json")
+    with open(grade_path, "w", encoding="utf-8") as gf:
+        json.dump(grade_summary, gf, indent=2)
+
+    print(json.dumps({k: v for k, v in grade_summary.items() if k != "per_task"}, indent=2), flush=True)
+    return grade_summary
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Item 6 Pilot PR Loop Runner")
     parser.add_argument("--selftest", action="store_true", help="Run CPU-only self-tests")
     parser.add_argument("--label", type=str, default="item6-pilot", help="Run label")
     parser.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
-    args = parser.parse_args()
+    parser.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
+    parser.add_argument("--model", type=str, default=None, help="Expected model alias")
+    parser.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
+    parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    p_run = subparsers.add_parser("run", help="Run agentic loop on PR tasks in scratch worktrees")
+    p_run.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_run.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
+    p_run.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
+    p_run.add_argument("--model", type=str, default=None, help="Expected model alias")
+    p_run.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
+    p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+
+    p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
+    p_grade.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_grade.add_argument("--reviews-file", type=str, default=None, help="Path to adversarial-reviewer verdicts JSON")
+
+    args = parser.parse_args(argv)
 
     if args.selftest:
         sys.exit(selftest())
 
-    print(f"pilot_pr.py runner: label={args.label}. Model execution requires ACTIVE session via llmctl.")
+    if args.subcommand == "run":
+        run_subcommand(
+            label=args.label,
+            tasks_arg=args.tasks,
+            api=args.api,
+            model=args.model,
+            max_turns=args.max_turns,
+            task_budget=args.task_budget,
+        )
+        return 0
+
+    if args.subcommand == "grade":
+        grade_subcommand(
+            label=args.label,
+            reviews_file=args.reviews_file,
+        )
+        return 0
+
+    parser.print_help()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -48,7 +48,36 @@ class TestPilotPr(unittest.TestCase):
             self.assertTrue(len(t["prompt"]) > 50)
             self.assertTrue(len(t["files"]) >= 1)
             if t["has_tests"]:
-                self.assertIsNotNone(t["test_cmd"])
+                self.assertTrue(len(t["test_cmd"]) > 0)
+            else:
+                self.assertEqual(t["test_cmd"], "", f"Task {t['id']} has_tests=False must have empty test_cmd")
+
+    def test_mechanical_pr_selection_rule(self):
+        """Enumerate merged PRs from git history and assert the rule yields exactly the 7 listed PRs."""
+        selected, excluded = tasks_item6.enumerate_and_filter_prs()
+        selected_nums = [p["pr_number"] for p in selected]
+        tasks = tasks_item6.load_tasks()
+        task_nums = [t["pr_number"] for t in tasks]
+        self.assertEqual(selected_nums, [6, 8, 13, 14, 15, 16, 20])
+        self.assertEqual(selected_nums, task_nums)
+
+        # Verify PR #4 and #5 are mechanically excluded for pre_antigravity_claude_seat_setup
+        excl_by_pr = {p["pr_number"]: p["reason"] for p in excluded}
+        self.assertEqual(excl_by_pr.get(4), "pre_antigravity_claude_seat_setup")
+        self.assertEqual(excl_by_pr.get(5), "pre_antigravity_claude_seat_setup")
+        # Verify PR #7, #9, #10 are excluded as single_file_readme_only
+        for n in (7, 9, 10):
+            self.assertEqual(excl_by_pr.get(n), "single_file_readme_only")
+        # Verify PR #17, #18, #19 are excluded as gpu_result_checkin
+        for n in (17, 18, 19):
+            self.assertEqual(excl_by_pr.get(n), "gpu_result_checkin")
+
+        # Verify base_commit, merged_commit, and files match task definitions
+        for p, t in zip(selected, tasks):
+            self.assertEqual(p["base_commit"], t["base_commit"])
+            self.assertEqual(p["merged_commit"], t["merged_commit"])
+            self.assertEqual(p["files"], sorted(t["files"]))
+
 
     def test_exploding_task_leak_guard(self):
         """Ensure in-loop prompt generation and strip_hidden never touch hidden fields."""
@@ -178,6 +207,176 @@ class TestPilotPr(unittest.TestCase):
 
         finally:
             shutil.rmtree(temp_dir)
+
+    def test_in_loop_leak_tripwire_and_no_tests_guard(self):
+        """Verify leak tripwire runs on every prompt in-loop, and run_tests is not called when has_tests is False."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_pr_guard_")
+        try:
+            subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Tester"], cwd=temp_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "tester@repo.org"], cwd=temp_dir, check=True)
+
+            doc_file = os.path.join(temp_dir, "doc.md")
+            with open(doc_file, "w") as f:
+                f.write("# Old title\n")
+            subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=temp_dir, check=True, capture_output=True)
+            base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=temp_dir, text=True).strip()
+
+            # 1. Task with has_tests=False: run_tests must NOT be called
+            no_test_task = {
+                "id": "item6_notest",
+                "pr_number": 901,
+                "title": "Doc task",
+                "base_commit": base_sha,
+                "merged_commit": "1111111111111111111111111111111111111111",
+                "has_tests": False,
+                "test_cmd": "",
+                "prompt": "Update doc.md and add new_note.md",
+                "files": ["doc.md", "new_note.md"],
+            }
+            # Direct call to run_tests on has_tests=False must raise AssertionError
+            with self.assertRaises(AssertionError):
+                pilot_pr.run_tests(no_test_task, temp_dir)
+
+            def mock_doc_writer(prompt, seed):
+                return {
+                    "content": (
+                        "### doc.md\n```markdown\n# New title\n```\n\n"
+                        "### new_note.md\n```markdown\nNew untracked file content\n```\n"
+                    ),
+                    "usage": {"completion_tokens": 25},
+                }
+
+            res = pilot_pr.run_task_loop(no_test_task, mock_doc_writer, temp_dir, max_turns=4)
+            self.assertTrue(res["passed"])
+            self.assertEqual(res["stop_reason"], "applied_no_tests")
+            self.assertEqual(res["turns_executed"], 1)
+            # Diff must capture both modified tracked file (doc.md) and new untracked file (new_note.md)
+            self.assertIn("+# New title", res["final_diff"])
+            self.assertIn("new_note.md", res["final_diff"])
+            self.assertIn("+New untracked file content", res["final_diff"])
+
+            # 2. Leak tripwire on every turn prompt (including feedback turn 1)
+            leaky_task = {
+                "id": "item6_leaky",
+                "pr_number": 902,
+                "title": "Leaky task",
+                "base_commit": base_sha,
+                "merged_commit": "2222222222222222222222222222222222222222",
+                "has_tests": True,
+                # Test output echoes LEAK_SENTINEL on failure so turn 1 prompt triggers tripwire
+                "test_cmd": "echo 'LEAK_SENTINEL in error' && exit 1",
+                "prompt": "Edit doc.md",
+                "files": ["doc.md"],
+            }
+            with self.assertRaises(AssertionError):
+                pilot_pr.run_task_loop(leaky_task, mock_doc_writer, temp_dir, max_turns=3)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_run_and_grade_subcommands_end_to_end(self):
+        """Test pilot_pr.py run and grade subcommands with a mocked model client and keep/drop bars."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_pr_e2e_")
+        results_dir = tempfile.mkdtemp(prefix="pilot_pr_res_")
+        try:
+            subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Tester"], cwd=temp_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "tester@repo.org"], cwd=temp_dir, check=True)
+
+            # Create target file at base_commit
+            with open(os.path.join(temp_dir, "debate_mock.py"), "w") as f:
+                f.write("def parse():\n    return 'old'\n")
+            subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=temp_dir, check=True, capture_output=True)
+
+            # Test `run` subcommand on real repo worktree for item6_pr06 and item6_pr15 with mock client
+            def mock_client(prompt, seed):
+                if "Fix `bench/loop/debate.py` parser logic" in prompt:
+                    return {
+                        "content": "### README.md\n```markdown\n# Updated README\n```\n",
+                        "usage": {"completion_tokens": 42, "prompt_tokens": 100},
+                    }
+                return {
+                    "content": "### AGENTS.md\n```markdown\n# Updated AGENTS\n```\n### new_file.txt\n```text\nhello\n```\n",
+                    "usage": {"completion_tokens": 35, "prompt_tokens": 90},
+                }
+
+            run_res = pilot_pr.run_subcommand(
+                label="test-e2e",
+                tasks_arg="item6_pr06,item6_pr15",
+                max_turns=1,
+                 results_dir=results_dir,
+                ask_fn=mock_client,
+            )
+            self.assertEqual(len(run_res), 2)
+
+            # Verify per-PR diff files were written for offline Grok review
+            diff_06 = os.path.join(results_dir, "test-e2e.diffs", "item6_pr06.diff")
+            diff_15 = os.path.join(results_dir, "test-e2e.diffs", "item6_pr15.diff")
+            self.assertTrue(os.path.exists(diff_06))
+            self.assertTrue(os.path.exists(diff_15))
+            with open(diff_15) as f:
+                d15_text = f.read()
+            self.assertIn("+# Updated AGENTS", d15_text)
+            self.assertIn("new_file.txt", d15_text)
+
+            # Grade without reviews file -> PENDING_REVIEW or DROP based on test rate
+            # Also test grade_subcommand with a full 7-task synthetic result set + reviews file
+            all_tasks = tasks_item6.load_tasks()
+            jsonl_path = os.path.join(results_dir, "full-batch.jsonl")
+            with open(jsonl_path, "w") as jf:
+                for i, t in enumerate(all_tasks):
+                    # 4 of 6 testable pass
+                    passed = True if (not t["has_tests"] or i in (0, 1, 2, 3)) else False
+                    jf.write(
+                        pilot_pr.json.dumps({
+                            "task_id": t["id"],
+                            "pr_number": t["pr_number"],
+                            "has_tests": t["has_tests"],
+                            "passed": passed,
+                            "stop_reason": "pass" if passed else "max_turns",
+                            "turns_executed": 1,
+                            "total_completion_tokens": 100,
+                            "wall_s": 5.0,
+                            "final_diff": "+line\n",
+                        }) + "\n"
+                    )
+
+            # 1) Without reviews -> PENDING_REVIEW (since 4/6 >= 2/6)
+            g_pending = pilot_pr.grade_subcommand(label="full-batch", results_dir=results_dir)
+            self.assertEqual(g_pending["testable_passed"], 4)
+            self.assertEqual(g_pending["testable_tasks"], 6)
+            self.assertEqual(g_pending["decision"], "PENDING_REVIEW")
+
+            # 2) With reviews meeting KEEP bar (4/6 tests pass, 4/7 approved, avg hand-fix 5 <= 20)
+            rev_path = os.path.join(results_dir, "full-batch.reviews.json")
+            reviews = {}
+            for i, t in enumerate(all_tasks):
+                reviews[t["id"]] = {
+                    "first_verdict": "APPROVE" if i < 3 else "REQUEST-CHANGES",
+                    "final_verdict": "APPROVE-WITH-NITS" if i < 4 else "REQUEST-CHANGES",
+                    "hand_fix_lines": 5 if i < 4 else 0,
+                }
+            with open(rev_path, "w") as rf:
+                pilot_pr.json.dump(reviews, rf)
+
+            g_keep = pilot_pr.grade_subcommand(label="full-batch", reviews_file=rev_path, results_dir=results_dir)
+            self.assertEqual(g_keep["approved_first_pass"], 3)
+            self.assertEqual(g_keep["approved_final"], 4)
+            self.assertEqual(g_keep["avg_hand_fix_lines_per_approved"], 5.0)
+            self.assertEqual(g_keep["decision"], "KEEP")
+
+            # 3) Test compute_keep_drop directly across all decision boundaries
+            self.assertEqual(pilot_pr.compute_keep_drop(4, 6, 4, 7, 0.0), "KEEP")
+            self.assertEqual(pilot_pr.compute_keep_drop(3, 6, 3, 7, 15.0), "KEEP")
+            self.assertEqual(pilot_pr.compute_keep_drop(1, 6, 4, 7, 0.0), "DROP")
+            self.assertEqual(pilot_pr.compute_keep_drop(3, 6, 1, 7, 0.0), "DROP")
+            self.assertEqual(pilot_pr.compute_keep_drop(2, 6, 2, 7, 0.0), "INCONCLUSIVE")
+            self.assertEqual(pilot_pr.compute_keep_drop(3, 6, 3, 7, 25.0), "INCONCLUSIVE")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(results_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

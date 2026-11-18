@@ -44,61 +44,61 @@ The baseline is the existing cloud seats' outcome on the identical batch of real
 
 ## 4. PR Selection Rule (Mechanical, fixed before the run)
 
-The pilot batch must be selected mechanically from repository history before running any model. The selection filter is:
-1. **Repository**: `ajeswint/strix-halo-lab`.
-2. **State**: `MERGED` to `main`.
-3. **Date Range**: Merged between `2026-11-06T00:00:00Z` and `2026-11-18T05:00:00Z` (the standing seats era).
-4. **Exclusions**:
-   - Exclude GPU benchmark run result check-ins where >50% of modified files are under `bench/loop/results/` or `bench/loop/runs/` (PR #17, PR #18, PR #19).
-   - Exclude trivial 1-line / 1-paragraph documentation updates without review cycles (PR #7, PR #9, PR #10).
-5. **Batch Size**: Exactly $N = 7$ pull requests meet all criteria.
+The pilot batch must be selected mechanically from repository history before running any model (`tasks_item6.enumerate_and_filter_prs()`). The selection filter is:
+1. **Repository & History**: First-parent merge commits on `main` up to commit `dbf6a2cb442188dd8ad41811f548541130ae6320` (PR #20) matching `Merge (pull request|PR) #<N>`.
+2. **Date Range**: Merge commit timestamp (`%cI` converted to UTC) between `2026-11-06T00:00:00Z` and `2026-11-18T05:00:00Z` (15 merged PRs: #4, #5, #6, #7, #8, #9, #10, #13, #14, #15, #16, #17, #18, #19, #20).
+3. **Mechanical Exclusions**:
+   - **Pre-Antigravity dual-Claude seat setup / soft-nit chase**: Exclude PRs where `docs/antigravity-writer.md` does not yet exist in the merged commit (`! git cat-file -e <merged>:docs/antigravity-writer.md`) AND `tools/lab-seats/launch.sh` is among the modified files. This mechanically excludes **PR #4** (merged `2026-11-06T04:24:14Z`, which bootstrapped the retired dual-Claude Sonnet writer/reviewer seats) and **PR #5** (merged `2026-11-06T05:00:59Z`, soft-nit chase on PR #4's dual-Claude seat docs), while retaining PR #6 (parser fix, does not touch `launch.sh`) and PR #8 (creates `docs/antigravity-writer.md` and establishes the standing Antigravity writer seat).
+   - **GPU benchmark run result check-ins**: Exclude PRs where $> 50\%$ of modified files are under `bench/loop/results/` or `bench/loop/runs/`. This mechanically excludes **PR #17** (54/54 files), **PR #18** (11/11 files), and **PR #19** (15/15 files).
+   - **Single-file `README.md`-only note/nit updates**: Exclude PRs whose modified file list is strictly `["README.md"]`. This mechanically excludes **PR #7** (+4/-4), **PR #9** (+63/-1), and **PR #10** (+8/-5).
+4. **Batch Size**: Exactly $N = 7$ pull requests meet all criteria: **PRs #6, #8, #13, #14, #15, #16, #20**. Verified by CPU test `test_mechanical_pr_selection_rule` in `bench/loop/test_pilot_pr.py`.
 
 ### Fixed Batch Specification
 
-| Task ID | PR # | Title | Base Commit | Testable? (`has_tests`) | Test / Check Command | Target Files |
+| Task ID | PR # | Title | Base Commit | Testable? (`has_tests`) | Test / Check Command (`test_cmd`) | Target Files |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `item6_pr06` | #6 | debate.py: recover VERDICT/CONFIDENCE inside closing code fence | `7a9f1d75c39f29d05ed92ce0671bb625ff143981` | Yes | `python3 bench/loop/debate.py --selftest` | `bench/loop/debate.py`, `README.md` |
 | `item6_pr08` | #8 | Seats: writer is Google Antigravity (Gemini 4 Argon, effort high) | `3ab57123b11fdd945f411bbd992fec08262c6ac8` | Yes | `bash tools/lab-seats/test.sh` | `tools/lab-seats/*`, `AGENTS.md`, `CLAUDE.md`, docs |
 | `item6_pr13` | #13 | CRAwDAD noise floor + v10 retrieval retest (pre-run, no GPU) | `01c02e2b1527cb902a4a2728bd7d3aa92c68b3f2` | Yes | `python3 -m unittest bench/loop/test_tasks_v10.py && python3 bench/loop/tasks_v10.py` | `bench/loop/tasks_v10.py`, `test_tasks_v10.py`, docs |
-| `item6_pr14` | #14 | README split (move-only) to cut agent token burn | `74d35557c15931850945bf519426d6aaa55af41b` | Yes | Move-only line count / section match check | `README.md`, `docs/*`, `CLAUDE.md` |
-| `item6_pr15` | #15 | Stale-line fixes + writer roster update | `af2b1a5c4ca765fd411f9e9f9d48c2d099420722` | No | Audit & lint verification (no automated test suite) | `.claude/agents/*`, `docs/*`, `scripts/preflight.sh` |
+| `item6_pr14` | #14 | README split (move-only) to cut agent token burn | `74d35557c15931850945bf519426d6aaa55af41b` | Yes | Move-only file existence check (`docs/*.md`) | `README.md`, `docs/*`, `CLAUDE.md` |
+| `item6_pr15` | #15 | Stale-line fixes + writer roster update | `af2b1a5c4ca765fd411f9e9f9d48c2d099420722` | No | `""` (empty; `run_tests` is not run) | `.claude/agents/*`, `docs/*`, `scripts/preflight.sh` |
 | `item6_pr16` | #16 | crawdad-ground-v1: pre-run spec + grounded test-and-fix loop on v10 | `6c56cc09eaafb2376422e73515b39f8193893740` | Yes | `python3 -m unittest bench/loop/test_ground.py && python3 bench/loop/ground.py --selftest` | `bench/loop/ground.py`, `test_ground.py`, docs |
 | `item6_pr20` | #20 | Launcher guard: prereg must be committed and pushed before launch | `2bf58003ed4c138b20d0063dd5eab1bd4ddae637` | Yes | `bash scripts/test-prereg-guard.sh` | `scripts/prereg-guard.sh`, `test-prereg-guard.sh`, launcher |
 
 - **Testable Tasks**: 6 of 7 tasks (85.7%) have automated, deterministic CPU test suites (`has_tests = true`).
-- **Non-testable Tasks**: 1 of 7 tasks (14.3%) is documentation/config maintenance (`has_tests = false`).
+- **Non-testable Tasks**: 1 of 7 tasks (14.3%) is documentation/config maintenance (`has_tests = false`, `test_cmd = ""`; `run_tests` is skipped and the loop completes after applying the Turn 0 edit).
 
 ## 5. Task Formulation & Information Isolation
 
 To prevent leakage and ensure clean measurement:
-1. **Task Environment**: Each PR task is evaluated in a fresh, isolated git worktree checked out strictly at its `base_commit`.
+1. **Task Environment**: Each PR task is evaluated in a fresh, isolated git worktree (`git worktree add --detach <wt_dir> <base_commit>`) checked out strictly at its `base_commit`.
 2. **Task Prompt Input**:
    - Repository background and working rules (no GPU load, stage named paths, measured numbers).
    - Task requirements extracted from original PR issue / title / instructions.
-   - List of expected files to edit or add.
-   - Verification commands to run (for `has_tests = true`).
+   - List of expected files to edit or add, plus their base contents at `base_commit`.
+   - Verification commands to run (only when `has_tests = true`).
 3. **Hidden Information Isolation (Leak Prevention)**:
-   - The merged diff (`hidden_diff`), commit log after `base_commit`, and merge commit SHA are strictly held out.
+   - The merged diff (`hidden_diff`), commit log after `base_commit`, and merge commit SHA (`merged_commit`) are strictly held out.
    - Task definitions strip hidden fields (`strip_hidden(task)`) before passing to the loop runner.
-   - An exploding dictionary tripwire test (`bench/loop/test_pilot_pr.py`) enforces that accessing `hidden_diff` during prompt construction or in-loop execution immediately raises `AssertionError`.
-   - Hidden diffs are read solely by the post-loop evaluation grading function.
+   - A prompt leak tripwire (`check_prompt_leak(prompt, task)`) runs on **every** prompt right before it is sent to the model inside `run_task_loop`, raising `AssertionError` if any hidden field or sentinel appears.
+   - An exploding dictionary tripwire test (`bench/loop/test_pilot_pr.py`) enforces that accessing `hidden_diff` or `merged_commit` during prompt construction or in-loop execution immediately raises `AssertionError`.
+   - Hidden diffs are read solely by the post-loop offline `grade` subcommand.
 
 ## 6. Output Evaluation & Review Gate
 
 The output of the local loop is judged through the standing repository quality gate:
-1. **Tier 1: Automated Test Gate (Repo Tests Outrank the Judge)**
-   - For tasks with `has_tests = true`: The worktree test suite (`test_cmd`) is executed on CPU.
-   - If tests fail, the task is marked as a test failure regardless of model explanations.
-2. **Tier 2: Adversarial Reviewer Gate (Grok 4.7 high)**
-   - The local diff (`git diff base_commit..HEAD`) is evaluated by Grok 4.7 high using the standard adversarial review prompt (`.claude/agents/adversarial-reviewer.md`).
-   - Review verdict must be one of:
-     - `APPROVE`: diff is correct, clean, meets requirements.
-     - `APPROVE-WITH-NITS`: acceptable with minor soft nits.
-     - `REQUEST-CHANGES`: contains blocking errors, regressions, or rule violations.
-   - If `REQUEST-CHANGES`, one repair turn is allowed on the local model with the reviewer's findings fed back.
-3. **Tier 3: Reference Comparison & Hand-Fix Audit**
-   - Diff overlap with `hidden_diff` (precision, recall of modified lines).
-   - AJ Hand-Fix Amount: lines of code that would need to be manually edited by AJ to make the PR mergeable.
+1. **Worktree Diff Capture (Uncommitted & New Files Included)**:
+   - At the end of each task's loop (before removing the scratch worktree), the runner marks any untracked new files with intent-to-add (`git add -N .`) and records `git diff <base_commit>` against the working tree.
+   - The per-PR diff is saved to `bench/loop/results/<label>.diffs/<task_id>.diff` and stored in `bench/loop/results/<label>.jsonl`.
+2. **Tier 1: Automated Test Gate (Repo Tests Outrank the Judge)**:
+   - For tasks with `has_tests = true`: The worktree test suite (`test_cmd`) is executed on CPU. If tests fail, the task is marked as a test failure regardless of model explanations.
+   - For tasks with `has_tests = false`: `test_cmd` is `""` and `run_tests` is not executed; evaluation relies on Tier 2 and Tier 3.
+3. **Tier 2: Adversarial Reviewer Gate (Grok 4.7 high, outside the GPU run)**:
+   - After the GPU session ends (`scripts/llmctl.py bye`), the per-PR diffs written to `bench/loop/results/<label>.diffs/<task_id>.diff` are reviewed offline by the standing `adversarial-reviewer` seat (Grok 4.7 high, `.claude/agents/adversarial-reviewer.md`).
+   - Review verdicts (`APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`) and AJ hand-fix line counts are recorded in a reviews JSON file (`bench/loop/results/<label>.reviews.json`, or passed via `--reviews-file` to `pilot_pr.py grade`).
+   - If `REQUEST-CHANGES`, at most 1 repair turn is allowed on the local model with the reviewer's findings fed back.
+4. **Tier 3: Offline Grading & Keep/Drop Computation (`pilot_pr.py grade`)**:
+   - `python3 bench/loop/pilot_pr.py grade --label <label> [--reviews-file <path>]` computes test pass rates ($S_{\text{test}} / N_{\text{test}}$), diff overlap against `hidden_diff`, reviewer approval rates ($A_1 / N$, $A_{\text{final}} / N$), average AJ hand-fix lines per approved PR, and the pre-registered keep/drop verdict (`KEEP`, `DROP`, `INCONCLUSIVE`, or `PENDING_REVIEW` if reviewer verdicts have not yet been supplied), writing `bench/loop/results/<label>.grade.json`.
 
 ## 7. Metrics
 
