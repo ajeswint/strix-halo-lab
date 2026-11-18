@@ -1,0 +1,50 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.2GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 75: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.2GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 532c8f5a57c74d1fb940f87f9c3eb8ec
+up: qwen3-32b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+llmctl: session 75: ACTIVE qwen32 on :8081, GTT 35.9 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+STEP_START crawdad-v8-d2p2 s1 qwen32 2026-11-17T21:46:14Z 1794951974.054933888
+step crawdad-v8-d2p2: qwen32 owes 30 replies on 30 tasks
+v8_01_hex_color              qwen32 R1 solo     fail verdict=None tok=2481 235.0s
+v8_02_morse_text             qwen32 R1 solo     fail verdict=None tok=2794 266.2s
+v8_03_case_convert           qwen32 R1 solo     fail verdict=None tok=2343 222.3s
+v8_04_money_text             qwen32 R1 solo     fail verdict=None tok=2623 249.1s
+v8_05_cidr_range             qwen32 R1 solo     fail verdict=None tok=2496 238.5s
+v8_06_clock_12h              qwen32 R1 solo     pass verdict=None tok=2534 241.3s
+v8_07_luhn_digits            qwen32 R1 solo     fail verdict=None tok=2452 232.8s
+v8_08_query_pairs            qwen32 R1 solo     fail verdict=None tok=2676 253.7s
+v8_09_digit_persistence      qwen32 R1 solo     fail verdict=None tok=2376 225.3s
+v8_10_euler_phi              qwen32 R1 solo     fail verdict=None tok=2418 229.0s
+v8_11_goldbach_pairs         qwen32 R1 solo     pass verdict=None tok=2425 230.2s
+v8_12_pascal_mod             qwen32 R1 solo     fail verdict=None tok=2329 221.7s
+v8_13_primitive_triples      qwen32 R1 solo     pass verdict=None tok=2363 224.5s
+v8_14_happy_count            qwen32 R1 solo     fail verdict=None tok=2405 228.4s
+v8_15_egyptian_greedy        qwen32 R1 solo     fail verdict=None tok=2324 221.0s
+v8_16_two_color              qwen32 R1 solo     fail verdict=None tok=2453 233.2s
+v8_17_lattice_segment        qwen32 R1 solo     fail verdict=None tok=2570 244.6s
+v8_18_closest_pair           qwen32 R1 solo     pass verdict=None tok=2420 230.9s
+v8_19_euler_trail            qwen32 R1 solo     fail verdict=None tok=3391 324.5s
+v8_20_triangle_kind          qwen32 R1 solo     fail verdict=None tok=2652 255.0s
+v8_21_manhattan_center       qwen32 R1 solo     fail verdict=None tok=2413 229.4s
+v8_22_tree_centers           qwen32 R1 solo     fail verdict=None tok=2758 262.2s
+v8_23_robot_walk             qwen32 R1 solo     fail verdict=None tok=2541 242.4s
+v8_24_elevator_scan          qwen32 R1 solo     fail verdict=None tok=2624 250.1s
+v8_25_josephus_order         qwen32 R1 solo     fail verdict=None tok=2313 220.5s
+v8_26_max_subarray           qwen32 R1 solo     fail verdict=None tok=2514 238.9s
+v8_27_stair_ways             qwen32 R1 solo     fail verdict=None tok=2369 225.4s
+v8_28_lcs_smallest           qwen32 R1 solo     pass verdict=None tok=2437 231.7s
+v8_29_matrix_chain           qwen32 R1 solo     pass verdict=None tok=2671 254.4s
+v8_30_ledger_events          qwen32 R1 solo     pass verdict=None tok=2563 240.8s
+step crawdad-v8-d2p2: qwen32 asked 30; owed {'qwen32': 0, 'r1d32': 45}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=49 MiB cap=8192 MiB as=16384 MiB
+STEP_END crawdad-v8-d2p2 s1 qwen32 2026-11-17T22:46:47Z 1794955607.010365011
+STEP_WALL crawdad-v8-d2p2 s1 qwen32 3633.0 s
+llmctl: session 75: ENDED qwen32; GTT after stop 1.2 GiB

@@ -1,0 +1,31 @@
+v8_01_hex_color              first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_02_morse_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_03_case_convert           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_04_money_text             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_05_cidr_range             first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_06_clock_12h              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_07_luhn_digits            first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 parse_fail
+v8_08_query_pairs            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_09_digit_persistence      first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_10_euler_phi              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_11_goldbach_pairs         first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_12_pascal_mod             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_13_primitive_triples      first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_14_happy_count            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_15_egyptian_greedy        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_16_two_color              first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3, 4] leaf R4 accept
+v8_17_lattice_segment        first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_18_closest_pair           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_19_euler_trail            first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_20_triangle_kind          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_21_manhattan_center       first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_22_tree_centers           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_23_robot_walk             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_24_elevator_scan          first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_25_josephus_order         first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_26_max_subarray           first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_27_stair_ways             first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_28_lcs_smallest           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2, 3] leaf R3 accept
+v8_29_matrix_chain           first=r1d32   solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+v8_30_ledger_events          first=qwen32  solos=['qwen32', 'r1d32'] rounds=[2] leaf R2 accept
+done: 30/30 tasks at a leaf, both solos complete

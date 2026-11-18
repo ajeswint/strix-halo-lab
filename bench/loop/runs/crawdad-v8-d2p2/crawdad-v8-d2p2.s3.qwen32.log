@@ -1,0 +1,39 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.3GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 77: INVITE qwen32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.3GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.3GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3-32B-Q4_K_M.gguf size=18.4GiB need=34.4GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 1198a2dc64714d8694afd0716b95a88a
+up: qwen3-32b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+llmctl: session 77: ACTIVE qwen32 on :8081, GTT 35.9 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+STEP_START crawdad-v8-d2p2 s3 qwen32 2026-11-18T00:30:57Z 1794961857.793433551
+step crawdad-v8-d2p2: qwen32 owes 19 replies on 19 tasks
+v8_01_hex_color              qwen32 R2 critic   pass verdict=accept tok=2627 263.0s
+v8_02_morse_text             qwen32 R2 critic   fail verdict=accept tok=3112 314.4s
+v8_03_case_convert           qwen32 R2 critic   fail verdict=accept tok=1730 174.8s
+v8_04_money_text             qwen32 R2 critic   pass verdict=reject tok=2899 288.5s
+v8_05_cidr_range             qwen32 R2 critic   fail verdict=reject tok=2673 269.2s
+v8_08_query_pairs            qwen32 R2 critic   pass verdict=reject tok=2909 289.8s
+v8_09_digit_persistence      qwen32 R2 critic   fail verdict=accept tok=2077 207.6s
+v8_14_happy_count            qwen32 R2 critic   fail verdict=accept tok=1723 173.8s
+v8_16_two_color              qwen32 R3 defender fail verdict=reject tok=2633 263.4s
+v8_17_lattice_segment        qwen32 R3 defender pass verdict=accept tok=1232 128.7s
+v8_18_closest_pair           qwen32 R2 critic   pass verdict=reject tok=2688 269.8s
+v8_20_triangle_kind          qwen32 R3 defender fail verdict=accept tok=240 29.2s
+v8_19_euler_trail            qwen32 R2 critic   fail verdict=reject tok=2899 296.3s
+v8_22_tree_centers           qwen32 R3 defender fail verdict=accept tok=1365 136.3s
+v8_21_manhattan_center       qwen32 R2 critic   fail verdict=reject tok=2383 242.8s
+v8_24_elevator_scan          qwen32 R2 critic   fail verdict=reject tok=2899 287.8s
+v8_25_josephus_order         qwen32 R2 critic   fail verdict=accept tok=2076 208.9s
+v8_29_matrix_chain           qwen32 R2 critic   fail verdict=accept tok=2343 229.3s
+v8_28_lcs_smallest           qwen32 R2 critic   pass verdict=reject tok=2539 252.4s
+step crawdad-v8-d2p2: qwen32 asked 19; owed {'qwen32': 0, 'r1d32': 9}; next session: invite r1d32
+llmctl: run python3 rc=0 memory.peak=43 MiB cap=8192 MiB as=16384 MiB
+STEP_END crawdad-v8-d2p2 s3 qwen32 2026-11-18T01:07:06Z 1794964026.432324530
+STEP_WALL crawdad-v8-d2p2 s3 qwen32 2168.6 s
+llmctl: session 77: ENDED qwen32; GTT after stop 1.2 GiB

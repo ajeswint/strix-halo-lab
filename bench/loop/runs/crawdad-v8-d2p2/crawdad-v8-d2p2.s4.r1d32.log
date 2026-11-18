@@ -1,0 +1,29 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.4GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 78: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.4GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.4GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: cf754189412a45bbb15c9f44a9d37b98
+up: r1-distill-qwen-32b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+llmctl: session 78: ACTIVE r1d32 on :8081, GTT 36.0 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+STEP_START crawdad-v8-d2p2 s4 r1d32 2026-11-18T01:07:13Z 1794964033.147739358
+step crawdad-v8-d2p2: r1d32 owes 9 replies on 9 tasks
+v8_04_money_text             r1d32 R3 defender fail verdict=reject tok=1193 129.2s
+v8_05_cidr_range             r1d32 R3 defender fail verdict=accept tok=1518 168.4s
+v8_08_query_pairs            r1d32 R3 defender pass verdict=accept tok=1237 135.4s
+v8_16_two_color              r1d32 R4 critic   fail verdict=accept tok=2152 222.4s
+v8_18_closest_pair           r1d32 R3 defender pass verdict=accept tok=1515 161.5s
+v8_21_manhattan_center       r1d32 R3 defender fail verdict=accept tok=1220 122.4s
+v8_19_euler_trail            r1d32 R3 defender fail verdict=accept tok=1519 167.1s
+v8_28_lcs_smallest           r1d32 R3 defender pass verdict=accept tok=1562 155.8s
+v8_24_elevator_scan          r1d32 R3 defender fail verdict=accept tok=2573 256.5s
+step crawdad-v8-d2p2: r1d32 asked 9; owed {'qwen32': 1, 'r1d32': 0}; next session: invite qwen32
+llmctl: run python3 rc=0 memory.peak=47 MiB cap=8192 MiB as=16384 MiB
+STEP_END crawdad-v8-d2p2 s4 r1d32 2026-11-18T01:20:38Z 1794964838.723059602
+STEP_WALL crawdad-v8-d2p2 s4 r1d32 805.6 s
+llmctl: session 78: ENDED r1d32; GTT after stop 1.2 GiB
