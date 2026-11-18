@@ -801,6 +801,101 @@ class TestPilotPr(unittest.TestCase):
             os.environ.update(old_env)
             shutil.rmtree(scratch_dir, ignore_errors=True)
 
+    def test_bwrap_sandbox_blocks_outside_writes_reads_proc_and_fails_closed(self):
+        """Verify bwrap sandbox blocks writing /tmp or real HOME, hides repo//data/main checkout and parent /proc, supports nested bwrap (#6, #16), and fails closed."""
+        self.assertTrue(pilot_pr.has_bwrap(), "bwrap must be present and functional on this machine")
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        real_home = os.path.expanduser("~")
+        host_tmp_probe = "/tmp/outside-probe-item6-test"
+        host_home_probe = os.path.join(
+            real_home,
+            f".local/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/usercustomize_item6_probe.py",
+        )
+        if os.path.exists(host_tmp_probe):
+            os.remove(host_tmp_probe)
+        if os.path.exists(host_home_probe):
+            os.remove(host_home_probe)
+
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_bwrap_iso_")
+        try:
+            task = tasks_item6.get_task("item6_pr06")
+            pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+
+            # 1. Probe module attempts to:
+            #    - write /tmp/outside-probe-item6-test and real_home/.local/.../usercustomize_item6_probe.py
+            #    - read repo_root, /home/aj/projects/strix-halo-lab, /data, and real_home contents
+            #    - scan /proc/*/cwd and /proc/*/cmdline for repo_root or /home/aj/projects/strix-halo-lab
+            probe_code = (
+                "import glob, os, sys\n"
+                "try:\n"
+                f"    open({host_tmp_probe!r}, 'w').write('pwned')\n"
+                "except Exception:\n"
+                "    pass\n"
+                "try:\n"
+                f"    os.makedirs(os.path.dirname({host_home_probe!r}), exist_ok=True)\n"
+                f"    open({host_home_probe!r}, 'w').write('pwned')\n"
+                "except Exception:\n"
+                "    pass\n"
+                "leaks = []\n"
+                f"for p in ({repo_root!r}, '/home/aj/projects/strix-halo-lab', '/data/models', '/data/orch', os.path.join({real_home!r}, '.bashrc'), os.path.join({real_home!r}, '.gitconfig')):\n"
+                "    if os.path.exists(p):\n"
+                "        leaks.append('PATH_EXISTS:' + p)\n"
+                "for pc in glob.glob('/proc/[0-9]*/cwd'):\n"
+                "    try:\n"
+                "        target = os.readlink(pc)\n"
+                f"        if {repo_root!r} in target or 'strix-halo-lab' in target:\n"
+                "            leaks.append('PROC_CWD:' + target)\n"
+                "    except Exception:\n"
+                "        pass\n"
+                "if leaks:\n"
+                "    print('SANDBOX_LEAK:', leaks)\n"
+                "else:\n"
+                "    print('SANDBOX_ISOLATED_OK')\n"
+                "sys.exit(0)\n"
+            )
+            full_target = os.path.join(scratch_dir, "bench", "loop", "debate.py")
+            with open(full_target, "w", encoding="utf-8") as f:
+                f.write(probe_code)
+
+            # Test both loop run_tests and grade regrade_task_diff
+            _, loop_out = pilot_pr.run_tests(task, scratch_dir)
+            self.assertIn("SANDBOX_ISOLATED_OK", loop_out)
+            self.assertNotIn("SANDBOX_LEAK:", loop_out)
+            self.assertFalse(os.path.exists(host_tmp_probe), "/tmp write inside sandbox must not appear on host /tmp!")
+            self.assertFalse(os.path.exists(host_home_probe), "HOME write inside sandbox must not appear in real HOME!")
+
+            probe_diff = pilot_pr.capture_worktree_diff(scratch_dir, task["base_commit"])
+            passed, grade_out = pilot_pr.regrade_task_diff(task, probe_diff, repo_root=repo_root, timeout=30)
+            self.assertFalse(passed)
+            self.assertIn("SANDBOX_ISOLATED_OK", grade_out)
+            self.assertNotIn("SANDBOX_LEAK:", grade_out)
+            self.assertFalse(os.path.exists(host_tmp_probe), "/tmp write during grade must not appear on host /tmp!")
+            self.assertFalse(os.path.exists(host_home_probe), "HOME write during grade must not appear in real HOME!")
+
+            # 2. Verify nested bwrap works for real PR #6 and PR #16 regrades
+            for tid in ("item6_pr06", "item6_pr16"):
+                t_nested = tasks_item6.get_task(tid)
+                hd = tasks_item6.get_hidden_diff(t_nested, repo_root=repo_root)
+                ok_nested, out_nested = pilot_pr.regrade_task_diff(t_nested, hd, repo_root=repo_root, timeout=120)
+                self.assertTrue(ok_nested, f"Nested bwrap regrade failed for {tid}: {out_nested[-600:]}")
+
+            # 3. Verify fail-closed when bwrap is unavailable
+            orig_has_bwrap = pilot_pr.has_bwrap
+            try:
+                pilot_pr.has_bwrap = lambda: False
+                with self.assertRaises(RuntimeError):
+                    pilot_pr.run_tests(task, scratch_dir)
+                with self.assertRaises(RuntimeError):
+                    pilot_pr.regrade_task_diff(task, probe_diff, repo_root=repo_root, timeout=15)
+            finally:
+                pilot_pr.has_bwrap = orig_has_bwrap
+        finally:
+            if os.path.exists(host_tmp_probe):
+                os.remove(host_tmp_probe)
+            if os.path.exists(host_home_probe):
+                os.remove(host_home_probe)
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

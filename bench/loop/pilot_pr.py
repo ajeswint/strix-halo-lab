@@ -66,19 +66,78 @@ def prepare_isolated_home_and_tmp(base_dir):
 
 
 def cleanup_isolated_home_and_tmp(base_dir):
-    """Remove the sibling _home and _tmp directories for base_dir."""
+    """Remove the sibling _home, _tmp, and _bwrap_outer directories for base_dir."""
     root = os.path.abspath(base_dir)
-    for suffix in ("_home", "_tmp"):
+    for suffix in ("_home", "_tmp", "_bwrap_outer"):
         d = root + suffix
         if os.path.exists(d):
             shutil.rmtree(d, ignore_errors=True)
 
 
-def _wrap_shell_with_isolated_python3(cmd, task_dir):
-    """Prepend a bash function `python3` that always invokes `/usr/bin/python3 -I` with `task_dir` added to sys.path."""
+def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, inner_argv, env_dict):
+    """Wrap inner_argv in an outer bubblewrap sandbox that isolates filesystem, PID, and network namespaces.
+
+    Sandbox invariants:
+    - Fails closed if /usr/bin/bwrap (or bwrap in PATH) is missing.
+    - Copies /usr/bin/bwrap to a temporary executable path outside /usr/bin/bwrap so Ubuntu AppArmor's
+      /usr/bin/bwrap profile does not stack `unpriv_bwrap` (which denies CAP_SYS_ADMIN to nested bwrap
+      invocations inside #6, #13, and #16 selftests).
+    - Read-only binds /usr, /bin, /lib, /lib64, /etc; mounts fresh --dev /dev and --proc /proc;
+      mounts fresh --tmpfs over /tmp, /home, and /data so the main checkout (/home/aj/projects/strix-halo-lab),
+      this worktree, /data, and the real user home directory are completely absent and unreadable.
+    - Writable binds ONLY task_dir (at /work), home_dir (at /home/pilot), and tmp_dir (at /tmp), with --chdir /work.
+    - Uses --unshare-user, --unshare-pid, --unshare-net, --unshare-ipc, --unshare-uts, --die-with-parent, --clearenv.
+    """
+    bwrap_bin = "/usr/bin/bwrap" if os.path.exists("/usr/bin/bwrap") else shutil.which("bwrap")
+    if not bwrap_bin or not os.path.exists(bwrap_bin):
+        raise RuntimeError("bwrap (/usr/bin/bwrap) is required for sandboxed execution; refusing to run unsandboxed")
+
+    outer_bin_dir = os.path.abspath(task_dir) + "_bwrap_outer"
+    os.makedirs(outer_bin_dir, exist_ok=True)
+    outer_bwrap = os.path.join(outer_bin_dir, "bwrap_outer")
+    if not os.path.exists(outer_bwrap):
+        shutil.copy2(bwrap_bin, outer_bwrap)
+        os.chmod(outer_bwrap, 0o755)
+
+    cmd = [
+        outer_bwrap,
+        "--ro-bind", "/usr", "/usr",
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib64", "/lib64",
+        "--symlink", "usr/bin", "/bin",
+        "--ro-bind", "/etc", "/etc",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+        "--tmpfs", "/home",
+        "--tmpfs", "/data",
+        "--bind", os.path.abspath(tmp_dir), "/tmp",
+        "--bind", os.path.abspath(home_dir), "/home/pilot",
+        "--bind", os.path.abspath(task_dir), "/work",
+        "--chdir", "/work",
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--die-with-parent",
+        "--clearenv",
+    ]
+    sandbox_env = dict(env_dict)
+    sandbox_env["HOME"] = "/home/pilot"
+    sandbox_env["TMPDIR"] = "/tmp"
+    sandbox_env["PATH"] = FIXED_SYSTEM_PATH
+    for k, v in sorted(sandbox_env.items()):
+        cmd.extend(["--setenv", str(k), str(v)])
+    cmd.extend(inner_argv)
+    return cmd
+
+
+def _wrap_shell_with_isolated_python3(cmd, task_dir="/work"):
+    """Prepend a bash function `python3` that always invokes `/usr/bin/python3 -I -B` with `task_dir` added to sys.path."""
     import base64
-    real_py = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else (shutil.which("python3") or "/usr/bin/python3")
-    td = os.path.abspath(task_dir)
+    real_py = "/usr/bin/python3" if os.path.exists("/usr/bin/bwrap") else (shutil.which("python3") or "/usr/bin/python3")
+    td = task_dir
     runner = (
         "import os, runpy, sys\n"
         f"td = {td!r}\n"
@@ -118,12 +177,17 @@ def _wrap_shell_with_isolated_python3(cmd, task_dir):
 
 
 def has_bwrap():
-    """Return True if bwrap is installed and can create a basic user/mount namespace sandbox."""
-    if shutil.which("bwrap") is None:
+    """Return True if bwrap is installed and can create a basic user/mount namespace sandbox (including via a temporary copy for nested bwrap)."""
+    bwrap_bin = "/usr/bin/bwrap" if os.path.exists("/usr/bin/bwrap") else shutil.which("bwrap")
+    if not bwrap_bin or not os.path.exists(bwrap_bin):
         return False
+    tmp_d = tempfile.mkdtemp(prefix="pilot_bwrap_chk_")
     try:
+        outer_bw = os.path.join(tmp_d, "bwrap_outer")
+        shutil.copy2(bwrap_bin, outer_bw)
+        os.chmod(outer_bw, 0o755)
         res = subprocess.run(
-            ["bwrap", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+            [outer_bw, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
              "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-all", "true"],
             capture_output=True,
             timeout=5,
@@ -132,6 +196,8 @@ def has_bwrap():
         return res.returncode == 0
     except Exception:
         return False
+    finally:
+        shutil.rmtree(tmp_d, ignore_errors=True)
 
 
 
@@ -366,10 +432,10 @@ def apply_updates(worktree_dir, updates):
 
 
 def run_tests(task, worktree_dir, timeout=60):
-    """Run test command for the task in worktree_dir.
+    """Run test command for the task in worktree_dir inside the outer bwrap sandbox.
 
     Returns (passed: bool, output_str: str).
-    Should only be called when task['has_tests'] is True.
+    Should only be called when task['has_tests'] is True. Fails closed if bwrap cannot start.
     """
     clean_task = tasks_item6.strip_hidden(task)
     if not clean_task.get("has_tests"):
@@ -377,13 +443,16 @@ def run_tests(task, worktree_dir, timeout=60):
     cmd = clean_task.get("test_cmd")
     if not cmd:
         return True, "No test command defined for task."
+    if not has_bwrap():
+        raise RuntimeError("bwrap sandbox is unavailable; refusing to execute run_tests unsandboxed")
 
-    iso_cmd = _wrap_shell_with_isolated_python3(cmd, worktree_dir)
+    iso_cmd = _wrap_shell_with_isolated_python3(cmd, "/work")
     home_dir, tmp_dir = prepare_isolated_home_and_tmp(worktree_dir)
-    env = build_minimal_env(home_dir=home_dir, tmp_dir=tmp_dir)
+    env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+    bwrap_argv = build_outer_bwrap_cmd(worktree_dir, home_dir, tmp_dir, ["bash", "-c", iso_cmd], env)
     try:
         res = subprocess.run(
-            ["bash", "-c", iso_cmd],
+            bwrap_argv,
             cwd=worktree_dir,
             env=env,
             capture_output=True,
@@ -923,31 +992,38 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
     - Any sys.exit(0) or os._exit(0) inside a model module during import or test execution aborts before
       the wrapper reaches the count verification and sentinel write, causing grade to return False.
     """
+    if not has_bwrap():
+        raise RuntimeError("bwrap sandbox is unavailable; refusing to execute grade unsandboxed")
     home_dir, tmp_dir = prepare_isolated_home_and_tmp(grade_dir)
-    clean_env = build_minimal_env(home_dir=home_dir, tmp_dir=tmp_dir)
+    clean_env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
     merged_sha = dict.__getitem__(task, "merged_commit")
     spec = task.get("grade_spec")
     sentinel = f"@@PILOT_GRADE_OK_{secrets.token_hex(16)}@@"
+
+    def run_in_sandbox(inner_argv, stdin_data=None):
+        bwrap_cmd = build_outer_bwrap_cmd(grade_dir, home_dir, tmp_dir, inner_argv, clean_env)
+        return subprocess.run(
+            bwrap_cmd,
+            input=stdin_data,
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
 
     try:
         if not spec:
             cmd = task.get("test_cmd")
             if not cmd:
                 return True, ""
-            res = subprocess.run(
-                ["bash", "-c", _wrap_shell_with_isolated_python3(cmd, grade_dir)],
-                cwd=grade_dir,
-                env=clean_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            res = run_in_sandbox(["bash", "-c", _wrap_shell_with_isolated_python3(cmd, "/work")])
             return (res.returncode == 0), (res.stdout or "") + (res.stderr or "")
 
         mode = spec["mode"]
 
         if mode == "shell":
-            iso_shell_cmd = _wrap_shell_with_isolated_python3(spec["cmd"], grade_dir)
+            iso_shell_cmd = _wrap_shell_with_isolated_python3(spec["cmd"], "/work")
             wrapper_cmd = (
                 "set -e\n"
                 "IFS= read -r _PILOT_TOK\n"
@@ -955,15 +1031,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 f"{iso_shell_cmd}\n"
                 "printf '%s\\n' \"$_PILOT_TOK\"\n"
             )
-            res = subprocess.run(
-                ["bash", "-c", wrapper_cmd],
-                input=sentinel + "\n",
-                cwd=grade_dir,
-                env=clean_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            res = run_in_sandbox(["bash", "-c", wrapper_cmd], stdin_data=sentinel + "\n")
             output = (res.stdout or "") + (res.stderr or "")
             if res.returncode != 0 or sentinel not in output:
                 return False, output + "\n[grade_wrapper: missing sentinel or non-zero exit]"
@@ -986,7 +1054,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
             "os.dup2(_devnull, 0)\n"
             "os.close(_devnull)\n"
             "sys.stdin = open(os.devnull, 'r')\n"
-            "sys.path.insert(0, os.getcwd())\n"
+            "sys.path.insert(0, '/work')\n"
         )
 
         if mode == "selftest_file":
@@ -997,7 +1065,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
             driver = (
                 stdin_token_preamble
                 + "import contextlib, io\n"
-                + f"sys.path.insert(0, os.path.join(os.getcwd(), {spec['module_dir']!r}))\n"
+                + f"sys.path.insert(0, os.path.join('/work', {spec['module_dir']!r}))\n"
                 + f"import {spec['module_name']} as mod\n"
                 + "with open('_pilot_merged_selftest.py', 'r', encoding='utf-8') as f:\n"
                 + "    st_src = f.read()\n"
@@ -1015,15 +1083,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + f"    print(f'[grade_wrapper: rc={{rc}} ok={{ok_count}}/{spec['expected_test_count']} fail={{fail_count}}]')\n"
                 + "    sys.exit(1)\n"
             )
-            res = subprocess.run(
-                ["python3", "-I", "-B", "-c", driver],
-                input=sentinel + "\n",
-                cwd=grade_dir,
-                env=clean_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
             if os.path.exists(st_path):
                 os.remove(st_path)
             output = (res.stdout or "") + (res.stderr or "")
@@ -1033,7 +1093,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
             driver = (
                 stdin_token_preamble
                 + "import unittest\n"
-                + "sys.path.insert(0, os.path.join(os.getcwd(), 'bench/loop'))\n"
+                + "sys.path.insert(0, os.path.join('/work', 'bench/loop'))\n"
                 + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
                 + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
                 + "result = runner.run(suite)\n"
@@ -1047,15 +1107,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                     "assert len(tasks_v10.TASKS) == 90\n"
                 )
             driver += "print(_tok)\n"
-            res = subprocess.run(
-                ["python3", "-I", "-B", "-c", driver],
-                input=sentinel + "\n",
-                cwd=grade_dir,
-                env=clean_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 
@@ -1067,7 +1119,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
             driver = (
                 stdin_token_preamble
                 + "import contextlib, io, unittest\n"
-                + f"sys.path.insert(0, os.path.join(os.getcwd(), {spec['module_dir']!r}))\n"
+                + f"sys.path.insert(0, os.path.join('/work', {spec['module_dir']!r}))\n"
                 + f"suite = unittest.defaultTestLoader.loadTestsFromName({spec['test_module'].replace('/', '.')[:-3]!r})\n"
                 + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
                 + "result = runner.run(suite)\n"
@@ -1091,15 +1143,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + f"    print(f'[grade_wrapper: selftest rc={{rc}} ok={{ok_count}}/{spec['expected_selftest_count']} fail={{fail_count}}]')\n"
                 + "    sys.exit(1)\n"
             )
-            res = subprocess.run(
-                ["python3", "-I", "-B", "-c", driver],
-                input=sentinel + "\n",
-                cwd=grade_dir,
-                env=clean_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
             if os.path.exists(st_path):
                 os.remove(st_path)
             output = (res.stdout or "") + (res.stderr or "")
@@ -1154,6 +1198,8 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
         return _run_harness_grade_spec(task, grade_dir, repo_root, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, f"ERROR: grade test command timed out after {timeout} seconds."
+    except RuntimeError:
+        raise
     except Exception as e:
         return False, f"ERROR during regrade_task_diff: {e}"
     finally:
