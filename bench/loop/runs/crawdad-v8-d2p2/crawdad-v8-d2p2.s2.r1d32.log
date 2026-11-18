@@ -1,0 +1,65 @@
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.5GiB swap_free=7.4GiB llama-deepseek=inactive
+READY
+llmctl: session 76: INVITE r1d32
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.5GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=102.5GiB swap_free=7.4GiB llama-deepseek=inactive
+model=DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf size=18.5GiB need=34.5GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 6634e9d134e3490b9409cf2d27a443e3
+up: r1-distill-qwen-32b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+llmctl: session 76: ACTIVE r1d32 on :8081, GTT 36.0 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+STEP_START crawdad-v8-d2p2 s2 r1d32 2026-11-17T22:46:53Z 1794955613.749039140
+step crawdad-v8-d2p2: r1d32 owes 45 replies on 30 tasks
+v8_01_hex_color              r1d32 R1 solo     pass verdict=None tok=2912 276.3s
+v8_02_morse_text             r1d32 R1 solo     fail verdict=None tok=3258 310.7s
+v8_03_case_convert           r1d32 R1 solo     fail verdict=None tok=2812 267.1s
+v8_04_money_text             r1d32 R1 solo     fail verdict=None tok=3080 292.9s
+v8_05_cidr_range             r1d32 R1 solo     fail verdict=None tok=3011 288.0s
+v8_06_clock_12h              r1d32 R1 solo     pass verdict=None tok=3053 291.3s
+v8_07_luhn_digits            r1d32 R1 solo     fail verdict=None tok=2512 242.1s
+v8_06_clock_12h              r1d32 R2 critic   pass verdict=accept tok=2504 243.4s
+v8_08_query_pairs            r1d32 R1 solo     fail verdict=None tok=4726 461.5s
+v8_07_luhn_digits            r1d32 R2 critic   fail verdict=None tok=6144 603.7s
+v8_09_digit_persistence      r1d32 R1 solo     pass verdict=None tok=2747 264.4s
+v8_10_euler_phi              r1d32 R1 solo     fail verdict=None tok=3013 285.9s
+v8_10_euler_phi              r1d32 R2 critic   fail verdict=accept tok=1352 130.1s
+v8_11_goldbach_pairs         r1d32 R1 solo     pass verdict=None tok=2920 281.2s
+v8_11_goldbach_pairs         r1d32 R2 critic   fail verdict=accept tok=1618 154.4s
+v8_12_pascal_mod             r1d32 R1 solo     pass verdict=None tok=2772 267.0s
+v8_12_pascal_mod             r1d32 R2 critic   pass verdict=accept tok=1059 101.9s
+v8_13_primitive_triples      r1d32 R1 solo     fail verdict=None tok=2784 267.4s
+v8_14_happy_count            r1d32 R1 solo     fail verdict=None tok=2701 258.6s
+v8_13_primitive_triples      r1d32 R2 critic   fail verdict=accept tok=2165 208.6s
+v8_15_egyptian_greedy        r1d32 R1 solo     pass verdict=None tok=2816 267.9s
+v8_16_two_color              r1d32 R1 solo     fail verdict=None tok=2818 269.8s
+v8_15_egyptian_greedy        r1d32 R2 critic   fail verdict=accept tok=1987 193.7s
+v8_16_two_color              r1d32 R2 critic   fail verdict=reject tok=2976 286.3s
+v8_17_lattice_segment        r1d32 R1 solo     fail verdict=None tok=2866 274.5s
+v8_18_closest_pair           r1d32 R1 solo     pass verdict=None tok=2803 270.1s
+v8_17_lattice_segment        r1d32 R2 critic   fail verdict=reject tok=2566 248.9s
+v8_19_euler_trail            r1d32 R1 solo     fail verdict=None tok=3288 315.0s
+v8_20_triangle_kind          r1d32 R1 solo     fail verdict=None tok=2919 279.5s
+v8_21_manhattan_center       r1d32 R1 solo     fail verdict=None tok=2758 266.4s
+v8_20_triangle_kind          r1d32 R2 critic   pass verdict=reject tok=2693 260.8s
+v8_22_tree_centers           r1d32 R1 solo     fail verdict=None tok=2655 253.7s
+v8_23_robot_walk             r1d32 R1 solo     fail verdict=None tok=3005 289.5s
+v8_22_tree_centers           r1d32 R2 critic   fail verdict=reject tok=2719 267.7s
+v8_23_robot_walk             r1d32 R2 critic   fail verdict=accept tok=2125 208.3s
+v8_24_elevator_scan          r1d32 R1 solo     fail verdict=None tok=2918 278.4s
+v8_25_josephus_order         r1d32 R1 solo     pass verdict=None tok=2777 265.2s
+v8_26_max_subarray           r1d32 R1 solo     fail verdict=None tok=2684 255.3s
+v8_27_stair_ways             r1d32 R1 solo     pass verdict=None tok=2913 278.8s
+v8_26_max_subarray           r1d32 R2 critic   fail verdict=accept tok=2714 264.5s
+v8_27_stair_ways             r1d32 R2 critic   fail verdict=accept tok=2475 240.0s
+v8_28_lcs_smallest           r1d32 R1 solo     pass verdict=None tok=2888 275.0s
+v8_29_matrix_chain           r1d32 R1 solo     pass verdict=None tok=2924 278.5s
+v8_30_ledger_events          r1d32 R1 solo     fail verdict=None tok=2797 254.6s
+v8_30_ledger_events          r1d32 R2 critic   fail verdict=accept tok=2202 202.5s
+step crawdad-v8-d2p2: r1d32 asked 45; owed {'qwen32': 19, 'r1d32': 0}; next session: invite qwen32
+llmctl: run python3 rc=0 memory.peak=56 MiB cap=8192 MiB as=16384 MiB
+STEP_END crawdad-v8-d2p2 s2 r1d32 2026-11-18T00:30:50Z 1794961850.054987356
+STEP_WALL crawdad-v8-d2p2 s2 r1d32 6236.3 s
+llmctl: session 76: ENDED r1d32; GTT after stop 1.2 GiB
