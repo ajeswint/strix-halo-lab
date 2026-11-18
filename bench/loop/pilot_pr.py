@@ -783,6 +783,69 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
     return results
 
 
+def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
+    """Independently grade a task's final_diff in a fresh clean copy of base_commit with test files restored from merged_commit.
+
+    Never trusts the in-loop `passed` flag:
+    1. Creates a fresh standalone scratch tree at `base_commit`.
+    2. Applies `final_diff` (if non-empty) with path confinement checks.
+    3. Overwrites any `test_files` in the scratch tree with their authoritative versions from `merged_commit`
+       so model edits to test files (e.g. an `exit 0` bypass) are ignored for grading.
+    4. Runs `grade_test_cmd` (if defined on task, e.g. merged selftest harness) or `test_cmd`.
+    """
+    if not task.get("has_tests"):
+        return None, "Not a testable task"
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+    base_sha = dict.__getitem__(task, "base_commit")
+    merged_sha = dict.__getitem__(task, "merged_commit")
+    grade_dir = tempfile.mkdtemp(prefix=f"grade_{task['id']}_")
+    try:
+        create_isolated_scratch_repo(repo_root, base_sha, grade_dir)
+        if final_diff and final_diff.strip():
+            ok, msg = apply_updates(grade_dir, {"__patch__": final_diff.rstrip("\n")})
+            if not ok:
+                return False, f"Failed applying final_diff during grade: {msg}"
+
+        # Restore authoritative test files from merged_commit (overwriting any model tampering)
+        for tf in task.get("test_files", []):
+            full_tf = resolve_confined_path(grade_dir, tf)
+            os.makedirs(os.path.dirname(full_tf), exist_ok=True)
+            show_res = subprocess.run(
+                ["git", "-C", repo_root, "show", f"{merged_sha}:{tf}"],
+                capture_output=True,
+            )
+            if show_res.returncode != 0:
+                return False, f"Failed restoring test file {tf} from {merged_sha}"
+            with open(full_tf, "wb") as f:
+                f.write(show_res.stdout)
+
+        grade_cmd = task.get("grade_test_cmd") or task.get("test_cmd")
+        if not grade_cmd:
+            return True, ""
+        # Run grade_cmd with REPO_ROOT exported in case grade_test_cmd inspects merged_commit for in-module selftest
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PILOT_REPO_ROOT=repo_root)
+        res = subprocess.run(
+            ["bash", "-c", grade_cmd],
+            cwd=grade_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        passed = (res.returncode == 0)
+        output = (res.stdout or "") + (res.stderr or "")
+        return passed, output
+    except subprocess.TimeoutExpired:
+        return False, f"ERROR: grade test command timed out after {timeout} seconds."
+    except Exception as e:
+        return False, f"ERROR during regrade_task_diff: {e}"
+    finally:
+        shutil.rmtree(grade_dir, ignore_errors=True)
+
+
+
 def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None, tasks_override=None):
     """Execute the `grade` subcommand: score recorded diffs against hidden diffs, merge review verdicts, compute KEEP/DROP."""
     if repo_root is None:
@@ -830,14 +893,18 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             continue
         row = rows_by_id[tid]
         has_tests = bool(task.get("has_tests"))
-        passed = bool(row.get("passed")) if has_tests else None
+        local_diff = row.get("final_diff", "")
+        in_loop_passed = bool(row.get("passed")) if has_tests else None
         if has_tests:
             testable_total += 1
+            passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
             if passed:
                 testable_passed += 1
+        else:
+            passed = None
+            grade_test_out = ""
 
         hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=repo_root)
-        local_diff = row.get("final_diff", "")
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
@@ -862,6 +929,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             "task_id": tid,
             "pr_number": task["pr_number"],
             "has_tests": has_tests,
+            "in_loop_passed": in_loop_passed,
             "test_passed": passed,
             "stop_reason": row.get("stop_reason"),
             "turns_executed": row.get("turns_executed"),

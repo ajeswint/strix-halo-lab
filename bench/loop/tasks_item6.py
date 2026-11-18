@@ -30,6 +30,15 @@ PR_TASKS = [
         "merged_commit": "1a889a49feac28b2e637aa51936a2ea0f1ce69ca",
         "has_tests": True,
         "test_cmd": "python3 bench/loop/debate.py --selftest",
+        "test_files": [],
+        "grade_test_cmd": (
+            "python3 -c \"import os, subprocess, sys; "
+            "repo = os.environ.get('PILOT_REPO_ROOT', '.'); "
+            "src = subprocess.check_output(['git', '-C', repo, 'show', '1a889a49feac28b2e637aa51936a2ea0f1ce69ca:bench/loop/debate.py'], text=True); "
+            "st = 'def selftest():' + src.split('def selftest():', 1)[1].split('def main():', 1)[0]; "
+            "sys.path.insert(0, 'bench/loop'); import debate; "
+            "exec(st, debate.__dict__); sys.exit(debate.selftest())\""
+        ),
         "files": ["README.md", "bench/loop/debate.py"],
         "prompt": (
             "Repo ajeswint/strix-halo-lab: Fix `bench/loop/debate.py` parser logic.\n\n"
@@ -52,6 +61,7 @@ PR_TASKS = [
         "merged_commit": "a3003e92bea50e950791b2f0625b7323398a3cd2",
         "has_tests": True,
         "test_cmd": "bash tools/lab-seats/test.sh",
+        "test_files": ["tools/lab-seats/test.sh"],
         "files": [
             ".claude/agents/adversarial-reviewer.md",
             ".claude/agents/code-writer.md",
@@ -85,6 +95,7 @@ PR_TASKS = [
         "merged_commit": "74d35557c15931850945bf519426d6aaa55af41b",
         "has_tests": True,
         "test_cmd": "python3 -m unittest bench/loop/test_tasks_v10.py && python3 bench/loop/tasks_v10.py",
+        "test_files": ["bench/loop/test_tasks_v10.py", "bench/loop/tasks_v10_mutants.py"],
         "files": [
             "README.md",
             "bench/loop/debate.py",
@@ -111,6 +122,7 @@ PR_TASKS = [
         "merged_commit": "af2b1a5c4ca765fd411f9e9f9d48c2d099420722",
         "has_tests": True,
         "test_cmd": "python3 -c \"import os; docs=['docs/setup-hardware.md','docs/serving.md','docs/orchestrator.md','docs/bench-small-model-loop.md','docs/crawdad-v7.md','docs/crawdad-v8.md','docs/crawdad-v10-noise.md','docs/roadmap.md']; assert all(os.path.exists(d) for d in docs); print('ALL DOCS EXIST')\"",
+        "test_files": [],
         "files": [
             "CLAUDE.md",
             "README.md",
@@ -147,6 +159,7 @@ PR_TASKS = [
         "merged_commit": "6c56cc09eaafb2376422e73515b39f8193893740",
         "has_tests": False,
         "test_cmd": "",
+        "test_files": [],
         "files": [
             ".claude/agents/evaluator.md",
             ".claude/agents/systems.md",
@@ -184,6 +197,16 @@ PR_TASKS = [
         "merged_commit": "1eb694f8aaf53f7730dd6922c1dcfe8d301208f6",
         "has_tests": True,
         "test_cmd": "python3 -m unittest bench/loop/test_ground.py && python3 bench/loop/ground.py --selftest",
+        "test_files": ["bench/loop/test_ground.py"],
+        "grade_test_cmd": (
+            "python3 -m unittest bench/loop/test_ground.py && "
+            "python3 -c \"import os, subprocess, sys; "
+            "repo = os.environ.get('PILOT_REPO_ROOT', '.'); "
+            "src = subprocess.check_output(['git', '-C', repo, 'show', '1eb694f8aaf53f7730dd6922c1dcfe8d301208f6:bench/loop/ground.py'], text=True); "
+            "st = 'def selftest():' + src.split('def selftest():', 1)[1].split('def main():', 1)[0]; "
+            "sys.path.insert(0, 'bench/loop'); import ground; "
+            "exec(st, ground.__dict__); sys.exit(ground.selftest())\""
+        ),
         "files": [
             "README.md",
             "bench/loop/generate_visible.py",
@@ -211,6 +234,7 @@ PR_TASKS = [
         "merged_commit": "dbf6a2cb442188dd8ad41811f548541130ae6320",
         "has_tests": True,
         "test_cmd": "bash scripts/test-prereg-guard.sh",
+        "test_files": ["scripts/test-prereg-guard.sh"],
         "files": [
             ".claude/skills/measure/SKILL.md",
             "docs/setup-hardware.md",

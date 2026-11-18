@@ -325,21 +325,23 @@ class TestPilotPr(unittest.TestCase):
             # Also test grade_subcommand with a full 7-task synthetic result set + reviews file
             all_tasks = tasks_item6.load_tasks()
             jsonl_path = os.path.join(results_dir, "full-batch.jsonl")
+            passing_indices = (0, 1, 3, 4, 6)  # 4 testable (pr06, pr08, pr14, pr20) + 1 non-testable (pr15)
             with open(jsonl_path, "w") as jf:
                 for i, t in enumerate(all_tasks):
-                    # 4 of 6 testable pass
-                    passed = True if (not t["has_tests"] or i in (0, 1, 2, 3)) else False
+                    # 4 of 6 testable pass: use true hidden_diff for passing tasks so fresh regrade passes!
+                    should_pass = i in passing_indices
+                    diff_for_grade = tasks_item6.get_hidden_diff(t) if should_pass else ""
                     jf.write(
                         pilot_pr.json.dumps({
                             "task_id": t["id"],
                             "pr_number": t["pr_number"],
                             "has_tests": t["has_tests"],
-                            "passed": passed,
-                            "stop_reason": "pass" if passed else "max_turns",
+                            "passed": True,  # even if in-loop claims True, grade re-runs tests from scratch!
+                            "stop_reason": "pass",
                             "turns_executed": 1,
                             "total_completion_tokens": 100,
                             "wall_s": 5.0,
-                            "final_diff": "+line\n",
+                            "final_diff": diff_for_grade,
                         }) + "\n"
                     )
 
@@ -521,6 +523,46 @@ class TestPilotPr(unittest.TestCase):
             self.assertIn("+isolated content", diff_out)
         finally:
             shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_self_grading_test_overwrite_rejected_by_grade(self):
+        """Verify that overwriting a test file with 'exit 0' passes in-loop if unguarded, but FAILS during grade."""
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_pr_selfgrade_")
+        results_dir = tempfile.mkdtemp(prefix="pilot_pr_sg_res_")
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        try:
+            # Take PR #20 (test_cmd: bash scripts/test-prereg-guard.sh, test_files: ['scripts/test-prereg-guard.sh'])
+            task = tasks_item6.get_task("item6_pr20")
+            pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
+
+            # Simulate a cheating model that overwrites scripts/test-prereg-guard.sh with 'exit 0'
+            def cheating_model(prompt, seed):
+                return {
+                    "content": "### scripts/test-prereg-guard.sh\n```bash\n#!/usr/bin/env bash\nexit 0\n```\n",
+                    "usage": {"completion_tokens": 20},
+                }
+
+            loop_res = pilot_pr.run_task_loop(task, cheating_model, scratch_dir, max_turns=2)
+            # In-loop test_cmd ran the overwritten test file and saw exit 0:
+            self.assertTrue(loop_res["passed"])
+
+            # Now grade_subcommand re-runs in a fresh tree with test_files restored from merged_commit
+            jsonl_path = os.path.join(results_dir, "cheat.jsonl")
+            with open(jsonl_path, "w") as f:
+                f.write(pilot_pr.json.dumps(loop_res) + "\n")
+
+            grade_res = pilot_pr.grade_subcommand(
+                label="cheat",
+                repo_root=repo_root,
+                results_dir=results_dir,
+                tasks_override=[task],
+            )
+            self.assertEqual(grade_res["testable_tasks"], 1)
+            self.assertEqual(grade_res["testable_passed"], 0, "exit 0 overwrite of test file must NOT count as pass in grade!")
+            self.assertFalse(grade_res["per_task"][0]["test_passed"])
+            self.assertTrue(grade_res["per_task"][0]["in_loop_passed"])
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+            shutil.rmtree(results_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
