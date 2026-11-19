@@ -1015,8 +1015,9 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 
 
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
-                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None):
+                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None, resume=False):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
+    resume = resume or (os.environ.get("RESUME") == "1")
     if repo_root is None:
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
     if results_dir is None:
@@ -1047,12 +1048,17 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
 
     # Load existing rows so running one task at a time updates/appends cleanly
     existing_by_id = {}
+    existing_raw_by_id = {}
     if os.path.exists(jsonl_path):
         with open(jsonl_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     row = json.loads(line)
                     existing_by_id[row["task_id"]] = row
+                    existing_raw_by_id[row["task_id"]] = line.strip()
+
+    if resume:
+        selected_tasks = [t for t in selected_tasks if tasks_item6.strip_hidden(t)["id"] not in existing_by_id]
 
     results = []
     for task in selected_tasks:
@@ -1093,14 +1099,17 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
 
     # Write updated JSONL in canonical task order
     order_ids = [t["id"] for t in all_tasks]
-    ordered_rows = [existing_by_id[tid] for tid in order_ids if tid in existing_by_id]
-    for tid, r in existing_by_id.items():
-        if tid not in order_ids:
-            ordered_rows.append(r)
+    ordered_tids = [tid for tid in order_ids if tid in existing_by_id]
+    for tid in existing_by_id:
+        if tid not in ordered_tids:
+            ordered_tids.append(tid)
 
     with open(jsonl_path, "w", encoding="utf-8") as f:
-        for r in ordered_rows:
-            f.write(json.dumps(r) + "\n")
+        for tid in ordered_tids:
+            if tid in existing_raw_by_id and (resume or tid not in [tasks_item6.strip_hidden(t)["id"] for t in selected_tasks]):
+                f.write(existing_raw_by_id[tid] + "\n")
+            else:
+                f.write(json.dumps(existing_by_id[tid]) + "\n")
 
     return results
 
@@ -1513,6 +1522,7 @@ def main(argv=None):
     parser.add_argument("--model", type=str, default=None, help="Expected model alias")
     parser.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
@@ -1523,6 +1533,7 @@ def main(argv=None):
     p_run.add_argument("--model", type=str, default=None, help="Expected model alias")
     p_run.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
     p_grade.add_argument("--label", type=str, default="item6-pilot", help="Run label")
@@ -1541,6 +1552,7 @@ def main(argv=None):
             model=args.model,
             max_turns=args.max_turns,
             task_budget=args.task_budget,
+            resume=getattr(args, "resume", False),
         )
         return 0
 
