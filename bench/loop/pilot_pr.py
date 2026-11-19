@@ -8,6 +8,7 @@ Can be executed with:
   python3 bench/loop/pilot_pr.py grade --label L # offline evaluation of local diffs against hidden reference
 """
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -1121,6 +1122,48 @@ def _verify_grade_output(task, returncode, output):
     raise ValueError(f"Unknown grade_spec mode: {mode}")
 
 
+def _extract_selftest_block(repo_root, commit_sha, rel_path):
+    """Extract def selftest(): function source code from a file at commit_sha using AST."""
+    show_res = subprocess.run(
+        ["git", "-C", repo_root, "show", f"{commit_sha}:{rel_path}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    src = show_res.stdout
+    tree = ast.parse(src)
+    st_node = None
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "selftest":
+            st_node = node
+            break
+    if st_node is None:
+        raise ValueError(f"Function 'selftest' not found in {commit_sha}:{rel_path}")
+    lines = src.splitlines(keepends=True)
+    return "".join(lines[st_node.lineno - 1 : st_node.end_lineno])
+
+
+def _build_merged_selftest_runner(module_dir, module_name, selftest_code):
+    """Generate python script for standalone runner that imports candidate module and executes merged selftest."""
+    return (
+        "#!/usr/bin/env python3\n"
+        "import importlib\n"
+        "import os\n"
+        "import sys\n\n"
+        "work_dir = '/work'\n"
+        f"mod_dir = os.path.join(work_dir, {module_dir!r})\n"
+        "for p in (mod_dir, work_dir):\n"
+        "    if p not in sys.path:\n"
+        "        sys.path.insert(0, p)\n\n"
+        f"mod = importlib.import_module({module_name!r})\n\n"
+        f"_ST_CODE = {selftest_code!r}\n"
+        "_code = compile(_ST_CODE, '<merged_selftest>', 'exec')\n"
+        "exec(_code, mod.__dict__)\n\n"
+        "rc = mod.selftest()\n"
+        "sys.exit(rc if isinstance(rc, int) else (0 if (rc is None or rc) else 1))\n"
+    )
+
+
 def _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=None, timeout=180):
     """Execute tests in grade_dir inside outer bwrap sandbox with host-side evaluation only.
 
@@ -1141,6 +1184,11 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=None, timeout=1
     spec = task.get("grade_spec")
     if spec and spec.get("cmd"):
         cmd = spec["cmd"]
+    elif spec and spec.get("mode") == "selftest_file":
+        cmd = "python3 /work/_merged_selftest_runner.py"
+    elif spec and spec.get("mode") == "unittest_and_selftest_file":
+        test_mod = spec.get("test_module", "")
+        cmd = f"python3 -m unittest {test_mod} && python3 /work/_merged_selftest_runner.py"
     else:
         cmd = task.get("test_cmd")
     if not cmd:
@@ -1209,6 +1257,19 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
             with open(host_tf, "wb") as f:
                 f.write(show_res.stdout)
             ro_binds.append((host_tf, os.path.join("/work", tf)))
+
+        spec = task.get("grade_spec")
+        if spec and spec.get("mode") in ("selftest_file", "unittest_and_selftest_file") and spec.get("source_file_at_merged"):
+            st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+            runner_content = _build_merged_selftest_runner(
+                module_dir=spec.get("module_dir", "bench/loop"),
+                module_name=spec["module_name"],
+                selftest_code=st_code,
+            )
+            runner_host_path = os.path.join(ro_tests_dir, "_merged_selftest_runner.py")
+            with open(runner_host_path, "w", encoding="utf-8") as f:
+                f.write(runner_content)
+            ro_binds.append((runner_host_path, "/work/_merged_selftest_runner.py"))
 
         return _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=ro_binds, timeout=timeout)
     except subprocess.TimeoutExpired:
