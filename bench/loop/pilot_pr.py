@@ -1404,7 +1404,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
-        if not local_diff.strip():
+        if not local_diff.strip() and rev is None:
             # Amendment, Nov 18 2026: a task with an empty diff (including context_overflow,
             # and pr13's empty diff) is an automatic non-approval with no Grok review,
             # hand_fix_lines n/a and excluded from the hand-fix average.
