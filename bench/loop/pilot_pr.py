@@ -1,0 +1,1497 @@
+#!/usr/bin/env python3
+"""Item 6 Pilot: Real-PR evaluation harness and runner.
+
+Executes the small-model agentic loop with test feedback on real repository PR tasks.
+Can be executed with:
+  python3 bench/loop/pilot_pr.py --selftest      # runs CPU-only selftest with mock model
+  python3 bench/loop/pilot_pr.py run --label L   # runs benchmark loop against :8081
+  python3 bench/loop/pilot_pr.py grade --label L # offline evaluation of local diffs against hidden reference
+"""
+import argparse
+import ast
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import tasks_item6  # noqa: E402
+
+API_URL = "http://127.0.0.1:8081"
+SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}
+REASONING_BUDGET = 4096
+MAX_TOKENS = 8192
+MAX_TURNS_DEFAULT = 4
+TASK_BUDGET_TOKENS = 32768
+BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
+
+FIXED_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+SAFE_ENV_KEYS = ("LANG", "LC_ALL", "LC_CTYPE", "TERM")
+
+
+def build_minimal_env(home_dir=None, tmp_dir=None):
+    """Return a minimal allowlisted environment with fixed system PATH, no GIT_*, no PYTHON*, and no repo paths."""
+    env = {
+        "PATH": FIXED_SYSTEM_PATH,
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for k in SAFE_ENV_KEYS:
+        val = os.environ.get(k)
+        if val is not None:
+            env[k] = val
+    if home_dir is not None:
+        env["HOME"] = home_dir
+    if tmp_dir is not None:
+        env["TMPDIR"] = tmp_dir
+    return env
+
+
+def prepare_isolated_home_and_tmp(base_dir):
+    """Create fresh empty HOME, TMPDIR, and private (mode 0700) inner-bwrap wrapper directories."""
+    root = os.path.abspath(base_dir)
+    home_dir = root + "_home"
+    tmp_dir = root + "_tmp"
+    shim_dir = root + "_shim"
+    for d in (home_dir, tmp_dir, shim_dir):
+        if os.path.exists(d):
+            shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(home_dir, mode=0o700, exist_ok=False)
+    os.makedirs(tmp_dir, mode=0o700, exist_ok=False)
+    os.makedirs(shim_dir, mode=0o700, exist_ok=False)
+    _write_inner_bwrap_wrapper(shim_dir)
+    return home_dir, tmp_dir, shim_dir
+
+
+def cleanup_isolated_home_and_tmp(base_dir):
+    """Remove the sibling _home, _tmp, and _shim directories for base_dir."""
+    root = os.path.abspath(base_dir)
+    for suffix in ("_home", "_tmp", "_shim"):
+        d = root + suffix
+        if os.path.exists(d):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _write_inner_bwrap_wrapper(shim_dir):
+    """Write a fresh inner `bwrap` wrapper script in shim_dir (mode 0700, created exclusively).
+
+    When running inside the outer `/usr/bin/bwrap` sandbox (which isolates PID, mount, user,
+    and network namespaces), inner `bwrap` calls from `run.py` invoke this wrapper. It validates
+    that outer sandbox isolation is in place and the requested mount layout is honored, failing closed
+    if outer isolation or required paths are missing. Never copies any system binary and never adds
+    a fallback that runs without isolation.
+    """
+    shim_path = os.path.join(shim_dir, "bwrap")
+    script = (
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n\n"
+        "def fail():\n"
+        "    sys.exit(1)\n\n"
+        "if not os.path.exists('/pilot_shim'):\n"
+        "    fail()\n\n"
+        "argv = sys.argv[1:]\n"
+        "bind_map = {}\n"
+        "chdir_to, clear_env, env_vars, new_sess, cmd = None, False, {}, False, []\n"
+        "i = 0\n"
+        "while i < len(argv):\n"
+        "    arg = argv[i]\n"
+        "    if arg in ('--bind', '--ro-bind', '--dev-bind'):\n"
+        "        if i + 2 >= len(argv): fail()\n"
+        "        bind_map[argv[i+2]] = argv[i+1]\n"
+        "        i += 3\n"
+        "    elif arg == '--symlink':\n"
+        "        if i + 2 >= len(argv): fail()\n"
+        "        i += 3\n"
+        "    elif arg in ('--proc', '--dev', '--tmpfs', '--dir'):\n"
+        "        if i + 1 >= len(argv): fail()\n"
+        "        i += 2\n"
+        "    elif arg == '--chdir':\n"
+        "        if i + 1 >= len(argv): fail()\n"
+        "        chdir_to = argv[i+1]\n"
+        "        i += 2\n"
+        "    elif arg == '--setenv':\n"
+        "        if i + 2 >= len(argv): fail()\n"
+        "        env_vars[argv[i+1]] = argv[i+2]\n"
+        "        i += 3\n"
+        "    elif arg == '--unsetenv':\n"
+        "        if i + 1 >= len(argv): fail()\n"
+        "        env_vars.pop(argv[i+1], None)\n"
+        "        i += 2\n"
+        "    elif arg == '--clearenv':\n"
+        "        clear_env = True\n"
+        "        i += 1\n"
+        "    elif arg == '--new-session':\n"
+        "        new_sess = True\n"
+        "        i += 1\n"
+        "    elif arg in ('--unshare-all', '--die-with-parent') or arg.startswith('--unshare-'):\n"
+        "        i += 1\n"
+        "    elif arg == '--':\n"
+        "        cmd = argv[i+1:]\n"
+        "        break\n"
+        "    elif arg.startswith('--'):\n"
+        "        i += 1\n"
+        "    else:\n"
+        "        cmd = argv[i:]\n"
+        "        break\n"
+        "if not cmd: fail()\n\n"
+        "for req in ('/usr', '/proc', '/dev', '/tmp'):\n"
+        "    if not os.path.exists(req): fail()\n\n"
+        "for dst, src in bind_map.items():\n"
+        "    if not os.path.exists(src): fail()\n"
+        "    if dst != src and not os.path.exists(dst):\n"
+        "        try: os.symlink(src, dst)\n"
+        "        except OSError: pass\n\n"
+        "target_cwd = bind_map.get(chdir_to, chdir_to)\n"
+        "if target_cwd:\n"
+        "    try: os.chdir(target_cwd)\n"
+        "    except OSError: fail()\n\n"
+        "final_env = dict(env_vars) if clear_env else {**os.environ, **env_vars}\n"
+        "if new_sess:\n"
+        "    try: os.setsid()\n"
+        "    except OSError: pass\n\n"
+        "try:\n"
+        "    os.execvpe(cmd[0], cmd, final_env)\n"
+        "except Exception:\n"
+        "    fail()\n"
+    )
+    fd = os.open(shim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(script)
+    return shim_path
+
+
+def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict, ro_binds=None):
+    """Wrap inner_argv in an outer /usr/bin/bwrap sandbox that isolates filesystem, PID, and network namespaces.
+
+    Sandbox invariants:
+    - Always invokes the system `/usr/bin/bwrap` directly (never copies the binary).
+    - Fails closed if `/usr/bin/bwrap` is missing.
+    - Read-only binds `/usr`, `/bin`, `/lib`, `/lib64`, `/etc` and mounts the private `shim_dir` read-only at
+      `/pilot_shim` (placed first on `PATH` so inner `bwrap` calls from `run.py` invoke the wrapper in the
+      already-isolated namespace without creating a second user namespace).
+    - Mounts fresh `--dev /dev` and `--proc /proc`, and fresh `--tmpfs` over `/tmp`, `/home`, and `/data`
+      so the main checkout (`/home/aj/projects/strix-halo-lab`), this worktree, `/data`, and the real user
+      home directory are absent and unreadable.
+    - Writable binds `task_dir` (at `/work`), `home_dir` (at `/home/pilot`), and `tmp_dir` (at `/tmp`),
+      with `--chdir /work`.
+    - If ro_binds is provided, mounts each (src, dst) read-only over `/work` after the writable bind.
+    """
+    bwrap_bin = "/usr/bin/bwrap"
+    if not os.path.exists(bwrap_bin):
+        raise RuntimeError("/usr/bin/bwrap is required for sandboxed execution; refusing to run unsandboxed")
+
+    cmd = [
+        bwrap_bin,
+        "--ro-bind", "/usr", "/usr",
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib64", "/lib64",
+        "--symlink", "usr/bin", "/bin",
+        "--ro-bind", "/etc", "/etc",
+        "--ro-bind", os.path.abspath(shim_dir), "/pilot_shim",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+        "--tmpfs", "/home",
+        "--tmpfs", "/data",
+        "--bind", os.path.abspath(tmp_dir), "/tmp",
+        "--bind", os.path.abspath(home_dir), "/home/pilot",
+        "--bind", os.path.abspath(task_dir), "/work",
+    ]
+    if ro_binds:
+        for src, dst in ro_binds:
+            cmd.extend(["--ro-bind", os.path.abspath(src), dst])
+    cmd.extend([
+        "--chdir", "/work",
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--as-pid-1",
+        "--die-with-parent",
+        "--clearenv",
+    ])
+    sandbox_env = dict(env_dict)
+    sandbox_env["HOME"] = "/home/pilot"
+    sandbox_env["TMPDIR"] = "/tmp"
+    sandbox_env["PATH"] = f"/pilot_shim:{FIXED_SYSTEM_PATH}"
+    for k, v in sorted(sandbox_env.items()):
+        cmd.extend(["--setenv", str(k), str(v)])
+    cmd.extend(inner_argv)
+    return cmd
+
+
+def _wrap_shell_with_isolated_python3(cmd, task_dir="/work"):
+    """Prepend a bash function `python3` that always invokes `/usr/bin/python3 -I -B` with `task_dir` added to sys.path."""
+    import base64
+    real_py = "/usr/bin/python3" if os.path.exists("/usr/bin/bwrap") else (shutil.which("python3") or "/usr/bin/python3")
+    td = task_dir
+    runner = (
+        "import os, runpy, sys\n"
+        f"td = {td!r}\n"
+        f"real_py = {real_py!r}\n"
+        "args = sys.argv[1:]\n"
+        "while args and args[0] in ('-I', '-B'):\n"
+        "    args = args[1:]\n"
+        "if not args:\n"
+        "    os.execv(real_py, [real_py, '-I', '-B'])\n"
+        "if args[0] == '-c' and len(args) >= 2:\n"
+        "    code = args[1]\n"
+        "    sys.argv = ['-c'] + args[2:]\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    exec(compile(code, '<string>', 'exec'), {'__name__': '__main__'})\n"
+        "elif args[0] == '-m' and len(args) >= 2:\n"
+        "    mod = args[1]\n"
+        "    sys.argv = [mod] + args[2:]\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    runpy.run_module(mod, run_name='__main__', alter_sys=True)\n"
+        "elif not args[0].startswith('-'):\n"
+        "    sp = os.path.abspath(args[0])\n"
+        "    sd = os.path.dirname(sp)\n"
+        "    sys.argv = args\n"
+        "    if td not in sys.path: sys.path.insert(0, td)\n"
+        "    if sd not in sys.path: sys.path.insert(0, sd)\n"
+        "    runpy.run_path(sp, run_name='__main__')\n"
+        "else:\n"
+        "    os.execv(real_py, [real_py, '-I', '-B'] + args)\n"
+    )
+    b64 = base64.b64encode(runner.encode("utf-8")).decode("ascii")
+    func_def = (
+        f"python3() {{ {real_py} -I -B -c \"import base64; exec(base64.b64decode('{b64}').decode('utf-8'), {{'__name__': '__main__'}})\" \"$@\"; }}\n"
+        "export -f python3\n"
+    )
+    return func_def + cmd
+
+
+
+def has_bwrap():
+    """Return True if /usr/bin/bwrap is installed and can create a user/mount namespace sandbox directly."""
+    bwrap_bin = "/usr/bin/bwrap"
+    if not os.path.exists(bwrap_bin):
+        return False
+    try:
+        res = subprocess.run(
+            [bwrap_bin, "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+             "--symlink", "usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--unshare-all", "true"],
+            capture_output=True,
+            timeout=5,
+            env=build_minimal_env(),
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+
+def check_prompt_leak(prompt, task):
+    """Tripwire: assert no hidden fields, sentinels, or unredacted grading seeds appear in a prompt."""
+    for hidden_key in ("hidden_diff", "merged_commit"):
+        if dict.__contains__(task, hidden_key):
+            val = dict.__getitem__(task, hidden_key)
+            if val and isinstance(val, str) and len(val) >= 7 and val in prompt:
+                raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!")
+    if "LEAK_SENTINEL" in prompt or "ORACLE-SENTINEL" in prompt:
+        raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
+    if "104729" in prompt:
+        raise AssertionError("LEAK TRIPWIRE TRIGGERED: literal grading seed 104729 leaked into prompt!")
+
+
+def redact_grading_seed(text):
+    """Redact the literal grading seed 104729 from any context sent to the model."""
+    return (text or "").replace("104729", "<REDACTED_SEED>")
+
+
+def build_worktree_context(task, worktree_dir, max_chars_per_file=12000):
+    """Read target files from worktree_dir at base_commit so the model can edit them accurately."""
+    clean_task = tasks_item6.strip_hidden(task)
+    sections = []
+    for rel_path in clean_task.get("files", []):
+        try:
+            full_path = resolve_confined_path(worktree_dir, rel_path)
+        except ValueError:
+            continue
+        if os.path.exists(full_path) and os.path.isfile(full_path) and not os.path.islink(full_path):
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    body = redact_grading_seed(f.read())
+                if len(body) > max_chars_per_file:
+                    body = body[:max_chars_per_file] + "\n... [truncated] ...\n"
+                sections.append(f"### Existing file: {rel_path}\n```\n{body}\n```")
+            except OSError:
+                pass
+        else:
+            sections.append(f"### Target file (new): {rel_path}")
+    return "\n\n".join(sections)
+
+
+def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None):
+    """Format the turn prompt for the agentic loop.
+
+    Never includes reference diffs or oracle solutions.
+    """
+    clean_task = tasks_item6.strip_hidden(task)
+    base_prompt = clean_task["prompt"]
+    file_ctx = build_worktree_context(clean_task, worktree_dir) if worktree_dir else ""
+    ctx_block = f"\n\nBase files in worktree:\n\n{file_ctx}" if file_ctx else ""
+
+    if last_code is None and test_error is None:
+        prompt = (
+            f"{base_prompt}{ctx_block}\n\n"
+            "Working directory: Clean git worktree at base commit.\n"
+            "Instructions:\n"
+            "- Implement all required changes.\n"
+            "- Output your edits in markdown code blocks with file path headers, e.g.:\n"
+            "  ### path/to/file.py\n"
+            "  ```python\n"
+            "  # updated contents\n"
+            "  ```\n"
+            "- Or provide a valid unified git diff in a ```diff block.\n"
+            "- Standard library or repository dependencies only; no unrequested subagents; no GPU work."
+        )
+        check_prompt_leak(prompt, task)
+        return prompt
+
+    err_text = redact_grading_seed((test_error or "").strip())
+    if len(err_text) > 2500:
+        err_text = "... [truncated] ...\n" + err_text[-2500:]
+
+    prompt = (
+        f"{base_prompt}{ctx_block}\n\n"
+        "Your previous changes failed automated verification with the following error:\n"
+        f"```\n{err_text}\n```\n\n"
+        "Analyze the error, locate the cause, and output the corrected files or unified diff."
+    )
+    check_prompt_leak(prompt, task)
+    return prompt
+
+
+def resolve_confined_path(worktree_dir, rel_path):
+    """Resolve rel_path inside worktree_dir and reject absolute paths, '..', or symlink escapes."""
+    if not rel_path or not isinstance(rel_path, str):
+        raise ValueError("Empty or non-string path")
+    norm_input = rel_path.replace("\\", "/").strip()
+    if os.path.isabs(norm_input) or norm_input.startswith("/"):
+        raise ValueError(f"Absolute path rejected: {rel_path}")
+    parts = [p for p in norm_input.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise ValueError(f"Path traversal ('..') rejected: {rel_path}")
+    if parts[0] == ".git":
+        raise ValueError(f"Modification of .git rejected: {rel_path}")
+
+    root_real = os.path.realpath(worktree_dir)
+    curr = root_real
+    for part in parts:
+        candidate = os.path.join(curr, part)
+        if os.path.islink(candidate):
+            raise ValueError(f"Symlink component rejected: {rel_path} ({candidate})")
+        curr_real = os.path.realpath(candidate)
+        if curr_real != root_real and not curr_real.startswith(root_real + os.sep):
+            raise ValueError(f"Path escapes scratch root: {rel_path}")
+        curr = candidate
+
+    final_real = os.path.realpath(curr)
+    if final_real == root_real or not final_real.startswith(root_real + os.sep):
+        raise ValueError(f"Resolved path outside scratch root: {rel_path}")
+    return curr
+
+
+def validate_patch_paths(worktree_dir, patch_text):
+    """Verify every path in a unified diff patch is confined to worktree_dir and patch contains no symlinks."""
+    if re.search(r"^(?:new|old|deleted) file mode 120000\b", patch_text, re.M):
+        raise ValueError("Symlink mode 120000 in patch rejected")
+    paths_found = []
+    for line in patch_text.splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"^diff --git a/(\S+) b/(\S+)", line)
+            if not m:
+                raise ValueError(f"Malformed diff --git header: {line}")
+            paths_found.extend([m.group(1), m.group(2)])
+        elif line.startswith("--- ") or line.startswith("+++ "):
+            tok = line[4:].split("\t")[0].strip()
+            if tok == "/dev/null":
+                continue
+            if tok.startswith("a/") or tok.startswith("b/"):
+                tok = tok[2:]
+            paths_found.append(tok)
+    if not paths_found:
+        raise ValueError("No valid file headers found in patch")
+    for p in paths_found:
+        resolve_confined_path(worktree_dir, p)
+
+
+
+def extract_file_updates(response_text):
+    """Extract file updates from model response.
+
+    Supports:
+      1. Annotated headers: `### path/to/file` or `**File: path/to/file**` followed by code fence.
+      2. Code fences with path annotation: ```python:path/to/file
+      3. Unified git diff: ```diff
+    Returns a dict mapping relative filepath -> full content, or a diff string.
+    """
+    files = {}
+
+    # 1. Check for unified diff fence
+    diff_match = re.search(r"```(?:diff|patch)\n(diff --git a/.*?)\n```", response_text, re.DOTALL)
+    if diff_match:
+        return {"__patch__": diff_match.group(1)}
+
+    # 2. Check for fenced blocks with language:path
+    lang_path_blocks = re.findall(
+        r"```[a-zA-Z0-9_-]+[:\s]+([a-zA-Z0-9_\-\./\\]+)\n(.*?)```", response_text, re.DOTALL
+    )
+    for path, code in lang_path_blocks:
+        path = path.strip()
+        if "/" in path or "." in path:
+            files[path] = code
+
+    # 3. Check for ### path/to/file followed by code block
+    header_blocks = re.findall(
+        r"(?:###|\*\*File:?|\bFile:)\s*[`\*]?([a-zA-Z0-9_\-\./\\]+)[`\*]?\s*\n+```[a-zA-Z0-9_-]*\n(.*?)```",
+        response_text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    for path, code in header_blocks:
+        path = path.strip()
+        if "/" in path or "." in path:
+            files[path] = code
+
+    return files
+
+
+def apply_updates(worktree_dir, updates):
+    """Apply extracted files or unified patch to worktree_dir with strict path confinement."""
+    if not updates:
+        return False, "No file updates or patch found in model response."
+
+    if "__patch__" in updates:
+        patch_text = updates["__patch__"]
+        try:
+            validate_patch_paths(worktree_dir, patch_text)
+        except ValueError as e:
+            return False, f"Rejected unsafe patch path: {e}"
+        patch_file = os.path.join(worktree_dir, "_agent_update.patch")
+        with open(patch_file, "w", encoding="utf-8") as f:
+            f.write(patch_text + "\n")
+        try:
+            res = subprocess.run(
+                ["git", "apply", "--whitespace=nowarn", patch_file],
+                cwd=worktree_dir,
+                env=build_minimal_env(),
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if os.path.exists(patch_file):
+                os.remove(patch_file)
+            if res.returncode == 0:
+                return True, "Patch applied successfully."
+            return False, f"git apply failed: {res.stderr}"
+        except Exception as e:
+            if os.path.exists(patch_file):
+                os.remove(patch_file)
+            return False, f"Exception applying patch: {e}"
+
+    # Validate all paths before writing any file
+    resolved_items = []
+    for rel_path, content in updates.items():
+        try:
+            full_path = resolve_confined_path(worktree_dir, rel_path)
+            resolved_items.append((rel_path, full_path, content))
+        except ValueError as e:
+            return False, f"Rejected unsafe file path: {e}"
+
+    written = []
+    try:
+        for rel_path, full_path, content in resolved_items:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            written.append(rel_path)
+        return True, f"Wrote files: {', '.join(written)}"
+    except Exception as e:
+        return False, f"Failed writing files: {e}"
+
+
+def run_tests(task, worktree_dir, timeout=60):
+    """Run test command for the task in worktree_dir inside the outer bwrap sandbox.
+
+    Returns (passed: bool, output_str: str).
+    Should only be called when task['has_tests'] is True. Fails closed if bwrap cannot start.
+    """
+    clean_task = tasks_item6.strip_hidden(task)
+    if not clean_task.get("has_tests"):
+        raise AssertionError("run_tests must not be executed when has_tests is False")
+    cmd = clean_task.get("test_cmd")
+    if not cmd:
+        return True, "No test command defined for task."
+    if not has_bwrap():
+        raise RuntimeError("bwrap sandbox is unavailable; refusing to execute run_tests unsandboxed")
+
+    iso_cmd = _wrap_shell_with_isolated_python3(cmd, "/work")
+    home_dir, tmp_dir, shim_dir = prepare_isolated_home_and_tmp(worktree_dir)
+    env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+    bwrap_argv = build_outer_bwrap_cmd(worktree_dir, home_dir, tmp_dir, shim_dir, ["bash", "-c", iso_cmd], env)
+    try:
+        res = subprocess.run(
+            bwrap_argv,
+            stdin=subprocess.DEVNULL,
+            cwd=worktree_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        passed = (res.returncode == 0)
+        output = (res.stdout or "") + (res.stderr or "")
+        return passed, output
+    except subprocess.TimeoutExpired:
+        return False, f"ERROR: test command timed out after {timeout} seconds."
+    except Exception as e:
+        return False, f"ERROR executing test command: {e}"
+    finally:
+        cleanup_isolated_home_and_tmp(worktree_dir)
+
+
+def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
+    """Capture full diff of worktree against base_commit (or HEAD in standalone scratch repo), including untracked files."""
+    clean_env = build_minimal_env()
+    subprocess.run(
+        ["git", "add", "-N", "."],
+        cwd=worktree_dir,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    target_ref = base_commit
+    check_ref = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{base_commit}^{{commit}}"],
+        cwd=worktree_dir,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    if check_ref.returncode != 0:
+        target_ref = "HEAD"
+    diff_res = subprocess.run(
+        ["git", "diff", target_ref],
+        cwd=worktree_dir,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    return diff_res.stdout or ""
+
+
+def create_isolated_scratch_repo(repo_root, base_commit, scratch_dir):
+    """Create a standalone git repository in scratch_dir populated strictly from base_commit via git archive.
+
+    Does NOT share the main repository's object store or write to .git/worktrees, so later commits
+    (including merged_commit) do not exist in the scratch repo's object database.
+    """
+    os.makedirs(scratch_dir, exist_ok=True)
+    clean_env = build_minimal_env()
+    p1 = subprocess.Popen(
+        ["git", "-C", repo_root, "archive", "--format=tar", base_commit],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=clean_env,
+    )
+    p2 = subprocess.Popen(
+        ["tar", "-x", "-C", scratch_dir],
+        stdin=p1.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=clean_env,
+    )
+    p1.stdout.close()
+    _, err2 = p2.communicate()
+    _, err1 = p1.communicate()
+    if p1.returncode != 0:
+        raise RuntimeError(f"git archive failed for {base_commit}: {err1.decode(errors='replace')}")
+    if p2.returncode != 0:
+        raise RuntimeError(f"tar extract failed: {err2.decode(errors='replace')}")
+
+    subprocess.run(["git", "init", "-q"], cwd=scratch_dir, env=clean_env, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "pilot-runner"], cwd=scratch_dir, env=clean_env, check=True)
+    subprocess.run(["git", "config", "user.email", "pilot@localhost"], cwd=scratch_dir, env=clean_env, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=scratch_dir, env=clean_env, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", f"base {base_commit}"],
+        cwd=scratch_dir,
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    )
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=scratch_dir, env=clean_env, text=True).strip()
+
+
+
+def evaluate_diff(local_diff, hidden_diff):
+    """Compute offline grading metrics between local diff and hidden reference diff.
+
+    Never shown to model.
+    """
+    local_lines = set(line.strip() for line in local_diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---")))
+    hidden_lines = set(line.strip() for line in hidden_diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---")))
+
+    if not hidden_lines:
+        overlap = 1.0 if not local_lines else 0.0
+    else:
+        intersection = len(local_lines & hidden_lines)
+        union = len(local_lines | hidden_lines)
+        overlap = intersection / union if union > 0 else 0.0
+
+    return {
+        "local_diff_lines": len(local_diff.splitlines()),
+        "hidden_diff_lines": len(hidden_diff.splitlines()),
+        "line_overlap_jaccard": round(overlap, 4),
+    }
+
+
+def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_budget=TASK_BUDGET_TOKENS):
+    """Execute the agentic loop on a task in worktree_dir."""
+    clean_task = tasks_item6.strip_hidden(task)
+    has_tests = bool(clean_task.get("has_tests"))
+    history = []
+    seen_code_hashes = set()
+    last_code = None
+    last_err = None
+    accumulated_completion_tokens = 0
+    stop_reason = "max_turns"
+
+    for turn in range(max_turns):
+        t0 = time.time()
+        prompt = format_turn_prompt(clean_task, last_code, last_err, worktree_dir=worktree_dir)
+        check_prompt_leak(prompt, task)
+        seed = 6000 + clean_task["pr_number"] * 10 + turn
+
+        reply = ask_fn(prompt, seed)
+        gen_s = round(time.time() - t0, 2)
+        comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
+        prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or 0
+        accumulated_completion_tokens += comp_tokens
+
+        content = reply.get("content", "")
+        code_hash = hashlib.sha256(content.encode()).hexdigest()
+
+        # Stop check: repeat code
+        if code_hash in seen_code_hashes:
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": "repeat_code",
+                "stop": "repeat_code",
+                "gen_s": gen_s,
+                "tokens": comp_tokens,
+                "prompt_tokens": prompt_tokens,
+            })
+            stop_reason = "repeat_code"
+            break
+        seen_code_hashes.add(code_hash)
+
+        # Apply updates
+        updates = extract_file_updates(content)
+        ok, msg = apply_updates(worktree_dir, updates)
+
+        if not ok:
+            passed = False
+            test_out = f"Failed to apply updates: {msg}"
+        elif not has_tests:
+            # No test command when has_tests is False: do not call run_tests
+            passed = True
+            test_out = ""
+        else:
+            # Run automated tests
+            passed, test_out = run_tests(clean_task, worktree_dir)
+
+        # Stop check: repeat error
+        if not passed and last_err is not None and test_out.strip() == last_err.strip():
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": test_out,
+                "stop": "repeat_error",
+                "gen_s": gen_s,
+                "tokens": comp_tokens,
+                "prompt_tokens": prompt_tokens,
+            })
+            stop_reason = "repeat_error"
+            break
+
+        history.append({
+            "turn": turn,
+            "seed": seed,
+            "passed": passed,
+            "err": "" if passed else test_out,
+            "gen_s": gen_s,
+            "tokens": comp_tokens,
+            "prompt_tokens": prompt_tokens,
+        })
+
+        if passed:
+            stop_reason = "pass" if has_tests else "applied_no_tests"
+            break
+
+        if accumulated_completion_tokens >= task_budget:
+            stop_reason = "budget"
+            break
+
+        last_code = content
+        last_err = test_out
+
+    final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+
+    return {
+        "task_id": clean_task["id"],
+        "pr_number": clean_task["pr_number"],
+        "has_tests": has_tests,
+        "passed": history[-1]["passed"] if history else False,
+        "stop_reason": stop_reason,
+        "turns_executed": len(history),
+        "history": history,
+        "total_completion_tokens": accumulated_completion_tokens,
+        "final_diff": final_diff,
+    }
+
+
+def selftest():
+    """Run comprehensive CPU-only self-tests for task definitions and loop mechanics."""
+    print("=== STARTING PILOT_PR SELFTEST ===")
+
+    # 1. Load tasks check
+    tasks = tasks_item6.load_tasks()
+    assert len(tasks) == 7, f"Expected 7 tasks, found {len(tasks)}"
+    pr_nums = [t["pr_number"] for t in tasks]
+    assert pr_nums == [6, 8, 13, 14, 15, 16, 20], f"Unexpected PR numbers: {pr_nums}"
+    print("[OK] Task loading and PR numbers verified (7 tasks)")
+
+    # 2. Leak prevention check
+    for t in tasks:
+        clean = tasks_item6.strip_hidden(t)
+        assert "hidden_diff" not in clean, f"Leak in {t['id']}: hidden_diff present"
+        assert "merged_commit" not in clean, f"Leak in {t['id']}: merged_commit present"
+        p = format_turn_prompt(t)
+        assert t["merged_commit"] not in p, f"Leak in prompt for {t['id']}: merged commit SHA present"
+    print("[OK] Leak prevention and strip_hidden verified")
+
+    # 3. File extraction checks
+    test_response_annotated = (
+        "Here is the solution:\n\n"
+        "### foo/bar.py\n"
+        "```python\n"
+        "def hello():\n    return 'world'\n"
+        "```\n\n"
+        "### config.json\n"
+        "```json\n"
+        "{\"status\": \"ok\"}\n"
+        "```\n"
+    )
+    updates = extract_file_updates(test_response_annotated)
+    assert "foo/bar.py" in updates, "foo/bar.py not extracted"
+    assert "config.json" in updates, "config.json not extracted"
+    assert "return 'world'" in updates["foo/bar.py"]
+
+    diff_response = (
+        "Here is a patch:\n"
+        "```diff\n"
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n"
+        "+++ b/a.txt\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+        "```\n"
+    )
+    updates_diff = extract_file_updates(diff_response)
+    assert "__patch__" in updates_diff, "Patch not extracted"
+    print("[OK] File updates extraction verified")
+
+    # 4. In-memory temporary worktree loop test
+    temp_dir = tempfile.mkdtemp(prefix="pilot_pr_test_")
+    try:
+        subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=temp_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.org"], cwd=temp_dir, check=True)
+
+        # Create initial test file
+        test_py = os.path.join(temp_dir, "test_target.py")
+        with open(test_py, "w") as f:
+            f.write("def compute():\n    return 0\n")
+        runner_py = os.path.join(temp_dir, "test_check.py")
+        with open(runner_py, "w") as f:
+            f.write("import test_target\nassert test_target.compute() == 42\n")
+
+        subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=temp_dir, check=True, capture_output=True)
+        base_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=temp_dir, text=True).strip()
+
+        mock_task = {
+            "id": "mock_task",
+            "pr_number": 999,
+            "title": "Mock Task",
+            "base_commit": base_commit,
+            "merged_commit": "00000000",
+            "has_tests": True,
+            "test_cmd": "python3 test_check.py",
+            "prompt": "Fix compute() to return 42 in test_target.py",
+            "files": ["test_target.py"],
+            "hidden_diff": "+def compute():\n+    return 42",
+        }
+
+        # Case A: Fails turn 0, model fixes in turn 1 with test error feedback
+        def mock_model_turn1_pass(prompt, seed):
+            if "failed automated verification" not in prompt:
+                # Turn 0: produce buggy code
+                return {
+                    "content": "### test_target.py\n```python\ndef compute():\n    return 1\n```",
+                    "usage": {"completion_tokens": 50},
+                }
+            # Turn 1: fix code based on error
+            return {
+                "content": "### test_target.py\n```python\ndef compute():\n    return 42\n```",
+                "usage": {"completion_tokens": 50},
+            }
+
+        res = run_task_loop(mock_task, mock_model_turn1_pass, temp_dir, max_turns=3)
+        assert res["passed"] is True, "Mock task expected to pass in turn 1"
+        assert res["turns_executed"] == 2, f"Expected 2 turns, got {res['turns_executed']}"
+        assert res["stop_reason"] == "pass", f"Expected stop_reason 'pass', got {res['stop_reason']}"
+        print("[OK] Mock loop execution with feedback pass verified")
+
+        # Case B: Repeat code stop check
+        def mock_model_repeat(prompt, seed):
+            return {
+                "content": "### test_target.py\n```python\ndef compute():\n    return 10\n```",
+                "usage": {"completion_tokens": 40},
+            }
+
+        res_repeat = run_task_loop(mock_task, mock_model_repeat, temp_dir, max_turns=4)
+        assert res_repeat["passed"] is False
+        assert res_repeat["stop_reason"] == "repeat_code"
+        print("[OK] Repeat code stop rule verified")
+
+    finally:
+        shutil.rmtree(temp_dir)
+
+    print("=== ALL PILOT_PR SELFTESTS PASSED ===")
+    return 0
+
+
+def served_model(requested=None, api=None):
+    """Query GET /v1/models on the served endpoint (matching run.py / agent.py convention)."""
+    api = api or API_URL
+    with urllib.request.urlopen(f"{api}/v1/models", timeout=10) as r:
+        ids = [m["id"] for m in json.load(r)["data"]]
+    if len(ids) != 1:
+        raise SystemExit(f"expected exactly one served model at {api}, got {ids}")
+    if requested and requested != ids[0]:
+        raise SystemExit(f"--model {requested} but {api} serves {ids[0]}")
+    return ids[0]
+
+
+def server_info(api=None):
+    """Query GET /props on the served endpoint."""
+    with urllib.request.urlopen(f"{api or API_URL}/props", timeout=10) as r:
+        p = json.load(r)
+    return {k: p.get(k) for k in ("build_info", "model_path", "model_alias")}
+
+
+def server_ask(model, api=None):
+    """Return an ask_fn(prompt, seed) that queries /v1/chat/completions on the served model."""
+    api = api or API_URL
+
+    def ask(prompt, seed):
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": MAX_TOKENS,
+            "reasoning_budget_tokens": REASONING_BUDGET,
+            "reasoning_budget_message": BUDGET_MESSAGE,
+            "seed": seed,
+            **SAMPLING,
+        }
+        req = urllib.request.Request(
+            f"{api}/v1/chat/completions",
+            json.dumps(body).encode(),
+            {"Content-Type": "application/json"},
+        )
+        t = time.time()
+        with urllib.request.urlopen(req, timeout=3600) as r:
+            resp = json.load(r)
+        ch = resp["choices"][0]
+        return {
+            "content": ch["message"].get("content") or "",
+            "reasoning_chars": len(ch["message"].get("reasoning_content") or ""),
+            "finish": ch.get("finish_reason"),
+            "usage": resp.get("usage", {}),
+            "gen_s": round(time.time() - t, 2),
+        }
+
+    return ask
+
+
+def compute_keep_drop(testable_passed, testable_total, approved_final, total_tasks, avg_hand_fix_lines):
+    """Compute pre-registered KEEP / DROP / INCONCLUSIVE / PENDING_REVIEW decision (docs/item6-pilot.md Section 9).
+
+    Bars:
+    - KEEP: test_pass >= 3/6 (50.0%) AND final_approve >= 3/7 (42.9%) AND avg_hand_fix_lines <= 20.
+    - DROP: test_pass < 2/6 (33.3%) OR (approved_final is not None and final_approve < 2/7 (28.6%)).
+    - INCONCLUSIVE: intermediate (defaults to DROP unless extended).
+    - PENDING_REVIEW: tests meet >= 2/6, but adversarial-reviewer verdicts have not been supplied yet.
+    """
+    test_rate = (testable_passed / testable_total) if testable_total > 0 else 0.0
+    if test_rate < (2.0 / 6.0 - 1e-9):
+        return "DROP"
+    if approved_final is None:
+        return "PENDING_REVIEW"
+    app_rate = (approved_final / total_tasks) if total_tasks > 0 else 0.0
+    if app_rate < (2.0 / 7.0 - 1e-9):
+        return "DROP"
+    if (
+        test_rate >= (3.0 / 6.0 - 1e-9)
+        and app_rate >= (3.0 / 7.0 - 1e-9)
+        and (avg_hand_fix_lines is None or avg_hand_fix_lines <= 20.0)
+    ):
+        return "KEEP"
+    return "INCONCLUSIVE"
+
+
+
+def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
+                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None):
+    """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+    if results_dir is None:
+        results_dir = os.path.join(HERE, "results")
+    os.makedirs(results_dir, exist_ok=True)
+    diffs_dir = os.path.join(results_dir, f"{label}.diffs")
+    os.makedirs(diffs_dir, exist_ok=True)
+    jsonl_path = os.path.join(results_dir, f"{label}.jsonl")
+
+    all_tasks = tasks_item6.load_tasks()
+    if tasks_arg:
+        want = [x.strip() for x in tasks_arg.split(",") if x.strip()]
+        by_id = {t["id"]: t for t in all_tasks}
+        unknown = [w for w in want if w not in by_id]
+        if unknown:
+            raise SystemExit(f"unknown task ids: {unknown}")
+        selected_tasks = [by_id[w] for w in want]
+    else:
+        selected_tasks = all_tasks
+
+    if ask_fn is None:
+        resolved_model = served_model(model, api=api)
+        srv_info = server_info(api=api)
+        ask_fn = server_ask(resolved_model, api=api)
+    else:
+        resolved_model = model or "mock"
+        srv_info = {"build_info": "mock", "model_path": "mock", "model_alias": resolved_model}
+
+    # Load existing rows so running one task at a time updates/appends cleanly
+    existing_by_id = {}
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    row = json.loads(line)
+                    existing_by_id[row["task_id"]] = row
+
+    results = []
+    for task in selected_tasks:
+        clean_task = tasks_item6.strip_hidden(task)
+        task_id = clean_task["id"]
+        base_sha = clean_task["base_commit"]
+        wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
+        t_start = time.time()
+        try:
+            create_isolated_scratch_repo(repo_root, base_sha, wt_dir)
+            res = run_task_loop(
+                clean_task,
+                ask_fn,
+                wt_dir,
+                max_turns=max_turns,
+                task_budget=task_budget,
+            )
+            res["wall_s"] = round(time.time() - t_start, 2)
+            res["model"] = resolved_model
+            res["server"] = srv_info
+
+            diff_file = os.path.join(diffs_dir, f"{task_id}.diff")
+            with open(diff_file, "w", encoding="utf-8") as df:
+                df.write(res["final_diff"])
+            res["diff_file"] = os.path.relpath(diff_file, repo_root) if diff_file.startswith(repo_root) else diff_file
+
+            existing_by_id[task_id] = res
+            results.append(res)
+            print(
+                f"{task_id:14} pr=#{res['pr_number']:<2} has_tests={str(res['has_tests']):<5} "
+                f"passed={str(res['passed']):<5} stop={res['stop_reason']:<16} turns={res['turns_executed']} "
+                f"tok={res['total_completion_tokens']} diff_lines={len(res['final_diff'].splitlines())}",
+                flush=True,
+            )
+        finally:
+            if os.path.exists(wt_dir):
+                shutil.rmtree(wt_dir, ignore_errors=True)
+
+    # Write updated JSONL in canonical task order
+    order_ids = [t["id"] for t in all_tasks]
+    ordered_rows = [existing_by_id[tid] for tid in order_ids if tid in existing_by_id]
+    for tid, r in existing_by_id.items():
+        if tid not in order_ids:
+            ordered_rows.append(r)
+
+    with open(jsonl_path, "w", encoding="utf-8") as f:
+        for r in ordered_rows:
+            f.write(json.dumps(r) + "\n")
+
+    return results
+
+
+def _verify_grade_output(task, returncode, output):
+    """Host-side decision logic verifying exit code and expected test counts from sandbox output."""
+    if returncode != 0:
+        return False, f"Test command exited with code {returncode}:\n{output}"
+
+    spec = task.get("grade_spec")
+    if not spec:
+        return True, output
+
+    mode = spec.get("mode")
+    lines = [ln.rstrip("\r\n") for ln in output.splitlines() if ln.strip()]
+
+    if mode == "shell":
+        pat = re.compile(spec["count_pattern"])
+        count = sum(1 for ln in lines if pat.search(ln))
+        if count != spec["expected_test_count"]:
+            return False, f"Expected {spec['expected_test_count']} matching tests, got {count}:\n{output}"
+        req_last = spec.get("required_last_line")
+        if req_last and (not lines or lines[-1].strip() != req_last):
+            return False, f"Expected last line {req_last!r}:\n{output}"
+        return True, output
+
+    if mode == "selftest_file":
+        ok_count = sum(1 for ln in lines if ln.strip().startswith("ok "))
+        fail_count = sum(1 for ln in lines if ln.strip().startswith("FAIL "))
+        if fail_count > 0 or ok_count != spec["expected_test_count"]:
+            return False, f"Expected {spec['expected_test_count']} ok checks (0 fail), got ok={ok_count} fail={fail_count}:\n{output}"
+        if "selftest OK" not in output:
+            return False, f"Missing 'selftest OK' in output:\n{output}"
+        return True, output
+
+    if mode == "unittest":
+        m = re.search(r"Ran (\d+) tests?", output)
+        if not m:
+            return False, f"Did not find 'Ran X tests' in unittest output:\n{output}"
+        ran = int(m.group(1))
+        if ran != spec["expected_test_count"]:
+            return False, f"Expected {spec['expected_test_count']} unittests, ran {ran}:\n{output}"
+        if "FAILED" in output or "ERROR" in output:
+            return False, f"Unittest reported failure or error:\n{output}"
+        if "OK" not in output:
+            return False, f"Unittest missing 'OK':\n{output}"
+        return True, output
+
+    if mode == "unittest_and_selftest_file":
+        m = re.search(r"Ran (\d+) tests?", output)
+        if not m:
+            return False, f"Did not find 'Ran X tests' in unittest output:\n{output}"
+        ran = int(m.group(1))
+        if ran != spec["expected_test_count"]:
+            return False, f"Expected {spec['expected_test_count']} unittests, ran {ran}:\n{output}"
+        if "FAILED" in output or "ERROR" in output:
+            return False, f"Unittest reported failure or error:\n{output}"
+        ok_count = sum(1 for ln in lines if ln.strip().startswith("ok "))
+        fail_count = sum(1 for ln in lines if ln.strip().startswith("FAIL "))
+        if fail_count > 0 or ok_count != spec["expected_selftest_count"]:
+            return False, f"Expected {spec['expected_selftest_count']} selftest checks (0 fail), got ok={ok_count} fail={fail_count}:\n{output}"
+        if "Selftest PASSED" not in output:
+            return False, f"Missing 'Selftest PASSED' in output:\n{output}"
+        return True, output
+
+    raise ValueError(f"Unknown grade_spec mode: {mode}")
+
+
+def _extract_selftest_block(repo_root, commit_sha, rel_path):
+    """Extract def selftest(): function source code from a file at commit_sha using AST."""
+    show_res = subprocess.run(
+        ["git", "-C", repo_root, "show", f"{commit_sha}:{rel_path}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    src = show_res.stdout
+    tree = ast.parse(src)
+    st_node = None
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "selftest":
+            st_node = node
+            break
+    if st_node is None:
+        raise ValueError(f"Function 'selftest' not found in {commit_sha}:{rel_path}")
+    lines = src.splitlines(keepends=True)
+    return "".join(lines[st_node.lineno - 1 : st_node.end_lineno])
+
+
+def _build_merged_selftest_runner(module_dir, module_name, selftest_code):
+    """Generate python script for standalone runner that imports candidate module and executes merged selftest."""
+    return (
+        "#!/usr/bin/env python3\n"
+        "import importlib\n"
+        "import os\n"
+        "import sys\n\n"
+        "work_dir = '/work'\n"
+        f"mod_dir = os.path.join(work_dir, {module_dir!r})\n"
+        "for p in (mod_dir, work_dir):\n"
+        "    if p not in sys.path:\n"
+        "        sys.path.insert(0, p)\n\n"
+        f"mod = importlib.import_module({module_name!r})\n\n"
+        f"_ST_CODE = {selftest_code!r}\n"
+        "_code = compile(_ST_CODE, '<merged_selftest>', 'exec')\n"
+        "exec(_code, mod.__dict__)\n\n"
+        "rc = mod.selftest()\n"
+        "sys.exit(rc if isinstance(rc, int) else (0 if (rc is None or rc) else 1))\n"
+    )
+
+
+def _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=None, timeout=180):
+    """Execute tests in grade_dir inside outer bwrap sandbox with host-side evaluation only.
+
+    Security & Isolation properties:
+    - The trusted grader runs entirely on the host side, outside the sandbox, and never
+      imports or runs anything from the scratch tree.
+    - Decides only from the sandbox's exit code, output, and expected count of tests run.
+    - No token, no grade script, and no grader process live inside the sandbox.
+    - Outer /usr/bin/bwrap uses --unshare-pid with fresh --proc /proc and --die-with-parent,
+      so only the test run's own processes are visible.
+    - Restored merged-commit test files are mounted read-only via ro_binds over /work.
+    """
+    if not has_bwrap():
+        raise RuntimeError("bwrap sandbox is unavailable; refusing to execute grade unsandboxed")
+    home_dir, tmp_dir, shim_dir = prepare_isolated_home_and_tmp(grade_dir)
+    clean_env = build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+
+    spec = task.get("grade_spec")
+    if spec and spec.get("cmd"):
+        cmd = spec["cmd"]
+    elif spec and spec.get("mode") == "selftest_file":
+        cmd = "python3 /work/_merged_selftest_runner.py"
+    elif spec and spec.get("mode") == "unittest_and_selftest_file":
+        test_mod = spec.get("test_module", "")
+        cmd = f"python3 -m unittest {test_mod} && python3 /work/_merged_selftest_runner.py"
+    else:
+        cmd = task.get("test_cmd")
+    if not cmd:
+        return True, ""
+
+    iso_cmd = _wrap_shell_with_isolated_python3(cmd, "/work")
+    bwrap_cmd = build_outer_bwrap_cmd(
+        grade_dir, home_dir, tmp_dir, shim_dir, ["bash", "-c", iso_cmd], clean_env, ro_binds=ro_binds
+    )
+
+    try:
+        res = subprocess.run(
+            bwrap_cmd,
+            stdin=subprocess.DEVNULL,
+            cwd=grade_dir,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = (res.stdout or "") + (res.stderr or "")
+        return _verify_grade_output(task, res.returncode, output)
+    finally:
+        cleanup_isolated_home_and_tmp(grade_dir)
+
+
+def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
+    """Independently grade a task's final_diff in a fresh clean copy of base_commit with test files restored from merged_commit.
+
+    Never trusts the in-loop `passed` flag or bare exit code 0:
+    1. Creates a fresh standalone scratch tree at `base_commit`.
+    2. Applies `final_diff` (if non-empty) with path confinement checks.
+    3. Authoritative test files from `merged_commit` are staged in a separate host directory and
+       mounted read-only over `/work` inside the sandbox, preventing tampering or deletion.
+    4. Trusted grader runs on the host outside the sandbox, evaluating sandbox exit code and test counts.
+    """
+    if not task.get("has_tests"):
+        return None, "Not a testable task"
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+    base_sha = dict.__getitem__(task, "base_commit")
+    merged_sha = dict.__getitem__(task, "merged_commit")
+    grade_dir = tempfile.mkdtemp(prefix=f"grade_{task['id']}_")
+    ro_tests_dir = tempfile.mkdtemp(prefix=f"ro_{task['id']}_")
+    clean_env = build_minimal_env()
+    try:
+        create_isolated_scratch_repo(repo_root, base_sha, grade_dir)
+        if final_diff and final_diff.strip():
+            ok, msg = apply_updates(grade_dir, {"__patch__": final_diff.rstrip("\n")})
+            if not ok:
+                return False, f"Failed applying final_diff during grade: {msg}"
+
+        # Restore authoritative test files from merged_commit into ro_tests_dir for read-only bind mount
+        ro_binds = []
+        for tf in task.get("test_files", []):
+            host_tf = resolve_confined_path(ro_tests_dir, tf)
+            os.makedirs(os.path.dirname(host_tf), exist_ok=True)
+            show_res = subprocess.run(
+                ["git", "-C", repo_root, "show", f"{merged_sha}:{tf}"],
+                env=clean_env,
+                capture_output=True,
+            )
+            if show_res.returncode != 0:
+                return False, f"Failed restoring test file {tf} from {merged_sha}"
+            with open(host_tf, "wb") as f:
+                f.write(show_res.stdout)
+            ro_binds.append((host_tf, os.path.join("/work", tf)))
+
+        spec = task.get("grade_spec")
+        if spec and spec.get("mode") in ("selftest_file", "unittest_and_selftest_file") and spec.get("source_file_at_merged"):
+            st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
+            runner_content = _build_merged_selftest_runner(
+                module_dir=spec.get("module_dir", "bench/loop"),
+                module_name=spec["module_name"],
+                selftest_code=st_code,
+            )
+            runner_host_path = os.path.join(ro_tests_dir, "_merged_selftest_runner.py")
+            with open(runner_host_path, "w", encoding="utf-8") as f:
+                f.write(runner_content)
+            ro_binds.append((runner_host_path, "/work/_merged_selftest_runner.py"))
+
+        return _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=ro_binds, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"ERROR: grade test command timed out after {timeout} seconds."
+    except RuntimeError:
+        raise
+    except Exception as e:
+        return False, f"ERROR during regrade_task_diff: {e}"
+    finally:
+        shutil.rmtree(grade_dir, ignore_errors=True)
+        shutil.rmtree(ro_tests_dir, ignore_errors=True)
+
+
+
+def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None, tasks_override=None):
+    """Execute the `grade` subcommand: score recorded diffs against hidden diffs, merge review verdicts, compute KEEP/DROP."""
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+    if results_dir is None:
+        results_dir = os.path.join(HERE, "results")
+
+    jsonl_path = os.path.join(results_dir, f"{label}.jsonl")
+    if not os.path.exists(jsonl_path):
+        raise SystemExit(f"Results file not found: {jsonl_path}")
+
+    rows_by_id = {}
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                r = json.loads(line)
+                rows_by_id[r["task_id"]] = r
+
+    if reviews_file is None:
+        default_rev = os.path.join(results_dir, f"{label}.reviews.json")
+        if os.path.exists(default_rev):
+            reviews_file = default_rev
+
+    reviews_by_id = {}
+    if reviews_file and os.path.exists(reviews_file):
+        with open(reviews_file, "r", encoding="utf-8") as rf:
+            rev_data = json.load(rf)
+            if isinstance(rev_data, dict):
+                reviews_by_id = rev_data.get("reviews", rev_data)
+            elif isinstance(rev_data, list):
+                reviews_by_id = {item["task_id"]: item for item in rev_data}
+
+    all_tasks = tasks_override if tasks_override is not None else tasks_item6.load_tasks()
+    per_task = []
+    testable_total = 0
+    testable_passed = 0
+    approved_first = 0
+    approved_final = 0
+    has_all_reviews = True
+    hand_fix_lines_approved = []
+
+    for task in all_tasks:
+        tid = task["id"]
+        if tid not in rows_by_id:
+            continue
+        row = rows_by_id[tid]
+        has_tests = bool(task.get("has_tests"))
+        local_diff = row.get("final_diff", "")
+        in_loop_passed = bool(row.get("passed")) if has_tests else None
+        if has_tests:
+            testable_total += 1
+            passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
+        else:
+            passed = None
+            grade_test_out = ""
+
+        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=repo_root)
+        diff_metrics = evaluate_diff(local_diff, hidden_diff)
+
+        rev = reviews_by_id.get(tid)
+        if rev is not None:
+            if not isinstance(rev, dict):
+                raise ValueError(f"Review record for {tid} must be a dict, got {type(rev).__name__}")
+            v1 = rev.get("verdict") if "verdict" in rev else rev.get("first_verdict")
+            v_final = rev.get("final_verdict", v1)
+            if v1 not in ("APPROVE", "APPROVE-WITH-NITS", "REQUEST-CHANGES") or v_final not in (
+                "APPROVE",
+                "APPROVE-WITH-NITS",
+                "REQUEST-CHANGES",
+            ):
+                raise ValueError(f"Review record for {tid} has missing or invalid verdict: {rev!r}")
+            if "hand_fix_lines" not in rev or rev["hand_fix_lines"] is None or isinstance(rev["hand_fix_lines"], bool) or not isinstance(rev["hand_fix_lines"], (int, float)):
+                raise ValueError(f"Review record for {tid} is missing numeric hand_fix_lines: {rev!r}")
+            if "tamper" not in rev or not isinstance(rev["tamper"], bool):
+                raise ValueError(f"Review record for {tid} is missing required boolean 'tamper' field: {rev!r}")
+            tamper = rev["tamper"]
+            fresh_session = rev.get("fresh_session")
+            if fresh_session is False:
+                raise ValueError(f"Review record for {tid} must use a fresh reviewer session (fresh_session=False)")
+            hf_lines = rev["hand_fix_lines"]
+            if tamper:
+                if has_tests:
+                    passed = False
+                is_app1 = False
+                is_app_final = False
+            else:
+                is_app1 = v1 in ("APPROVE", "APPROVE-WITH-NITS")
+                is_app_final = v_final in ("APPROVE", "APPROVE-WITH-NITS")
+            if is_app1:
+                approved_first += 1
+            if is_app_final:
+                approved_final += 1
+                hand_fix_lines_approved.append(hf_lines)
+        else:
+            has_all_reviews = False
+            v1 = None
+            v_final = None
+            hf_lines = None
+            tamper = None
+            fresh_session = None
+
+        if has_tests and passed:
+            testable_passed += 1
+
+        per_task.append({
+            "task_id": tid,
+            "pr_number": task["pr_number"],
+            "has_tests": has_tests,
+            "in_loop_passed": in_loop_passed,
+            "test_passed": passed,
+            "tamper": tamper,
+            "fresh_session": fresh_session,
+            "stop_reason": row.get("stop_reason"),
+            "turns_executed": row.get("turns_executed"),
+            "total_completion_tokens": row.get("total_completion_tokens"),
+            "wall_s": row.get("wall_s"),
+            "diff_file": row.get("diff_file"),
+            "diff_metrics": diff_metrics,
+            "first_verdict": v1,
+            "final_verdict": v_final,
+            "hand_fix_lines": hf_lines,
+        })
+
+    total_evaluated = len(per_task)
+    final_app_count = approved_final if (has_all_reviews and total_evaluated > 0) else None
+    avg_hf = (sum(hand_fix_lines_approved) / len(hand_fix_lines_approved)) if hand_fix_lines_approved else 0.0
+
+    decision = compute_keep_drop(
+        testable_passed=testable_passed,
+        testable_total=testable_total,
+        approved_final=final_app_count,
+        total_tasks=total_evaluated,
+        avg_hand_fix_lines=avg_hf if final_app_count is not None else None,
+    )
+
+    grade_summary = {
+        "label": label,
+        "tasks_evaluated": total_evaluated,
+        "testable_tasks": testable_total,
+        "testable_passed": testable_passed,
+        "test_pass_rate": round(testable_passed / testable_total, 4) if testable_total > 0 else 0.0,
+        "reviews_complete": has_all_reviews and total_evaluated > 0,
+        "approved_first_pass": approved_first if has_all_reviews else None,
+        "approved_final": final_app_count,
+        "final_approve_rate": round(final_app_count / total_evaluated, 4) if (final_app_count is not None and total_evaluated > 0) else None,
+        "avg_hand_fix_lines_per_approved": round(avg_hf, 2) if final_app_count is not None else None,
+        "decision": decision,
+        "per_task": per_task,
+    }
+
+    grade_path = os.path.join(results_dir, f"{label}.grade.json")
+    with open(grade_path, "w", encoding="utf-8") as gf:
+        json.dump(grade_summary, gf, indent=2)
+
+    print(json.dumps({k: v for k, v in grade_summary.items() if k != "per_task"}, indent=2), flush=True)
+    return grade_summary
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Item 6 Pilot PR Loop Runner")
+    parser.add_argument("--selftest", action="store_true", help="Run CPU-only self-tests")
+    parser.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    parser.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
+    parser.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
+    parser.add_argument("--model", type=str, default=None, help="Expected model alias")
+    parser.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
+    parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    p_run = subparsers.add_parser("run", help="Run agentic loop on PR tasks in scratch worktrees")
+    p_run.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_run.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
+    p_run.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
+    p_run.add_argument("--model", type=str, default=None, help="Expected model alias")
+    p_run.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
+    p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+
+    p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
+    p_grade.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_grade.add_argument("--reviews-file", type=str, default=None, help="Path to adversarial-reviewer verdicts JSON")
+
+    args = parser.parse_args(argv)
+
+    if args.selftest:
+        sys.exit(selftest())
+
+    if args.subcommand == "run":
+        run_subcommand(
+            label=args.label,
+            tasks_arg=args.tasks,
+            api=args.api,
+            model=args.model,
+            max_turns=args.max_turns,
+            task_budget=args.task_budget,
+        )
+        return 0
+
+    if args.subcommand == "grade":
+        grade_subcommand(
+            label=args.label,
+            reviews_file=args.reviews_file,
+        )
+        return 0
+
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
