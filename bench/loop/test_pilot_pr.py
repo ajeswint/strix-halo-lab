@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CPU-only unit tests for Roadmap Item 6 Pilot harness and task suite."""
+import json
 import os
 import shutil
 import subprocess
@@ -1202,6 +1203,158 @@ class TestPilotPr(unittest.TestCase):
         finally:
             pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
             shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_http_context_overflow_produces_failed_record_and_continues(self):
+        """Verify HTTP 400 context overflow records failed context_overflow record with empty diff and continues."""
+        import io
+        import urllib.error
+
+        task = {
+            "id": "item6_pr15",
+            "pr_number": 15,
+            "has_tests": False,
+            "test_cmd": "",
+            "base_commit": "af2b1a5c4ca765fd411f9e9f9d48c2d099420722",
+            "merged_commit": "mock",
+            "prompt": "Test prompt",
+            "files": ["docs/item6-pilot.md"],
+        }
+        err_msg = b'{"error": "request (38364 tokens) exceeds the available context size (32768 tokens), try increasing it"}'
+        def mock_overflow_ask(prompt, seed):
+            raise urllib.error.HTTPError(
+                "http://127.0.0.1:8081/v1/chat/completions",
+                400,
+                "Bad Request",
+                hdrs={},
+                fp=io.BytesIO(err_msg),
+            )
+
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_overflow_")
+        try:
+            res = pilot_pr.run_task_loop(task, mock_overflow_ask, scratch_dir)
+            self.assertFalse(res["passed"])
+            self.assertEqual(res["stop_reason"], "context_overflow")
+            self.assertEqual(res["stop"], "context_overflow")
+            self.assertEqual(res["final_diff"], "")
+            self.assertEqual(res["turns_executed"], 1)
+            self.assertIn("exceeds the available context size", res["history"][0]["err"])
+
+            # Verify generic request error
+            def mock_500_ask(prompt, seed):
+                raise urllib.error.HTTPError(
+                    "http://127.0.0.1:8081/v1/chat/completions",
+                    500,
+                    "Internal Server Error",
+                    hdrs={},
+                    fp=io.BytesIO(b"server crash"),
+                )
+            res500 = pilot_pr.run_task_loop(task, mock_500_ask, scratch_dir)
+            self.assertFalse(res500["passed"])
+            self.assertEqual(res500["stop_reason"], "request_error")
+            self.assertEqual(res500["final_diff"], "")
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def test_resume_runs_only_missing_tasks_and_records_byte_identical(self):
+        """Verify resume runs only missing tasks and leaves existing records byte-identical."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_resume_test_")
+        try:
+            jsonl_path = os.path.join(temp_dir, "test-label.jsonl")
+            line1 = '{"task_id": "item6_pr06", "pr_number": 6, "has_tests": true, "passed": false, "stop_reason": "repeat_error", "turns_executed": 2, "history": [], "total_completion_tokens": 100, "final_diff": "diff1", "wall_s": 10.5, "model": "qwen", "server": {}}\n'
+            line2 = '{"task_id": "item6_pr08", "pr_number": 8, "has_tests": true, "passed": false, "stop_reason": "max_turns", "turns_executed": 4, "history": [], "total_completion_tokens": 200, "final_diff": "diff2", "wall_s": 20.0, "model": "qwen", "server": {}}\n'
+            with open(jsonl_path, "w", encoding="utf-8") as f:
+                f.write(line1)
+                f.write(line2)
+
+            def mock_ask(prompt, seed):
+                return {
+                    "content": "### test.txt\n```\nhello\n```\n",
+                    "reasoning_chars": 0,
+                    "finish": "stop",
+                    "usage": {"completion_tokens": 10, "prompt_tokens": 20},
+                    "gen_s": 0.5,
+                }
+
+            # Run with resume=True targeting pr06 (already exists) and pr15 (missing)
+            res = pilot_pr.run_subcommand(
+                label="test-label",
+                tasks_arg="item6_pr06,item6_pr15",
+                results_dir=temp_dir,
+                resume=True,
+                ask_fn=mock_ask,
+            )
+
+            # Only item6_pr15 was executed
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0]["task_id"], "item6_pr15")
+
+            # Check that existing lines 1 and 2 remain strictly byte-identical
+            with open(jsonl_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            self.assertEqual(lines[0], line1)
+            self.assertEqual(lines[1], line2)
+            self.assertEqual(len(lines), 3)
+            self.assertEqual(json.loads(lines[2])["task_id"], "item6_pr15")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_grade_empty_diff_automatic_non_approval_hand_fix_excluded(self):
+        """Verify grade treats empty-diff tasks as non-approved with hand_fix excluded without requiring review."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_grade_empty_")
+        try:
+            jsonl_path = os.path.join(temp_dir, "grade-empty.jsonl")
+            rev_path = os.path.join(temp_dir, "grade-empty.reviews.json")
+            rows = [
+                {
+                    "task_id": "item6_pr13",
+                    "pr_number": 13,
+                    "has_tests": True,
+                    "passed": False,
+                    "stop_reason": "repeat_error",
+                    "turns_executed": 2,
+                    "final_diff": "",
+                    "total_completion_tokens": 100,
+                    "wall_s": 15.0,
+                },
+                {
+                    "task_id": "item6_pr15",
+                    "pr_number": 15,
+                    "has_tests": False,
+                    "passed": False,
+                    "stop_reason": "context_overflow",
+                    "turns_executed": 1,
+                    "final_diff": "",
+                    "total_completion_tokens": 0,
+                    "wall_s": 0.5,
+                },
+            ]
+            with open(jsonl_path, "w", encoding="utf-8") as f:
+                for r in rows:
+                    f.write(json.dumps(r) + "\n")
+
+            # No reviews provided for empty-diff tasks; reviews file is empty dict
+            with open(rev_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+
+            summary = pilot_pr.grade_subcommand(
+                label="grade-empty",
+                reviews_file=rev_path,
+                results_dir=temp_dir,
+            )
+
+            self.assertEqual(summary["tasks_evaluated"], 2)
+            self.assertEqual(summary["testable_passed"], 0)
+            self.assertTrue(summary["reviews_complete"])
+            self.assertEqual(summary["approved_final"], 0)
+            self.assertEqual(summary["avg_hand_fix_lines_per_approved"], 0.0)
+            self.assertEqual(summary["decision"], "DROP")
+
+            for pt in summary["per_task"]:
+                self.assertFalse(pt["test_passed"])
+                self.assertEqual(pt["final_verdict"], "NON-APPROVAL")
+                self.assertIsNone(pt["hand_fix_lines"])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

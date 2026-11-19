@@ -656,6 +656,12 @@ def evaluate_diff(local_diff, hidden_diff):
     }
 
 
+def _is_context_overflow_error(err_text: str) -> bool:
+    """Detect if an HTTP error message indicates model context overflow."""
+    low = err_text.lower()
+    return "context" in low and any(w in low for w in ("size", "overflow", "exceed", "window", "limit", "length"))
+
+
 def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_budget=TASK_BUDGET_TOKENS):
     """Execute the agentic loop on a task in worktree_dir."""
     clean_task = tasks_item6.strip_hidden(task)
@@ -673,7 +679,44 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         check_prompt_leak(prompt, task)
         seed = 6000 + clean_task["pr_number"] * 10 + turn
 
-        reply = ask_fn(prompt, seed)
+        try:
+            reply = ask_fn(prompt, seed)
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            err_text = f"HTTP Error {e.code}: {e.reason}"
+            if err_body:
+                err_text = f"{err_text} - {err_body}"
+            stop_reason = "context_overflow" if _is_context_overflow_error(err_text) else "request_error"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": err_text,
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
+        except urllib.error.URLError as e:
+            err_text = f"URL Error: {e.reason}"
+            stop_reason = "context_overflow" if _is_context_overflow_error(err_text) else "request_error"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": err_text,
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
+
         gen_s = round(time.time() - t0, 2)
         comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
         prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or 0
@@ -749,14 +792,18 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         last_code = content
         last_err = test_out
 
-    final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+    if stop_reason in ("context_overflow", "request_error"):
+        final_diff = ""
+    else:
+        final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
 
     return {
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": history[-1]["passed"] if history else False,
+        "passed": False if stop_reason in ("context_overflow", "request_error") else (history[-1]["passed"] if history else False),
         "stop_reason": stop_reason,
+        "stop": stop_reason,
         "turns_executed": len(history),
         "history": history,
         "total_completion_tokens": accumulated_completion_tokens,
@@ -968,8 +1015,9 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 
 
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
-                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None):
+                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None, resume=False):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
+    resume = resume or (os.environ.get("RESUME") == "1")
     if repo_root is None:
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
     if results_dir is None:
@@ -1000,12 +1048,17 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
 
     # Load existing rows so running one task at a time updates/appends cleanly
     existing_by_id = {}
+    existing_raw_by_id = {}
     if os.path.exists(jsonl_path):
         with open(jsonl_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     row = json.loads(line)
                     existing_by_id[row["task_id"]] = row
+                    existing_raw_by_id[row["task_id"]] = line.strip()
+
+    if resume:
+        selected_tasks = [t for t in selected_tasks if tasks_item6.strip_hidden(t)["id"] not in existing_by_id]
 
     results = []
     for task in selected_tasks:
@@ -1046,14 +1099,17 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
 
     # Write updated JSONL in canonical task order
     order_ids = [t["id"] for t in all_tasks]
-    ordered_rows = [existing_by_id[tid] for tid in order_ids if tid in existing_by_id]
-    for tid, r in existing_by_id.items():
-        if tid not in order_ids:
-            ordered_rows.append(r)
+    ordered_tids = [tid for tid in order_ids if tid in existing_by_id]
+    for tid in existing_by_id:
+        if tid not in ordered_tids:
+            ordered_tids.append(tid)
 
     with open(jsonl_path, "w", encoding="utf-8") as f:
-        for r in ordered_rows:
-            f.write(json.dumps(r) + "\n")
+        for tid in ordered_tids:
+            if tid in existing_raw_by_id and (resume or tid not in [tasks_item6.strip_hidden(t)["id"] for t in selected_tasks]):
+                f.write(existing_raw_by_id[tid] + "\n")
+            else:
+                f.write(json.dumps(existing_by_id[tid]) + "\n")
 
     return results
 
@@ -1335,7 +1391,11 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         in_loop_passed = bool(row.get("passed")) if has_tests else None
         if has_tests:
             testable_total += 1
-            passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
+            if not local_diff.strip():
+                passed = False
+                grade_test_out = "empty diff"
+            else:
+                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
         else:
             passed = None
             grade_test_out = ""
@@ -1344,7 +1404,18 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
-        if rev is not None:
+        if not local_diff.strip() and rev is None:
+            # Amendment, Nov 18 2026: a task with an empty diff (including context_overflow,
+            # and pr13's empty diff) is an automatic non-approval with no Grok review,
+            # hand_fix_lines n/a and excluded from the hand-fix average.
+            is_app1 = False
+            is_app_final = False
+            v1 = "NON-APPROVAL"
+            v_final = "NON-APPROVAL"
+            hf_lines = None
+            tamper = False
+            fresh_session = True
+        elif rev is not None:
             if not isinstance(rev, dict):
                 raise ValueError(f"Review record for {tid} must be a dict, got {type(rev).__name__}")
             v1 = rev.get("verdict") if "verdict" in rev else rev.get("first_verdict")
@@ -1451,6 +1522,7 @@ def main(argv=None):
     parser.add_argument("--model", type=str, default=None, help="Expected model alias")
     parser.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
@@ -1461,6 +1533,7 @@ def main(argv=None):
     p_run.add_argument("--model", type=str, default=None, help="Expected model alias")
     p_run.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
     p_grade.add_argument("--label", type=str, default="item6-pilot", help="Run label")
@@ -1479,6 +1552,7 @@ def main(argv=None):
             model=args.model,
             max_turns=args.max_turns,
             task_budget=args.task_budget,
+            resume=getattr(args, "resume", False),
         )
         return 0
 

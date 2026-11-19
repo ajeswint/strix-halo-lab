@@ -1,0 +1,96 @@
+=== start 2026-11-18T22:01:01-06:00 pwd=/tmp/wt-item6-run head=86cbbe8d463f6b0935ddc21d80e5992540846d57 ===
+prereg guard OK: commit 86cbbe8d463f6b0935ddc21d80e5992540846d57 is reachable from origin/main
+  commit:     86cbbe8d463f6b0935ddc21d80e5992540846d57
+  remote_ref: origin/main
+  file:       docs/item6-pilot.md
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=101.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+=== Inviting qwen with --ctx 65536 --np 2 ===
+llmctl: session 80: INVITE qwen
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=101.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 5d49dd8389ae44c3978efb155781adae
+up: qwen3.6-35b-a3b on vk, ctx 65536, parallel 2, http://127.0.0.1:8081/v1
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=101.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+llmctl: session 80: ACTIVE qwen on :8081, GTT 23.5 GiB
+props: total_slots 2 n_ctx 32768 build b11669-620d2225c
+=== Starting task item6_pr06 2026-11-18T22:01:08-06:00 (remaining_ceiling=4320s) ===
+STEP_START item6-pilot item6_pr06 2026-11-19T04:01:08Z 1795060868.323451953
+item6_pr06     pr=#6  has_tests=True  passed=False stop=repeat_error     turns=3 tok=21130 diff_lines=718
+llmctl: run python3 rc=0 memory.peak=73 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot item6_pr06 2026-11-19T04:07:39Z 1795061259.203811669
+STEP_WALL item6-pilot item6_pr06 390.9 s
+=== Completed task item6_pr06 2026-11-18T22:07:39-06:00 ===
+=== Starting task item6_pr08 2026-11-18T22:07:39-06:00 (remaining_ceiling=3929s) ===
+STEP_START item6-pilot item6_pr08 2026-11-19T04:07:39Z 1795061259.221338483
+item6_pr08     pr=#8  has_tests=True  passed=False stop=max_turns        turns=4 tok=28267 diff_lines=619
+llmctl: run python3 rc=0 memory.peak=66 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot item6_pr08 2026-11-19T04:17:35Z 1795061855.146000261
+STEP_WALL item6-pilot item6_pr08 595.9 s
+=== Completed task item6_pr08 2026-11-18T22:17:35-06:00 ===
+=== Starting task item6_pr13 2026-11-18T22:17:35-06:00 (remaining_ceiling=3333s) ===
+STEP_START item6-pilot item6_pr13 2026-11-19T04:17:35Z 1795061855.162245248
+item6_pr13     pr=#13 has_tests=True  passed=False stop=repeat_error     turns=2 tok=16384 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=58 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot item6_pr13 2026-11-19T04:22:51Z 1795062171.731798848
+STEP_WALL item6-pilot item6_pr13 316.6 s
+=== Completed task item6_pr13 2026-11-18T22:22:51-06:00 ===
+=== Starting task item6_pr14 2026-11-18T22:22:51-06:00 (remaining_ceiling=3017s) ===
+STEP_START item6-pilot item6_pr14 2026-11-19T04:22:51Z 1795062171.749187491
+item6_pr14     pr=#14 has_tests=True  passed=False stop=repeat_error     turns=3 tok=20022 diff_lines=1909
+llmctl: run python3 rc=0 memory.peak=73 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot item6_pr14 2026-11-19T04:28:50Z 1795062530.189214164
+STEP_WALL item6-pilot item6_pr14 358.4 s
+=== Completed task item6_pr14 2026-11-18T22:28:50-06:00 ===
+=== Starting task item6_pr15 2026-11-18T22:28:50-06:00 (remaining_ceiling=2658s) ===
+STEP_START item6-pilot item6_pr15 2026-11-19T04:28:50Z 1795062530.206527026
+Traceback (most recent call last):
+  File "/tmp/wt-item6-run/bench/loop/pilot_pr.py", line 1497, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/tmp/wt-item6-run/bench/loop/pilot_pr.py", line 1475, in main
+    run_subcommand(
+    ~~~~~~~~~~~~~~^
+        label=args.label,
+        ^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        task_budget=args.task_budget,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/wt-item6-run/bench/loop/pilot_pr.py", line 1019, in run_subcommand
+    res = run_task_loop(
+        clean_task,
+    ...<3 lines>...
+        task_budget=task_budget,
+    )
+  File "/tmp/wt-item6-run/bench/loop/pilot_pr.py", line 676, in run_task_loop
+    reply = ask_fn(prompt, seed)
+  File "/tmp/wt-item6-run/bench/loop/pilot_pr.py", line 929, in ask
+    with urllib.request.urlopen(req, timeout=3600) as r:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/urllib/request.py", line 493, in open
+    response = meth(req, response)
+  File "/usr/lib/python3.14/urllib/request.py", line 602, in http_response
+    response = self.parent.error(
+        'http', request, response, code, msg, hdrs)
+  File "/usr/lib/python3.14/urllib/request.py", line 531, in error
+    return self._call_chain(*args)
+           ~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/lib/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/usr/lib/python3.14/urllib/request.py", line 611, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 400: Bad Request
+llmctl: run python3 rc=1 memory.peak=59 MiB cap=8192 MiB as=16384 MiB
+ERROR: task item6_pr15 exited with rc=1
+=== EXIT trap: scripts/llmctl.py bye (script rc=1) ===
+llmctl: session 80: ENDED qwen; GTT after stop 1.2 GiB
+=== end 2026-11-18T22:28:50-06:00 rc=1 wall_s=1669 ===

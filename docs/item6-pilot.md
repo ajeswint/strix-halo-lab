@@ -178,3 +178,14 @@ The pilot's purpose is to decide whether local agentic loops on real PRs justify
 - 1/6 tests pass, 2/7 approved $\rightarrow$ **DROP** (fails test pass threshold)
 - 3/6 tests pass, 1/7 approved $\rightarrow$ **DROP** (fails reviewer threshold)
 - 2/6 tests pass, 2/7 approved $\rightarrow$ **INCONCLUSIVE** (defaults to DROP)
+
+## 10. Amendment, Nov 18 2026, after partial results
+
+- **Timing & Context**: This amendment was recorded after 4 of 7 task records were written (`item6_pr06`, `item6_pr08`, `item6_pr13`, `item6_pr14`), all with loop `passed=False` (`stop_reason`: `repeat_error`, `max_turns`, `repeat_error`, `repeat_error`).
+- **Prompt Size Observation**: The per-turn prompt estimate of 4,000–8,000 tokens (Section 8, line 150) was badly off: on `item6_pr15`, the first turn request reached 38,364 tokens, exceeding llama-server's per-slot context size of 32,768 tokens (`--ctx 65536 --np 2`), triggering an HTTP 400 error (`request (38364 tokens) exceeds the available context size (32768 tokens)`).
+- **Stop Reasons**: Added stop reasons `context_overflow` (for context-size overflow errors) and `request_error` (for other HTTP request failures), meaning the task failed with no diff (`final_diff = ""`).
+- **Empty Diff & Review Gate**: A task with an empty diff (including `context_overflow`, and `item6_pr13`'s empty diff) is an automatic non-approval with no Grok review. In offline grading (`pilot_pr.py grade`), `hand_fix_lines` is n/a (`None`) and excluded from the hand-fix average. The same rule applies if `item6_pr16` or `item6_pr20` overflow.
+- **Run Provenance**:
+  - Run 1 (tasks pr06, pr08, pr13, pr14) was executed at commit `86cbbe8` and ran for 1,669 s before the uncaught exception on pr15 aborted the run. Those four run-1 records came from pre-change code and are frozen unmodified.
+  - The resume run will execute at this PR's merge head with `RESUME=1` and `CEILING_SECONDS=2651` (4,320 s - 1,669 s), so the total pilot GPU time remains strictly under 1.2 GPU-hours (4,320 s).
+- **Bars & Invariants**: No change to the KEEP/DROP bars (Section 9), mechanical task selection (Section 4), or grading.

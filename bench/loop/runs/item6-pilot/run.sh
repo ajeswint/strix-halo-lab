@@ -24,6 +24,7 @@ QWEN_MODEL_PATH="/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
 INVITE_OPTS=(--ctx 65536 --np 2)
 PARALLEL=2
 CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
+RESUME="${RESUME:-0}"
 
 # Refuse to run when WT or EXPECT_HEAD is still the placeholder or empty
 if [[ -z "$WT" || "$WT" == "<path-to-clean-worktree>" || "$WT" == "<"*">" ]]; then
@@ -45,7 +46,7 @@ exec >>"$LOG" 2>&1
 
 start=$(date +%s)
 echo "running $(date -Iseconds)" > "$DIR/run.status"
-echo "=== start $(date -Iseconds) pwd=$PWD head=$(git rev-parse HEAD) ==="
+echo "=== start $(date -Iseconds) pwd=$PWD head=$(git rev-parse HEAD) ceiling_seconds=$CEILING_SECONDS resume=$RESUME ==="
 
 invited=0
 on_exit() {
@@ -131,6 +132,24 @@ TASKS=(
   "item6_pr20"
 )
 
+RESULTS_FILE="bench/loop/results/item6-pilot.jsonl"
+if [[ "$RESUME" == "1" ]]; then
+  echo "=== Resume mode active (RESUME=1): inspecting $RESULTS_FILE ==="
+  if [[ -f "$RESULTS_FILE" ]]; then
+    filtered_tasks=()
+    for task_id in "${TASKS[@]}"; do
+      if grep -q "\"task_id\": \"$task_id\"" "$RESULTS_FILE" 2>/dev/null; then
+        echo "RESUME: skipping already completed task $task_id"
+      else
+        echo "RESUME: queuing missing task $task_id"
+        filtered_tasks+=("$task_id")
+      fi
+    done
+    TASKS=("${filtered_tasks[@]}")
+  fi
+  echo "=== Tasks to execute: ${TASKS[*]:-(none)} ==="
+fi
+
 export PYTHONUNBUFFERED=1
 gpu_start=$(date +%s)
 for task_id in "${TASKS[@]}"; do
@@ -146,7 +165,7 @@ for task_id in "${TASKS[@]}"; do
   echo "STEP_START item6-pilot $task_id $(date -u +%FT%TZ) $t0"
   
   set +e
-  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label item6-pilot --tasks "$task_id"
+  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label item6-pilot --tasks "$task_id" --resume
   step_rc=$?
   set -e
   if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
@@ -155,8 +174,7 @@ for task_id in "${TASKS[@]}"; do
     echo "ERROR: GPU run hit the 1.2 h ceiling (${CEILING_SECONDS}s) during task $task_id (rc=$step_rc); stopping and recording incomplete run."
     exit 124
   elif [[ $step_rc -ne 0 ]]; then
-    echo "ERROR: task $task_id exited with rc=$step_rc"
-    exit "$step_rc"
+    echo "ERROR: task $task_id exited with rc=$step_rc (continuing to next task)"
   fi
   
   t1=$(date +%s.%N)
