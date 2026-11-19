@@ -584,6 +584,14 @@ class TestPilotPr(unittest.TestCase):
         self.assertNotEqual(r2.returncode, 0)
         self.assertIn("EXPECT_HEAD must be set", r2.stderr)
 
+    def test_launcher_exit_trap_preserves_incomplete_ceiling_status(self):
+        """Verify bench/loop/runs/item6-pilot/run.sh EXIT trap does not overwrite incomplete ceiling status."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        check_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "check_ceiling_trap.sh")
+        res = subprocess.run(["bash", check_sh], cwd=repo_root, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"check_ceiling_trap.sh failed:\n{res.stdout}\n{res.stderr}")
+        self.assertIn("Item 2 check passed", res.stdout)
+
     def test_import_time_exit_stubs_fail_grade_on_6_13_16(self):
         """Verify sys.exit(0) and os._exit(0) stubs of model modules grade FAIL for PRs #6, #13, and #16."""
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))

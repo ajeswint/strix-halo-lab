@@ -56,8 +56,12 @@ on_exit() {
     invited=0
   fi
   local wall=$(( $(date +%s) - start ))
-  echo "done rc=$rc wall_s=$wall end=$(date -Iseconds)" > "$DIR/run.status"
-  echo "=== end $(date -Iseconds) rc=$rc wall_s=$wall ==="
+  if [[ -f "$DIR/run.status" ]] && grep -q '^incomplete' "$DIR/run.status"; then
+    echo "=== end $(date -Iseconds) rc=$rc wall_s=$wall (status: $(cat "$DIR/run.status")) ==="
+  else
+    echo "done rc=$rc wall_s=$wall end=$(date -Iseconds)" > "$DIR/run.status"
+    echo "=== end $(date -Iseconds) rc=$rc wall_s=$wall ==="
+  fi
 }
 trap on_exit EXIT
 
