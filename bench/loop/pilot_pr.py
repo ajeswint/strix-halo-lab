@@ -656,6 +656,12 @@ def evaluate_diff(local_diff, hidden_diff):
     }
 
 
+def _is_context_overflow_error(err_text: str) -> bool:
+    """Detect if an HTTP error message indicates model context overflow."""
+    low = err_text.lower()
+    return "context" in low and any(w in low for w in ("size", "overflow", "exceed", "window", "limit", "length"))
+
+
 def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_budget=TASK_BUDGET_TOKENS):
     """Execute the agentic loop on a task in worktree_dir."""
     clean_task = tasks_item6.strip_hidden(task)
@@ -673,7 +679,44 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         check_prompt_leak(prompt, task)
         seed = 6000 + clean_task["pr_number"] * 10 + turn
 
-        reply = ask_fn(prompt, seed)
+        try:
+            reply = ask_fn(prompt, seed)
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            err_text = f"HTTP Error {e.code}: {e.reason}"
+            if err_body:
+                err_text = f"{err_text} - {err_body}"
+            stop_reason = "context_overflow" if _is_context_overflow_error(err_text) else "request_error"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": err_text,
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
+        except urllib.error.URLError as e:
+            err_text = f"URL Error: {e.reason}"
+            stop_reason = "context_overflow" if _is_context_overflow_error(err_text) else "request_error"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": err_text,
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
+
         gen_s = round(time.time() - t0, 2)
         comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
         prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or 0
@@ -749,14 +792,18 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         last_code = content
         last_err = test_out
 
-    final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+    if stop_reason in ("context_overflow", "request_error"):
+        final_diff = ""
+    else:
+        final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
 
     return {
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": history[-1]["passed"] if history else False,
+        "passed": False if stop_reason in ("context_overflow", "request_error") else (history[-1]["passed"] if history else False),
         "stop_reason": stop_reason,
+        "stop": stop_reason,
         "turns_executed": len(history),
         "history": history,
         "total_completion_tokens": accumulated_completion_tokens,
@@ -1335,7 +1382,11 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         in_loop_passed = bool(row.get("passed")) if has_tests else None
         if has_tests:
             testable_total += 1
-            passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
+            if not local_diff.strip():
+                passed = False
+                grade_test_out = "empty diff"
+            else:
+                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
         else:
             passed = None
             grade_test_out = ""
@@ -1344,7 +1395,18 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
-        if rev is not None:
+        if not local_diff.strip():
+            # Amendment, Nov 18 2026: a task with an empty diff (including context_overflow,
+            # and pr13's empty diff) is an automatic non-approval with no Grok review,
+            # hand_fix_lines n/a and excluded from the hand-fix average.
+            is_app1 = False
+            is_app_final = False
+            v1 = "NON-APPROVAL"
+            v_final = "NON-APPROVAL"
+            hf_lines = None
+            tamper = False
+            fresh_session = True
+        elif rev is not None:
             if not isinstance(rev, dict):
                 raise ValueError(f"Review record for {tid} must be a dict, got {type(rev).__name__}")
             v1 = rev.get("verdict") if "verdict" in rev else rev.get("first_verdict")
