@@ -625,6 +625,60 @@ class TestPilotPr(unittest.TestCase):
                 finally:
                     shutil.rmtree(scratch_dir, ignore_errors=True)
 
+    def test_forged_and_broken_selftest_grades_fail_on_6_and_16(self):
+        """Verify print-only forged debate.py (PR #6) and broken ground.py (PR #16) grade ok=False."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+        # Case 1: print-only forged debate.py for PR #6
+        task6 = tasks_item6.get_task("item6_pr06")
+        scratch_dir6 = tempfile.mkdtemp(prefix="forged_pr6_")
+        try:
+            pilot_pr.create_isolated_scratch_repo(repo_root, task6["base_commit"], scratch_dir6)
+            forged_debate = (
+                "import sys\n"
+                "def main():\n"
+                "    for i in range(59):\n"
+                "        print(f'ok forged {i}')\n"
+                "    print('selftest OK (protocol 137acf32c95d)')\n"
+                "    sys.exit(0)\n"
+                "if __name__ == '__main__':\n"
+                "    main()\n"
+            )
+            target_path6 = os.path.join(scratch_dir6, "bench/loop/debate.py")
+            os.makedirs(os.path.dirname(target_path6), exist_ok=True)
+            with open(target_path6, "w", encoding="utf-8") as f:
+                f.write(forged_debate)
+            diff6 = pilot_pr.capture_worktree_diff(scratch_dir6, task6["base_commit"])
+            passed6, out6 = pilot_pr.regrade_task_diff(task6, diff6, repo_root=repo_root, timeout=60)
+            self.assertFalse(
+                passed6,
+                f"Print-only forged debate.py must grade ok=False, but got ok={passed6}! output:\n{out6}",
+            )
+        finally:
+            shutil.rmtree(scratch_dir6, ignore_errors=True)
+
+        # Case 2: broken ground.py for PR #16 (corrupted SEED_BASE causing selftest check failure)
+        task16 = tasks_item6.get_task("item6_pr16")
+        scratch_dir16 = tempfile.mkdtemp(prefix="broken_pr16_")
+        try:
+            pilot_pr.create_isolated_scratch_repo(repo_root, task16["base_commit"], scratch_dir16)
+            hdiff16 = tasks_item6.get_hidden_diff(task16, repo_root)
+            pilot_pr.apply_updates(scratch_dir16, {"__patch__": hdiff16.rstrip("\n")})
+            ground_path = os.path.join(scratch_dir16, "bench/loop/ground.py")
+            with open(ground_path, "r", encoding="utf-8") as f:
+                src = f.read()
+            broken_src = src.replace("SEED_BASE = 5000", "SEED_BASE = 0")
+            with open(ground_path, "w", encoding="utf-8") as f:
+                f.write(broken_src)
+            diff16 = pilot_pr.capture_worktree_diff(scratch_dir16, task16["base_commit"])
+            passed16, out16 = pilot_pr.regrade_task_diff(task16, diff16, repo_root=repo_root, timeout=60)
+            self.assertFalse(
+                passed16,
+                f"Broken ground.py must grade ok=False, but got ok={passed16}! output:\n{out16}",
+            )
+        finally:
+            shutil.rmtree(scratch_dir16, ignore_errors=True)
+
     def test_env_isolation_no_repo_root_and_no_git_alternate_leak(self):
         """Verify model code under grade cannot see PILOT_REPO_ROOT/GIT_*, and GIT_ALTERNATE_OBJECT_DIRECTORIES cannot leak merged SHA."""
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
