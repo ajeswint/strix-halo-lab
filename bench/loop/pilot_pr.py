@@ -213,6 +213,7 @@ def build_outer_bwrap_cmd(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env
         "--unshare-net",
         "--unshare-ipc",
         "--unshare-uts",
+        "--as-pid-1",
         "--die-with-parent",
         "--clearenv",
     ])
@@ -540,6 +541,7 @@ def run_tests(task, worktree_dir, timeout=60):
     try:
         res = subprocess.run(
             bwrap_argv,
+            stdin=subprocess.DEVNULL,
             cwd=worktree_dir,
             env=env,
             capture_output=True,
@@ -1152,6 +1154,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, ro_binds=None, timeout=1
     try:
         res = subprocess.run(
             bwrap_cmd,
+            stdin=subprocess.DEVNULL,
             cwd=grade_dir,
             env=clean_env,
             capture_output=True,

@@ -945,15 +945,28 @@ class TestPilotPr(unittest.TestCase):
             finally:
                 pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
 
-            # Verify graded test files are not visible on disk inside /work during grade
+            # Verify restored merged-commit test files are mounted read-only and cannot be tampered with or deleted
             t16 = tasks_item6.get_task("item6_pr16")
             pilot_pr.create_isolated_scratch_repo(repo_root, t16["base_commit"], scratch_dir)
             check_hidden_tests_code = (
                 "import os, sys\n"
-                "if os.path.exists('/work/bench/loop/test_ground.py') or os.path.exists('/work/_pilot_merged_selftest.py'):\n"
-                "    print('GRADED_TEST_FILE_VISIBLE')\n"
-                "else:\n"
-                "    print('GRADED_TEST_FILE_HIDDEN')\n"
+                "p = '/work/bench/loop/test_ground.py'\n"
+                "if not os.path.exists(p):\n"
+                "    print('FAIL: test_ground.py missing')\n"
+                "    sys.exit(1)\n"
+                "try:\n"
+                "    with open(p, 'w') as f: f.write('tamper')\n"
+                "    print('TAMPER_WRITE_SUCCEEDED')\n"
+                "    sys.exit(1)\n"
+                "except OSError:\n"
+                "    pass\n"
+                "try:\n"
+                "    os.unlink(p)\n"
+                "    print('TAMPER_UNLINK_SUCCEEDED')\n"
+                "    sys.exit(1)\n"
+                "except OSError:\n"
+                "    pass\n"
+                "print('GRADED_TEST_FILE_IMMUTABLE')\n"
                 "sys.exit(1)\n"
             )
             with open(os.path.join(scratch_dir, "bench", "loop", "ground.py"), "w") as f:
@@ -961,8 +974,8 @@ class TestPilotPr(unittest.TestCase):
             diff_t16 = pilot_pr.capture_worktree_diff(scratch_dir, t16["base_commit"])
             ok16, out16 = pilot_pr.regrade_task_diff(t16, diff_t16, repo_root=repo_root, timeout=30)
             self.assertFalse(ok16)
-            self.assertIn("GRADED_TEST_FILE_HIDDEN", out16)
-            self.assertNotIn("GRADED_TEST_FILE_VISIBLE", out16)
+            self.assertIn("GRADED_TEST_FILE_IMMUTABLE", out16)
+            self.assertNotIn("TAMPER_", out16)
 
             # 3. Verify fail-closed when bwrap is unavailable
             orig_has_bwrap = pilot_pr.has_bwrap
@@ -984,6 +997,8 @@ class TestPilotPr(unittest.TestCase):
     def test_inner_bwrap_wrapper_isolation_and_fail_closed(self):
         """Verify inner bwrap wrapper verifies layout, fails closed without isolation, and hides graded files/proc on real grade path."""
         scratch_dir = tempfile.mkdtemp(prefix="pilot_inner_wrap_")
+        outside_dir = tempfile.mkdtemp(prefix="pilot_outside_graded_")
+        ro_dir = tempfile.mkdtemp(prefix="pilot_ro_graded_")
         try:
             home_d, tmp_d, shim_d = pilot_pr.prepare_isolated_home_and_tmp(scratch_dir)
             shim_bwrap = os.path.join(shim_d, "bwrap")
@@ -997,76 +1012,139 @@ class TestPilotPr(unittest.TestCase):
             self.assertNotEqual(res_fail.returncode, 0, "Wrapper must exit non-zero when isolation cannot be set up")
             self.assertNotIn("UNSAFE_RUN", res_fail.stdout, "Payload must not execute on setup failure")
 
-            # 2. Inside outer bwrap on the real grade path (no unshare --user --map-root-user):
-            # - probe placed at /work/bench/loop/test_ground.py is not readable by code under test
-            # - /proc does not show the grader's command line or token
+            # 2. Outside graded test file exists on host, but cannot be read from inside outer sandbox
+            outside_file = os.path.join(outside_dir, "test_ground.py")
+            with open(outside_file, "w") as f:
+                f.write("SECRET_OUTSIDE_GROUND_PROBE")
+            self.assertTrue(os.path.exists(outside_file), "Graded test file must exist on host outside sandbox")
+
+            # 3. Read-only mounted graded test file inside /work cannot be overwritten or deleted
+            os.makedirs(os.path.join(scratch_dir, "bench", "loop"), exist_ok=True)
+            ro_file = os.path.join(ro_dir, "test_ground.py")
+            with open(ro_file, "w") as f:
+                f.write("AUTHORITATIVE_GROUND_CONTENT")
+            self.assertTrue(os.path.exists(ro_file), "Authoritative test file must exist outside sandbox")
+
             env_ns = pilot_pr.build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
-            grader_script = (
-                "import glob, os, subprocess, sys\n"
-                "# Token embedded in stdin-delivered grader script (kept out of argv)\n"
-                "_tok = 'SECRET_GRADE_TOKEN_XYZ'\n"
-                "probe_path = '/work/bench/loop/test_ground.py'\n"
-                "os.makedirs(os.path.dirname(probe_path), exist_ok=True)\n"
-                "with open(probe_path, 'w') as f: f.write('SECRET_GROUND_TEST_PROBE')\n"
-                "# As in grade spec, graded test files are unlinked from /work before test execution\n"
-                "os.remove(probe_path)\n"
-                "cand_d = '/tmp/cand_test'\n"
-                "os.makedirs(cand_d, exist_ok=True)\n"
-                "cand_probe_py = (\n"
-                "    'import glob, os, sys\\n'\n"
-                "    'if os.path.exists(\"/work/bench/loop/test_ground.py\"):\\n'\n"
-                "    '    print(\"LEAK:TEST_GROUND_READABLE\")\\n'\n"
-                "    '    sys.exit(2)\\n'\n"
-                "    'try:\\n'\n"
-                "    '    with open(\"/work/bench/loop/test_ground.py\") as f:\\n'\n"
-                "    '        print(\"LEAK:TEST_GROUND_DATA:\" + f.read())\\n'\n"
-                "    '        sys.exit(2)\\n'\n"
-                "    'except Exception:\\n'\n"
-                "    '    pass\\n'\n"
-                "    'my_pid = str(os.getpid())\\n'\n"
-                "    'for p in glob.glob(\"/proc/*/cmdline\"):\\n'\n"
-                "    '    if my_pid in p or \"self\" in p:\\n'\n"
-                "    '        continue\\n'\n"
-                "    '    try:\\n'\n"
-                "    '        cmd = open(p, \"rb\").read()\\n'\n"
-                "    '        if b\"SECRET_GRADE_TOKEN_XYZ\" in cmd:\\n'\n"
-                "    '            print(\"LEAK:TOKEN_IN_PROC:\" + p)\\n'\n"
-                "    '            sys.exit(3)\\n'\n"
-                "    '    except Exception:\\n'\n"
-                "    '        pass\\n'\n"
-                "    'print(\"INNER_ISOLATION_VERIFIED\")\\n'\n"
-                "    'sys.exit(0)\\n'\n"
-                ")\n"
-                "cmd = [\n"
-                "    '/pilot_shim/bwrap',\n"
-                "    '--ro-bind', '/usr', '/usr',\n"
-                "    '--symlink', 'usr/lib', '/lib',\n"
-                "    '--symlink', 'usr/lib64', '/lib64',\n"
-                "    '--symlink', 'usr/bin', '/bin',\n"
-                "    '--proc', '/proc',\n"
-                "    '--dev', '/dev',\n"
-                "    '--tmpfs', '/tmp',\n"
-                "    '--unshare-all',\n"
-                "    '--die-with-parent',\n"
-                "    '--new-session',\n"
-                "    '--clearenv',\n"
-                "    '--setenv', 'PATH', '/usr/bin',\n"
-                "    '--bind', cand_d, '/w',\n"
-                "    '--chdir', '/w',\n"
-                "    'python3', '-c', cand_probe_py,\n"
-                "]\n"
-                "p = subprocess.run(cmd, capture_output=True, text=True)\n"
-                "sys.stdout.write(p.stdout)\n"
-                "sys.stderr.write(p.stderr)\n"
-                "sys.exit(p.returncode)\n"
+            inner_tester = (
+                f"import os, subprocess, sys\n"
+                f"outside_f = {outside_file!r}\n"
+                f"cand_d = '/tmp/cand_test'\n"
+                f"os.makedirs(cand_d, exist_ok=True)\n"
+                f"cand_probe_py = (\n"
+                f"    'import os, sys\\n'\n"
+                f"    f'outside_f = {{outside_f!r}}\\n'\n"
+                f"    'if os.path.exists(outside_f):\\n'\n"
+                f"    '    print(\"LEAK: outside file visible in sandbox\")\\n'\n"
+                f"    '    sys.exit(1)\\n'\n"
+                f"    'try:\\n'\n"
+                f"    '    with open(outside_f): pass\\n'\n"
+                f"    '    print(\"LEAK: opened outside file\")\\n'\n"
+                f"    '    sys.exit(1)\\n'\n"
+                f"    'except FileNotFoundError:\\n'\n"
+                f"    '    pass\\n'\n"
+                f"    'ro_path = \"/work/bench/loop/test_ground.py\"\\n'\n"
+                f"    'if not os.path.exists(ro_path):\\n'\n"
+                f"    '    print(\"FAIL: ro_path does not exist\")\\n'\n"
+                f"    '    sys.exit(2)\\n'\n"
+                f"    'with open(ro_path) as f:\\n'\n"
+                f"    '    if f.read() != \"AUTHORITATIVE_GROUND_CONTENT\":\\n'\n"
+                f"    '        print(\"FAIL: wrong content in ro_path\")\\n'\n"
+                f"    '        sys.exit(2)\\n'\n"
+                f"    'try:\\n'\n"
+                f"    '    with open(ro_path, \"w\") as f: f.write(\"tamper\")\\n'\n"
+                f"    '    print(\"LEAK: wrote to ro_path\")\\n'\n"
+                f"    '    sys.exit(3)\\n'\n"
+                f"    'except OSError:\\n'\n"
+                f"    '    pass\\n'\n"
+                f"    'try:\\n'\n"
+                f"    '    os.unlink(ro_path)\\n'\n"
+                f"    '    print(\"LEAK: unlinked ro_path\")\\n'\n"
+                f"    '    sys.exit(4)\\n'\n"
+                f"    'except OSError:\\n'\n"
+                f"    '    pass\\n'\n"
+                f"    'print(\"INNER_ISOLATION_VERIFIED\")\\n'\n"
+                f"    'sys.exit(0)\\n'\n"
+                f")\n"
+                f"cmd = [\n"
+                f"    '/pilot_shim/bwrap',\n"
+                f"    '--ro-bind', '/usr', '/usr',\n"
+                f"    '--symlink', 'usr/lib', '/lib',\n"
+                f"    '--symlink', 'usr/lib64', '/lib64',\n"
+                f"    '--symlink', 'usr/bin', '/bin',\n"
+                f"    '--proc', '/proc',\n"
+                f"    '--dev', '/dev',\n"
+                f"    '--tmpfs', '/tmp',\n"
+                f"    '--unshare-all',\n"
+                f"    '--die-with-parent',\n"
+                f"    '--new-session',\n"
+                f"    '--clearenv',\n"
+                f"    '--setenv', 'PATH', '/usr/bin',\n"
+                f"    '--bind', cand_d, '/w',\n"
+                f"    '--chdir', '/w',\n"
+                f"    'python3', '-c', cand_probe_py,\n"
+                f"]\n"
+                f"p = subprocess.run(cmd, capture_output=True, text=True)\n"
+                f"sys.stdout.write(p.stdout)\n"
+                f"sys.stderr.write(p.stderr)\n"
+                f"sys.exit(p.returncode)\n"
             )
+            ro_binds = [(ro_file, "/work/bench/loop/test_ground.py")]
             bw_cmd = pilot_pr.build_outer_bwrap_cmd(
-                scratch_dir, home_d, tmp_d, shim_d, ["python3", "-I", "-B", "-"], env_ns
+                scratch_dir, home_d, tmp_d, shim_d, ["python3", "-c", inner_tester], env_ns, ro_binds=ro_binds
             )
-            res_wrap = subprocess.run(bw_cmd, input=grader_script, capture_output=True, text=True, timeout=15)
+            res_wrap = subprocess.run(bw_cmd, capture_output=True, text=True, timeout=15)
             self.assertEqual(res_wrap.returncode, 0, f"Wrapped isolation failed: {res_wrap.stderr}")
             self.assertIn("INNER_ISOLATION_VERIFIED", res_wrap.stdout)
             self.assertNotIn("LEAK:", res_wrap.stdout)
+        finally:
+            pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+            shutil.rmtree(outside_dir, ignore_errors=True)
+            shutil.rmtree(ro_dir, ignore_errors=True)
+
+    def test_sandbox_proc_isolation_no_grader_cmdline_or_memory(self):
+        """Verify from inside sandbox no host grader cmdline or grader memory is reachable (holds with or without ptrace restrictions)."""
+        scratch_dir = tempfile.mkdtemp(prefix="pilot_proc_iso_")
+        host_pid = os.getpid()
+        self.assertTrue(os.path.exists(f"/proc/{host_pid}/cmdline"), "Host grader cmdline must exist on host")
+        self.assertTrue(os.path.exists(f"/proc/{host_pid}/mem"), "Host grader memory must exist on host")
+        try:
+            home_d, tmp_d, shim_d = pilot_pr.prepare_isolated_home_and_tmp(scratch_dir)
+            env_ns = pilot_pr.build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+            proc_probe_py = (
+                f"import glob, os, sys\n"
+                f"host_pid = {host_pid}\n"
+                f"my_pid = str(os.getpid())\n"
+                f"if os.path.exists(f'/proc/{{host_pid}}'):\n"
+                f"    print('LEAK: host_pid exists in sandbox /proc!')\n"
+                f"    sys.exit(1)\n"
+                f"for p in glob.glob('/proc/[0-9]*/cmdline'):\n"
+                f"    if f'/proc/{{my_pid}}/' in p:\n"
+                f"        continue\n"
+                f"    try:\n"
+                f"        data = open(p, 'rb').read()\n"
+                f"        if b'/usr/bin/bwrap' in data or b'test_pilot_pr' in data:\n"
+                f"            print(f'LEAK: host or bwrap cmdline in {{p}}: {{data!r}}')\n"
+                f"            sys.exit(2)\n"
+                f"    except Exception:\n"
+                f"        pass\n"
+                f"try:\n"
+                f"    open(f'/proc/{{host_pid}}/mem', 'rb')\n"
+                f"    print('LEAK: opened host memory!')\n"
+                f"    sys.exit(3)\n"
+                f"except (FileNotFoundError, ProcessLookupError, PermissionError):\n"
+                f"    pass\n"
+                f"print('GRADER_PROC_ISOLATION_VERIFIED')\n"
+                f"sys.exit(0)\n"
+            )
+            bw_cmd = pilot_pr.build_outer_bwrap_cmd(
+                scratch_dir, home_d, tmp_d, shim_d, ["python3", "-c", proc_probe_py], env_ns
+            )
+            res = subprocess.run(bw_cmd, capture_output=True, text=True, timeout=15)
+            self.assertEqual(res.returncode, 0, f"Proc isolation probe failed: {res.stderr}")
+            self.assertIn("GRADER_PROC_ISOLATION_VERIFIED", res.stdout)
+            self.assertNotIn("LEAK:", res.stdout)
         finally:
             pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
             shutil.rmtree(scratch_dir, ignore_errors=True)
