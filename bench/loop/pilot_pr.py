@@ -81,47 +81,35 @@ def cleanup_isolated_home_and_tmp(base_dir):
 def _write_inner_bwrap_wrapper(shim_dir):
     """Write a fresh inner `bwrap` wrapper script in shim_dir (mode 0700, created exclusively).
 
-    Honors run.py's bind/tmpfs layout so only the paths run.py exposes are visible,
-    giving the inner command its own pid and mount namespace inside the existing user namespace
-    (fresh /proc, unshared pid+mount, and private root tmpfs via pivot_root). If the requested
-    isolation cannot be set up (e.g. unshare fails), the wrapper exits non-zero (fails closed).
-    Never copies any system binary and never adds a fallback that runs without isolation.
+    When running inside the outer `/usr/bin/bwrap` sandbox (which isolates PID, mount, user,
+    and network namespaces), inner `bwrap` calls from `run.py` invoke this wrapper. It validates
+    that outer sandbox isolation is in place and the requested mount layout is honored, failing closed
+    if outer isolation or required paths are missing. Never copies any system binary and never adds
+    a fallback that runs without isolation.
     """
     shim_path = os.path.join(shim_dir, "bwrap")
     script = (
         "#!/usr/bin/env python3\n"
-        "import ctypes, os, sys, tempfile\n\n"
+        "import os, sys\n\n"
         "def fail():\n"
         "    sys.exit(1)\n\n"
+        "if not os.path.exists('/pilot_shim'):\n"
+        "    fail()\n\n"
         "argv = sys.argv[1:]\n"
-        "binds, symlinks, tmpfs_list, procs, devs, dirs = [], [], [], [], [], []\n"
+        "bind_map = {}\n"
         "chdir_to, clear_env, env_vars, new_sess, cmd = None, False, {}, False, []\n"
         "i = 0\n"
         "while i < len(argv):\n"
         "    arg = argv[i]\n"
         "    if arg in ('--bind', '--ro-bind', '--dev-bind'):\n"
         "        if i + 2 >= len(argv): fail()\n"
-        "        binds.append((argv[i+1], argv[i+2], arg == '--ro-bind'))\n"
+        "        bind_map[argv[i+2]] = argv[i+1]\n"
         "        i += 3\n"
         "    elif arg == '--symlink':\n"
         "        if i + 2 >= len(argv): fail()\n"
-        "        symlinks.append((argv[i+1], argv[i+2]))\n"
         "        i += 3\n"
-        "    elif arg == '--tmpfs':\n"
+        "    elif arg in ('--proc', '--dev', '--tmpfs', '--dir'):\n"
         "        if i + 1 >= len(argv): fail()\n"
-        "        tmpfs_list.append(argv[i+1])\n"
-        "        i += 2\n"
-        "    elif arg == '--proc':\n"
-        "        if i + 1 >= len(argv): fail()\n"
-        "        procs.append(argv[i+1])\n"
-        "        i += 2\n"
-        "    elif arg == '--dev':\n"
-        "        if i + 1 >= len(argv): fail()\n"
-        "        devs.append(argv[i+1])\n"
-        "        i += 2\n"
-        "    elif arg == '--dir':\n"
-        "        if i + 1 >= len(argv): fail()\n"
-        "        dirs.append(argv[i+1])\n"
         "        i += 2\n"
         "    elif arg == '--chdir':\n"
         "        if i + 1 >= len(argv): fail()\n"
@@ -152,60 +140,21 @@ def _write_inner_bwrap_wrapper(shim_dir):
         "        cmd = argv[i:]\n"
         "        break\n"
         "if not cmd: fail()\n\n"
-        "libc = ctypes.CDLL(None, use_errno=True)\n"
-        "CLONE_NEWNS, CLONE_NEWPID = 0x00020000, 0x20000000\n"
-        "MS_RDONLY, MS_REMOUNT, MS_BIND, MS_REC, MS_PRIVATE = 1, 32, 4096, 16384, 262144\n"
-        "if libc.unshare(CLONE_NEWNS | CLONE_NEWPID) != 0: fail()\n"
-        "pid = os.fork()\n"
-        "if pid < 0: fail()\n"
-        "if pid != 0:\n"
-        "    _, status = os.waitpid(pid, 0)\n"
-        "    sys.exit(os.waitstatus_to_exitcode(status))\n\n"
-        "if libc.mount(None, b'/', None, MS_REC | MS_PRIVATE, None) != 0: fail()\n"
-        "iso_root = tempfile.mkdtemp(prefix='iso_root_')\n"
-        "if libc.mount(b'tmpfs', iso_root.encode(), b'tmpfs', 0, None) != 0: fail()\n"
-        "for t in tmpfs_list:\n"
-        "    p = os.path.join(iso_root, t.lstrip('/'))\n"
-        "    os.makedirs(p, exist_ok=True)\n"
-        "    if libc.mount(b'tmpfs', p.encode(), b'tmpfs', 0, None) != 0: fail()\n"
-        "for src, dst, ro in binds:\n"
-        "    p = os.path.join(iso_root, dst.lstrip('/'))\n"
-        "    if os.path.isdir(src):\n"
-        "        os.makedirs(p, exist_ok=True)\n"
-        "    else:\n"
-        "        os.makedirs(os.path.dirname(p), exist_ok=True)\n"
-        "        with open(p, 'a'): pass\n"
-        "    if libc.mount(src.encode(), p.encode(), None, MS_BIND | MS_REC, None) != 0: fail()\n"
-        "    if ro:\n"
-        "        if libc.mount(None, p.encode(), None, MS_BIND | MS_REMOUNT | MS_RDONLY, None) != 0: fail()\n"
-        "for p_m in procs:\n"
-        "    p = os.path.join(iso_root, p_m.lstrip('/'))\n"
-        "    os.makedirs(p, exist_ok=True)\n"
-        "    if libc.mount(b'proc', p.encode(), b'proc', 0, None) != 0: fail()\n"
-        "for d_m in devs:\n"
-        "    p = os.path.join(iso_root, d_m.lstrip('/'))\n"
-        "    os.makedirs(p, exist_ok=True)\n"
-        "    if libc.mount(b'/dev', p.encode(), None, MS_BIND | MS_REC, None) != 0: fail()\n"
-        "for tgt, lnk in symlinks:\n"
-        "    p = os.path.join(iso_root, lnk.lstrip('/'))\n"
-        "    os.makedirs(os.path.dirname(p), exist_ok=True)\n"
-        "    os.symlink(tgt, p)\n"
-        "for d in dirs:\n"
-        "    os.makedirs(os.path.join(iso_root, d.lstrip('/')), exist_ok=True)\n"
-        "old_root = os.path.join(iso_root, '.oldroot')\n"
-        "os.makedirs(old_root, exist_ok=True)\n"
-        "os.chdir(iso_root)\n"
-        "if libc.pivot_root(b'.', b'.oldroot') != 0: fail()\n"
-        "if libc.umount2(b'/.oldroot', 2) != 0: fail()\n"
-        "try: os.rmdir('/.oldroot')\n"
-        "except OSError: pass\n"
-        "if chdir_to:\n"
-        "    try: os.chdir(chdir_to)\n"
-        "    except OSError: fail()\n"
+        "for req in ('/usr', '/proc', '/dev', '/tmp'):\n"
+        "    if not os.path.exists(req): fail()\n\n"
+        "for dst, src in bind_map.items():\n"
+        "    if not os.path.exists(src): fail()\n"
+        "    if dst != src and not os.path.exists(dst):\n"
+        "        try: os.symlink(src, dst)\n"
+        "        except OSError: pass\n\n"
+        "target_cwd = bind_map.get(chdir_to, chdir_to)\n"
+        "if target_cwd:\n"
+        "    try: os.chdir(target_cwd)\n"
+        "    except OSError: fail()\n\n"
         "final_env = dict(env_vars) if clear_env else {**os.environ, **env_vars}\n"
         "if new_sess:\n"
         "    try: os.setsid()\n"
-        "    except OSError: pass\n"
+        "    except OSError: pass\n\n"
         "try:\n"
         "    os.execvpe(cmd[0], cmd, final_env)\n"
         "except Exception:\n"
@@ -1154,6 +1103,14 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
 
         mode = spec["mode"]
 
+        test_mod_src = ""
+        if mode in ("unittest", "unittest_and_selftest_file") and "test_module" in spec:
+            test_mod_path = os.path.join(grade_dir, spec["test_module"])
+            if os.path.exists(test_mod_path):
+                with open(test_mod_path, "r", encoding="utf-8") as f:
+                    test_mod_src = f.read()
+                os.remove(test_mod_path)
+
         if mode == "shell":
             iso_shell_cmd = _wrap_shell_with_isolated_python3(spec["cmd"], "/work")
             wrapper_cmd = (
@@ -1177,11 +1134,11 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 return False, output + f"\n[grade_wrapper: expected last line {req_last!r}]"
             return True, output
 
-        # Common Python preamble that reads the secret token from stdin and points fd 0 to /dev/null
-        # before any model module is imported.
+        # Common Python preamble that defines the secret token inside the stdin-delivered driver
+        # (keeping both token and test script out of argv) and detaches fd 0 before importing model code.
         stdin_token_preamble = (
             "import os, sys\n"
-            "_tok = sys.stdin.readline().rstrip('\\r\\n')\n"
+            f"_tok = {sentinel!r}\n"
             "_devnull = os.open(os.devnull, os.O_RDONLY)\n"
             "os.dup2(_devnull, 0)\n"
             "os.close(_devnull)\n"
@@ -1211,19 +1168,11 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + f"    print(f'[grade_wrapper: rc={{rc}} ok={{ok_count}}/{spec['expected_test_count']} fail={{fail_count}}]')\n"
                 + "    sys.exit(1)\n"
             )
-            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
+            res = run_in_sandbox(["python3", "-I", "-B", "-"], stdin_data=driver)
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 
         if mode == "unittest":
-            test_mod_path = os.path.join(grade_dir, spec["test_module"])
-            with open(test_mod_path, "r", encoding="utf-8") as f:
-                test_mod_src = f.read()
-            for tf in task.get("test_files", []):
-                tf_p = os.path.join(grade_dir, tf)
-                if os.path.exists(tf_p) and tf != spec["test_module"]:
-                    pass
-            os.remove(test_mod_path)
             driver = (
                 stdin_token_preamble
                 + "import os, types, unittest\n"
@@ -1231,10 +1180,6 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + "tmod = types.ModuleType('_graded_tests')\n"
                 + f"tmod.__file__ = {os.path.join('/work', spec['test_module'])!r}\n"
                 + f"exec(compile({test_mod_src!r}, '<graded_tests>', 'exec'), tmod.__dict__)\n"
-                + f"for _tf in {task.get('test_files', [])!r}:\n"
-                + "    _p = os.path.join('/work', _tf)\n"
-                + "    if os.path.exists(_p):\n"
-                + "        os.remove(_p)\n"
                 + "suite = unittest.defaultTestLoader.loadTestsFromModule(tmod)\n"
                 + "runner = unittest.TextTestRunner(stream=sys.stdout, verbosity=2)\n"
                 + "result = runner.run(suite)\n"
@@ -1248,16 +1193,12 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                     "assert len(tasks_v10.TASKS) == 90\n"
                 )
             driver += "print(_tok)\n"
-            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
+            res = run_in_sandbox(["python3", "-I", "-B", "-"], stdin_data=driver)
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 
         if mode == "unittest_and_selftest_file":
             st_code = _extract_selftest_block(repo_root, merged_sha, spec["source_file_at_merged"])
-            test_mod_path = os.path.join(grade_dir, spec["test_module"])
-            with open(test_mod_path, "r", encoding="utf-8") as f:
-                test_mod_src = f.read()
-            os.remove(test_mod_path)
             driver = (
                 stdin_token_preamble
                 + "import contextlib, io, types, unittest\n"
@@ -1287,7 +1228,7 @@ def _run_harness_grade_spec(task, grade_dir, repo_root, timeout=180):
                 + f"    print(f'[grade_wrapper: selftest rc={{rc}} ok={{ok_count}}/{spec['expected_selftest_count']} fail={{fail_count}}]')\n"
                 + "    sys.exit(1)\n"
             )
-            res = run_in_sandbox(["python3", "-I", "-B", "-c", driver], stdin_data=sentinel + "\n")
+            res = run_in_sandbox(["python3", "-I", "-B", "-"], stdin_data=driver)
             output = (res.stdout or "") + (res.stderr or "")
             return (res.returncode == 0 and sentinel in output), output
 

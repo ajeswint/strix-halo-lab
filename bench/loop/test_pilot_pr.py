@@ -327,10 +327,10 @@ class TestPilotPr(unittest.TestCase):
             # Also test grade_subcommand with a full 7-task synthetic result set + reviews file
             all_tasks = tasks_item6.load_tasks()
             jsonl_path = os.path.join(results_dir, "full-batch.jsonl")
-            passing_indices = (1, 3, 4, 6)  # 3 testable (pr08, pr14, pr20) + 1 non-testable (pr15)
+            passing_indices = (0, 1, 3, 4, 6)  # 4 testable (pr06, pr08, pr14, pr20) + 1 non-testable (pr15)
             with open(jsonl_path, "w") as jf:
                 for i, t in enumerate(all_tasks):
-                    # 3 of 6 testable pass: use true hidden_diff for passing tasks so fresh regrade passes!
+                    # 4 of 6 testable pass: use true hidden_diff for passing tasks so fresh regrade passes!
                     should_pass = i in passing_indices
                     diff_for_grade = tasks_item6.get_hidden_diff(t) if should_pass else ""
                     jf.write(
@@ -347,9 +347,9 @@ class TestPilotPr(unittest.TestCase):
                         }) + "\n"
                     )
 
-            # 1) Without reviews -> PENDING_REVIEW (since 3/6 >= 2/6)
+            # 1) Without reviews -> PENDING_REVIEW (since 4/6 >= 3/6)
             g_pending = pilot_pr.grade_subcommand(label="full-batch", results_dir=results_dir)
-            self.assertEqual(g_pending["testable_passed"], 3)
+            self.assertEqual(g_pending["testable_passed"], 4)
             self.assertEqual(g_pending["testable_tasks"], 6)
             self.assertEqual(g_pending["decision"], "PENDING_REVIEW")
 
@@ -926,8 +926,7 @@ class TestPilotPr(unittest.TestCase):
             self.assertFalse(os.path.exists(host_tmp_probe), "/tmp write during grade must not appear on host /tmp!")
             self.assertFalse(os.path.exists(host_home_probe), "HOME write during grade must not appear in real HOME!")
 
-            # 2. Verify inner bwrap wrapper inside outer bwrap fails closed when nested isolation cannot be established
-            #    (Ubuntu AppArmor prevents nested unshare/mounts under /usr/bin/bwrap; wrapper must exit non-zero)
+            # 2. Verify inner bwrap wrapper inside outer bwrap succeeds when outer isolation and layout are present
             home_d, tmp_d, shim_d = pilot_pr.prepare_isolated_home_and_tmp(scratch_dir)
             try:
                 env_ns = pilot_pr.build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
@@ -937,12 +936,12 @@ class TestPilotPr(unittest.TestCase):
                     "print('NESTED_RC=' + str(res.returncode))\n"
                 )
                 bw_cmd = pilot_pr.build_outer_bwrap_cmd(
-                    scratch_dir, home_d, tmp_d, shim_d, ["python3", "-I", "-c", ns_check_py], env_ns
+                    scratch_dir, home_d, tmp_d, shim_d, ["python3", "-I", "-B", "-"], env_ns
                 )
                 self.assertEqual(bw_cmd[0], "/usr/bin/bwrap")
-                res_ns = subprocess.run(bw_cmd, capture_output=True, text=True, timeout=15)
+                res_ns = subprocess.run(bw_cmd, input=ns_check_py, capture_output=True, text=True, timeout=15)
                 self.assertEqual(res_ns.returncode, 0, res_ns.stderr)
-                self.assertIn("NESTED_RC=1", res_ns.stdout, "Inner bwrap must fail closed inside outer bwrap")
+                self.assertIn("NESTED_RC=0", res_ns.stdout, "Inner bwrap must succeed inside outer bwrap when layout is present")
             finally:
                 pilot_pr.cleanup_isolated_home_and_tmp(scratch_dir)
 
@@ -983,13 +982,13 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(scratch_dir, ignore_errors=True)
 
     def test_inner_bwrap_wrapper_isolation_and_fail_closed(self):
-        """Verify inner bwrap wrapper isolates mounts and PID namespace, and fails closed on setup failure."""
+        """Verify inner bwrap wrapper verifies layout, fails closed without isolation, and hides graded files/proc on real grade path."""
         scratch_dir = tempfile.mkdtemp(prefix="pilot_inner_wrap_")
         try:
             home_d, tmp_d, shim_d = pilot_pr.prepare_isolated_home_and_tmp(scratch_dir)
             shim_bwrap = os.path.join(shim_d, "bwrap")
 
-            # 1. Setup failure exits non-zero (fail closed without isolation)
+            # 1. Setup failure on host exits non-zero (fail closed without outer sandbox isolation)
             res_fail = subprocess.run(
                 [shim_bwrap, "--ro-bind", "/usr", "/usr", "python3", "-c", "print('UNSAFE_RUN')"],
                 capture_output=True,
@@ -998,61 +997,73 @@ class TestPilotPr(unittest.TestCase):
             self.assertNotEqual(res_fail.returncode, 0, "Wrapper must exit non-zero when isolation cannot be set up")
             self.assertNotIn("UNSAFE_RUN", res_fail.stdout, "Payload must not execute on setup failure")
 
-            # 2. Inside the wrapped run in an existing user namespace:
-            # - graded test file under /work is not readable
-            # - other processes' /proc/<pid>/cmdline is not visible
-            dummy_work = os.path.join(scratch_dir, "work")
-            os.makedirs(dummy_work, exist_ok=True)
-            with open(os.path.join(dummy_work, "test_ground.py"), "w") as f:
-                f.write("SECRET_GRADED_TEST_DATA")
-
-            dummy_scratch = os.path.join(scratch_dir, "candidate_scratch")
-            os.makedirs(dummy_scratch, exist_ok=True)
-
-            probe_py = (
-                "import glob, os, sys\n"
-                "if os.path.exists('/work') or os.path.exists('/work/test_ground.py'):\n"
-                "    print('LEAK:GRADED_TEST_VISIBLE')\n"
-                "    sys.exit(2)\n"
-                "my_pid = os.getpid()\n"
-                "pids = [int(p) for p in os.listdir('/proc') if p.isdigit()]\n"
-                "other_cmds = []\n"
-                "for p in pids:\n"
-                "    if p != my_pid and p != 1:\n"
-                "        try:\n"
-                "            cmdline = open(f'/proc/{p}/cmdline').read()\n"
-                "            if cmdline:\n"
-                "                other_cmds.append((p, cmdline))\n"
-                "        except Exception:\n"
-                "            pass\n"
-                "if other_cmds:\n"
-                "    print('LEAK:OTHER_PROC_VISIBLE', other_cmds)\n"
-                "    sys.exit(3)\n"
-                "print('INNER_ISOLATION_VERIFIED')\n"
-                "sys.exit(0)\n"
+            # 2. Inside outer bwrap on the real grade path (no unshare --user --map-root-user):
+            # - probe placed at /work/bench/loop/test_ground.py is not readable by code under test
+            # - /proc does not show the grader's command line or token
+            env_ns = pilot_pr.build_minimal_env(home_dir="/home/pilot", tmp_dir="/tmp")
+            grader_script = (
+                "import glob, os, subprocess, sys\n"
+                "# Token embedded in stdin-delivered grader script (kept out of argv)\n"
+                "_tok = 'SECRET_GRADE_TOKEN_XYZ'\n"
+                "probe_path = '/work/bench/loop/test_ground.py'\n"
+                "os.makedirs(os.path.dirname(probe_path), exist_ok=True)\n"
+                "with open(probe_path, 'w') as f: f.write('SECRET_GROUND_TEST_PROBE')\n"
+                "# As in grade spec, graded test files are unlinked from /work before test execution\n"
+                "os.remove(probe_path)\n"
+                "cand_d = '/tmp/cand_test'\n"
+                "os.makedirs(cand_d, exist_ok=True)\n"
+                "cand_probe_py = (\n"
+                "    'import glob, os, sys\\n'\n"
+                "    'if os.path.exists(\"/work/bench/loop/test_ground.py\"):\\n'\n"
+                "    '    print(\"LEAK:TEST_GROUND_READABLE\")\\n'\n"
+                "    '    sys.exit(2)\\n'\n"
+                "    'try:\\n'\n"
+                "    '    with open(\"/work/bench/loop/test_ground.py\") as f:\\n'\n"
+                "    '        print(\"LEAK:TEST_GROUND_DATA:\" + f.read())\\n'\n"
+                "    '        sys.exit(2)\\n'\n"
+                "    'except Exception:\\n'\n"
+                "    '    pass\\n'\n"
+                "    'my_pid = str(os.getpid())\\n'\n"
+                "    'for p in glob.glob(\"/proc/*/cmdline\"):\\n'\n"
+                "    '    if my_pid in p or \"self\" in p:\\n'\n"
+                "    '        continue\\n'\n"
+                "    '    try:\\n'\n"
+                "    '        cmd = open(p, \"rb\").read()\\n'\n"
+                "    '        if b\"SECRET_GRADE_TOKEN_XYZ\" in cmd:\\n'\n"
+                "    '            print(\"LEAK:TOKEN_IN_PROC:\" + p)\\n'\n"
+                "    '            sys.exit(3)\\n'\n"
+                "    '    except Exception:\\n'\n"
+                "    '        pass\\n'\n"
+                "    'print(\"INNER_ISOLATION_VERIFIED\")\\n'\n"
+                "    'sys.exit(0)\\n'\n"
+                ")\n"
+                "cmd = [\n"
+                "    '/pilot_shim/bwrap',\n"
+                "    '--ro-bind', '/usr', '/usr',\n"
+                "    '--symlink', 'usr/lib', '/lib',\n"
+                "    '--symlink', 'usr/lib64', '/lib64',\n"
+                "    '--symlink', 'usr/bin', '/bin',\n"
+                "    '--proc', '/proc',\n"
+                "    '--dev', '/dev',\n"
+                "    '--tmpfs', '/tmp',\n"
+                "    '--unshare-all',\n"
+                "    '--die-with-parent',\n"
+                "    '--new-session',\n"
+                "    '--clearenv',\n"
+                "    '--setenv', 'PATH', '/usr/bin',\n"
+                "    '--bind', cand_d, '/w',\n"
+                "    '--chdir', '/w',\n"
+                "    'python3', '-c', cand_probe_py,\n"
+                "]\n"
+                "p = subprocess.run(cmd, capture_output=True, text=True)\n"
+                "sys.stdout.write(p.stdout)\n"
+                "sys.stderr.write(p.stderr)\n"
+                "sys.exit(p.returncode)\n"
             )
-
-            inner_test_cmd = [
-                shim_bwrap,
-                "--ro-bind", "/usr", "/usr",
-                "--symlink", "usr/lib", "/lib",
-                "--symlink", "usr/lib64", "/lib64",
-                "--symlink", "usr/bin", "/bin",
-                "--proc", "/proc",
-                "--dev", "/dev",
-                "--tmpfs", "/tmp",
-                "--unshare-all",
-                "--die-with-parent",
-                "--new-session",
-                "--clearenv",
-                "--setenv", "PATH", "/usr/bin",
-                "--bind", dummy_scratch, "/w",
-                "--chdir", "/w",
-                "python3", "-c", probe_py,
-            ]
-
-            runner_cmd = ["unshare", "--user", "--map-root-user"] + inner_test_cmd
-            res_wrap = subprocess.run(runner_cmd, capture_output=True, text=True, timeout=15)
+            bw_cmd = pilot_pr.build_outer_bwrap_cmd(
+                scratch_dir, home_d, tmp_d, shim_d, ["python3", "-I", "-B", "-"], env_ns
+            )
+            res_wrap = subprocess.run(bw_cmd, input=grader_script, capture_output=True, text=True, timeout=15)
             self.assertEqual(res_wrap.returncode, 0, f"Wrapped isolation failed: {res_wrap.stderr}")
             self.assertIn("INNER_ISOLATION_VERIFIED", res_wrap.stdout)
             self.assertNotIn("LEAK:", res_wrap.stdout)
