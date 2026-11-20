@@ -1757,6 +1757,247 @@ class TestPilotPr(unittest.TestCase):
         self.assertEqual(llmctl.expected_gtt(llmctl.ENDPOINTS["qwen32"], {"ctx": 65536, "np": 2}), 34.7)
         self.assertEqual(llmctl.expected_gtt(llmctl.ENDPOINTS["r1d32"], {"ctx": 65536, "np": 2}), 34.8)
 
+        # 4. Per-task wall budget default is floor(4320 / 7) == 617 s
+        self.assertEqual(pilot_pr.CEILING_SECONDS_DEFAULT, 4320)
+        self.assertEqual(pilot_pr.TASK_WALL_BUDGET_DEFAULT, 617)
+        self.assertIn("TASK_WALL_BUDGET=", run_sh_text)
+        self.assertIn("--task-wall-budget", run_sh_text)
+
+    def test_stub_truncation_guard_rejects_90_of_100_and_allows_move(self):
+        """Verify stub/truncation guard rejects replacing 90 of 100 lines with 1 line, but allows moving the same block into another file."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_stub_guard_")
+        try:
+            block_90 = "\n".join(f"item_row_{i} = {i * 17}" for i in range(90)) + "\n"
+            tail_10 = "\n".join(f"tail_row_{i} = {i}" for i in range(10)) + "\n"
+            src_path = os.path.join(temp_dir, "big_doc.py")
+            with open(src_path, "w", encoding="utf-8") as f:
+                f.write(block_90 + tail_10)
+
+            # 1. search_replace replacing 90 of 100 lines with 1 line -> REJECTED
+            sess1 = pilot_pr.ToolSession(temp_dir)
+            ok_stub, msg_stub, _ = sess1.execute({
+                "tool": "search_replace",
+                "args": {"path": "big_doc.py", "old": block_90, "new": "# stubbed\n"},
+            })
+            self.assertFalse(ok_stub)
+            self.assertIn("stub/truncation guard rejected", msg_stub)
+            # File must remain untouched on disk
+            with open(src_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), block_90 + tail_10)
+
+            # 2. create_file(overwrite=True, justification=...) truncating 100-line file to 1 line -> REJECTED
+            ok_ow_stub, msg_ow_stub, _ = sess1.execute({
+                "tool": "create_file",
+                "args": {
+                    "path": "big_doc.py",
+                    "content": "# stubbed\n",
+                    "overwrite": True,
+                    "justification": "Trying to replace the whole file with a one-line stub.",
+                },
+            })
+            self.assertFalse(ok_ow_stub)
+            self.assertIn("stub/truncation guard rejected", msg_ow_stub)
+
+            # 3. Cumulative multi-call truncation (30 + 30 lines removed = 60/100) -> REJECTED on second edit
+            chunk_a = "\n".join(f"item_row_{i} = {i * 17}" for i in range(30)) + "\n"
+            chunk_b = "\n".join(f"item_row_{i} = {i * 17}" for i in range(30, 60)) + "\n"
+            sess_cum = pilot_pr.ToolSession(temp_dir)
+            ok_c1, msg_c1, _ = sess_cum.execute({
+                "tool": "search_replace",
+                "args": {"path": "big_doc.py", "old": chunk_a, "new": ""},
+            })
+            self.assertTrue(ok_c1, msg_c1)
+            ok_c2, msg_c2, _ = sess_cum.execute({
+                "tool": "search_replace",
+                "args": {"path": "big_doc.py", "old": chunk_b, "new": ""},
+            })
+            self.assertFalse(ok_c2)
+            self.assertIn("stub/truncation guard rejected", msg_c2)
+
+            # Restore original file for move test
+            with open(src_path, "w", encoding="utf-8") as f:
+                f.write(block_90 + tail_10)
+
+            # 4. Move the exact same 90-line block into another file first, then remove from source -> ALLOWED
+            sess_move = pilot_pr.ToolSession(temp_dir)
+            ok_dest, msg_dest, _ = sess_move.execute({
+                "tool": "create_file",
+                "args": {"path": "moved_part.py", "content": block_90},
+            })
+            self.assertTrue(ok_dest, msg_dest)
+            ok_rm, msg_rm, _ = sess_move.execute({
+                "tool": "search_replace",
+                "args": {"path": "big_doc.py", "old": block_90, "new": "# moved to moved_part.py\n"},
+            })
+            self.assertTrue(ok_rm, msg_rm)
+            ok_fin, msg_fin = sess_move.check_no_unrelocated_truncations()
+            self.assertTrue(ok_fin, msg_fin)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_reachability_all_seven_reference_solutions(self):
+        """Verify all 7 merged PR reference solutions are reachable under real v2 tool limits, and check_reachability is never imported by pilot_pr."""
+        # Isolation invariant: pilot_pr must never import check_reachability
+        with open(os.path.join(HERE, "pilot_pr.py"), "r", encoding="utf-8") as f:
+            pilot_src = f.read()
+        self.assertNotIn("check_reachability", pilot_src)
+
+        import check_reachability  # noqa: E402
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        reports = check_reachability.check_all_tasks(repo_root=repo_root)
+        self.assertEqual(len(reports), 7)
+        for rep in reports:
+            self.assertTrue(
+                rep["reachable"],
+                f"Task {rep['task_id']} was NOT reachable under v2 tool limits: {rep['errors']}",
+            )
+            self.assertLessEqual(rep["overwrites_used"], pilot_pr.MAX_EXISTING_FILE_OVERWRITES)
+
+    def test_task_wall_budget_records_failure_and_continues(self):
+        """Verify hitting per-task wall budget records stop_reason='task_wall_budget', passed=False, preserves partial diff, and continues to next task."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_wall_budget_")
+        try:
+            # Simulated monotonic clock: advances 400 s per ask_fn call on item6_pr15, 10 s on item6_pr06
+            now = [0.0]
+
+            def fake_clock():
+                return now[0]
+
+            def timed_ask(messages, seed):
+                joined = pilot_pr.messages_to_text(messages)
+                if "Audit and fix stale lines" in joined:
+                    # First call takes 700 s (> 617 s per-task wall budget) after applying an edit
+                    now[0] += 700.0
+                    calls = [{"tool": "create_file", "args": {"path": "partial_pr15.txt", "content": "partial\n"}}]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+                # Second task (item6_pr06) finishes well within its own 617 s budget
+                now[0] += 10.0
+                calls = [
+                    {"tool": "create_file", "args": {"path": "ok_pr06.txt", "content": "done\n"}},
+                    {"tool": "finish", "args": {"summary": "done"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+
+            rows = pilot_pr.run_subcommand(
+                label="wall-budget-test",
+                tasks_arg="item6_pr15,item6_pr06",
+                max_turns=4,
+                task_wall_budget=617,
+                clock_fn=fake_clock,
+                results_dir=results_dir,
+                ask_fn=timed_ask,
+                token_counter=lambda m: 1000,
+            )
+            self.assertEqual(len(rows), 2)
+            by_id = {r["task_id"]: r for r in rows}
+
+            r15 = by_id["item6_pr15"]
+            self.assertFalse(r15["passed"])
+            self.assertEqual(r15["stop_reason"], "task_wall_budget")
+            self.assertEqual(r15["stop"], "task_wall_budget")
+            # Partial diff applied before wall budget expired is preserved for grading (matching max_turns/budget)
+            self.assertIn("partial_pr15.txt", r15["final_diff"])
+
+            # Second task still executed with its own fresh 617 s wall budget
+            r06 = by_id["item6_pr06"]
+            self.assertNotEqual(r06["stop_reason"], "task_wall_budget")
+            self.assertIn("ok_pr06.txt", r06["final_diff"])
+
+            # Also verify TimeoutError during ask_fn records task_wall_budget cleanly
+            temp_dir = tempfile.mkdtemp(prefix="pilot_wall_timeout_")
+            try:
+                subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+                subprocess.run(["git", "config", "user.name", "T"], cwd=temp_dir, check=True)
+                subprocess.run(["git", "config", "user.email", "t@t"], cwd=temp_dir, check=True)
+                with open(os.path.join(temp_dir, "x.txt"), "w") as f:
+                    f.write("hi\n")
+                subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+                subprocess.run(["git", "commit", "-m", "base"], cwd=temp_dir, check=True, capture_output=True)
+                base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=temp_dir, text=True).strip()
+                t_mock = {
+                    "id": "item6_timeout",
+                    "pr_number": 920,
+                    "title": "Timeout task",
+                    "base_commit": base_sha,
+                    "merged_commit": "4" * 40,
+                    "has_tests": False,
+                    "test_cmd": "",
+                    "prompt": "Update x.txt",
+                    "files": ["x.txt"],
+                }
+
+                def timeout_ask(messages, seed, timeout=None):
+                    raise TimeoutError("timed out")
+
+                timeout_ask._accepts_timeout = True
+                res_to = pilot_pr.run_task_loop(t_mock, timeout_ask, temp_dir, max_turns=4, task_wall_budget=617)
+                self.assertFalse(res_to["passed"])
+                self.assertEqual(res_to["stop_reason"], "task_wall_budget")
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+
+    def test_final_turn_note_fires_only_on_last_turn(self):
+        """Verify the final-turn note is shown to the model strictly on turn index max_turns - 1 (both normal and parse-error paths)."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_final_note_")
+        try:
+            subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "T"], cwd=temp_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "t@t"], cwd=temp_dir, check=True)
+            with open(os.path.join(temp_dir, "a.txt"), "w") as f:
+                f.write("line1\n")
+            subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=temp_dir, check=True, capture_output=True)
+            base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=temp_dir, text=True).strip()
+
+            task = {
+                "id": "item6_final_note",
+                "pr_number": 921,
+                "title": "Final note check",
+                "base_commit": base_sha,
+                "merged_commit": "5" * 40,
+                "has_tests": False,
+                "test_cmd": "",
+                "prompt": "Read a.txt",
+                "files": ["a.txt"],
+            }
+
+            # Case 1: Normal tool-call turns (max_turns=4 -> turns 0, 1, 2, 3)
+            saw_note = []
+            turn_n = [0]
+
+            def observe_turns(messages, seed):
+                t = turn_n[0]
+                turn_n[0] += 1
+                last_user = messages[-1]["content"] if messages else ""
+                saw_note.append("This is your final turn" in last_user)
+                calls = [{"tool": "read_file", "args": {"path": "a.txt", "start": 1, "end": t + 1}}]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 10}}
+
+            pilot_pr.run_task_loop(task, observe_turns, temp_dir, max_turns=4)
+            self.assertEqual(saw_note, [False, False, False, True])
+
+            # Case 2: Parse-error (no tool calls) on turn max_turns - 2 still delivers final-turn note on turn max_turns - 1
+            saw_note2 = []
+            turn_n2 = [0]
+
+            def observe_parse_err(messages, seed):
+                t = turn_n2[0]
+                turn_n2[0] += 1
+                last_user = messages[-1]["content"] if messages else ""
+                saw_note2.append("This is your final turn" in last_user)
+                if t == 1:
+                    # Emit unparseable prose on turn max_turns - 2 (turn 1 of 3)
+                    return {"content": "thinking without tool call", "usage": {"completion_tokens": 10}}
+                calls = [{"tool": "read_file", "args": {"path": "a.txt", "start": 1, "end": t + 1}}]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 10}}
+
+            pilot_pr.run_task_loop(task, observe_parse_err, temp_dir, max_turns=3)
+            self.assertEqual(saw_note2, [False, False, True])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

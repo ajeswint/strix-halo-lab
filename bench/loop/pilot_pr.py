@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,8 @@ SLOT_CTX_DEFAULT = 65536
 RESERVED_OUTPUT_TOKENS = MAX_TOKENS
 MAX_TURNS_DEFAULT = 12
 TASK_BUDGET_TOKENS = 32768
+CEILING_SECONDS_DEFAULT = 4320
+TASK_WALL_BUDGET_DEFAULT = CEILING_SECONDS_DEFAULT // 7  # 617 s per task across 7 tasks (7 * 617 = 4319 <= 4320)
 BUDGET_MESSAGE = "Reasoning budget reached. Output your tool call JSON block now."
 
 READ_FILE_MAX_LINES = 250
@@ -45,6 +48,9 @@ MAX_EXISTING_FILE_OVERWRITES = 1
 MIN_OVERWRITE_JUSTIFICATION_LEN = 15
 SEARCH_REPLACE_REWRITE_MIN_LINES = 80
 SEARCH_REPLACE_REWRITE_MAX_RATIO = 0.80
+STUB_GUARD_MIN_REMOVED_LINES = 40
+STUB_GUARD_MIN_REMOVED_RATIO = 0.50
+STUB_GUARD_MOVE_MATCH_MIN_RATIO = 0.50
 TOOL_RESULT_MAX_CHARS = 12000
 
 FIXED_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
@@ -653,8 +659,111 @@ def tool_read_file(worktree_dir, path, start=1, end=None, max_lines=READ_FILE_MA
     return True, f"{header}\n{body}"
 
 
-def tool_search_replace(worktree_dir, path, old, new):
-    """Apply an exact, unique search-and-replace edit to an existing confined file with a whole-file rewrite cap."""
+def _norm_rel_path(rel_path):
+    """Normalize a relative worktree path to forward slashes for set/dict keys."""
+    return os.path.normpath((rel_path or "").replace("\\", "/").strip()).replace(os.sep, "/")
+
+
+def _other_workspace_lines(worktree_dir, exclude_rel_path, touched_paths=None):
+    """Collect stripped non-empty lines from other created or edited files in worktree_dir."""
+    root_real = os.path.realpath(worktree_dir)
+    excl_norm = _norm_rel_path(exclude_rel_path)
+    rel_paths = set()
+
+    if touched_paths is not None:
+        for rp in touched_paths:
+            rel_paths.add(_norm_rel_path(rp))
+    else:
+        git_dir = os.path.join(root_real, ".git")
+        if os.path.isdir(git_dir):
+            res = subprocess.run(
+                ["git", "status", "--porcelain", "-uall"],
+                cwd=root_real,
+                env=build_minimal_env(),
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    if len(line) >= 4:
+                        p = line[3:].strip()
+                        if " -> " in p:
+                            p = p.split(" -> ", 1)[1]
+                        rel_paths.add(_norm_rel_path(p))
+        else:
+            for dirpath, dirnames, filenames in os.walk(root_real, followlinks=False):
+                dirnames[:] = [
+                    d for d in dirnames
+                    if d != ".git" and not os.path.islink(os.path.join(dirpath, d))
+                ]
+                for fn in filenames:
+                    full = os.path.join(dirpath, fn)
+                    if not os.path.islink(full):
+                        rel_paths.add(_norm_rel_path(os.path.relpath(full, root_real)))
+
+    lines = set()
+    for rp in rel_paths:
+        if rp == excl_norm:
+            continue
+        try:
+            full = resolve_confined_path(root_real, rp)
+        except ValueError:
+            continue
+        if os.path.isfile(full) and not os.path.islink(full):
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    for ln in f:
+                        s = ln.strip()
+                        if s:
+                            lines.add(s)
+            except OSError:
+                continue
+    return lines
+
+
+def check_stub_truncation(worktree_dir, rel_path, orig_content, new_content, touched_paths=None):
+    """Reject large unrelocated removals (stub/truncation pattern) while allowing genuine file splits/moves.
+
+    Triggers only when an existing file loses >= STUB_GUARD_MIN_REMOVED_LINES (40) net lines AND
+    >= STUB_GUARD_MIN_REMOVED_RATIO (50%) of its lines, AND fewer than STUB_GUARD_MOVE_MATCH_MIN_RATIO
+    (50%) of the removed substantive lines reappear in other files created or edited in the same task.
+    Returns (ok: bool, error_message: str).
+    """
+    orig_lines = orig_content.splitlines()
+    new_lines = new_content.splitlines()
+    total_orig = len(orig_lines)
+    if total_orig == 0:
+        return True, ""
+    net_removed = total_orig - len(new_lines)
+    if net_removed < STUB_GUARD_MIN_REMOVED_LINES:
+        return True, ""
+    removed_ratio = net_removed / total_orig
+    if removed_ratio < STUB_GUARD_MIN_REMOVED_RATIO:
+        return True, ""
+
+    new_set = {ln.strip() for ln in new_lines if ln.strip()}
+    removed_sig = [ln.strip() for ln in orig_lines if ln.strip() and ln.strip() not in new_set]
+    if len(removed_sig) < STUB_GUARD_MIN_REMOVED_LINES:
+        return True, ""
+
+    other_lines = _other_workspace_lines(worktree_dir, rel_path, touched_paths=touched_paths)
+    relocated = sum(1 for ln in removed_sig if ln in other_lines)
+    reloc_ratio = relocated / len(removed_sig)
+    if reloc_ratio < STUB_GUARD_MOVE_MATCH_MIN_RATIO:
+        pct = int(round(removed_ratio * 100))
+        return (
+            False,
+            f"stub/truncation guard rejected ({rel_path}): removing {net_removed}/{total_orig} lines ({pct}%) "
+            f"without relocating the removed content to other files in this task "
+            f"({relocated}/{len(removed_sig)} removed lines found in other created/edited files). "
+            f"If you are splitting or moving content out of {rel_path}, create or update the destination "
+            f"files first before removing the moved sections from {rel_path}.",
+        )
+    return True, ""
+
+
+def tool_search_replace(worktree_dir, path, old, new, base_content=None, touched_paths=None):
+    """Apply an exact, unique search-and-replace edit to an existing confined file with rewrite & stub guards."""
     try:
         full_path = resolve_confined_path(worktree_dir, path)
     except ValueError as e:
@@ -706,6 +815,14 @@ def tool_search_replace(worktree_dir, path, old, new):
         )
 
     updated = content.replace(old, new, 1)
+
+    ref_orig = base_content if base_content is not None else content
+    stub_ok, stub_err = check_stub_truncation(
+        worktree_dir, path, ref_orig, updated, touched_paths=touched_paths
+    )
+    if not stub_ok:
+        return False, stub_err
+
     try:
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(updated)
@@ -724,8 +841,10 @@ def tool_create_file(
     executable=False,
     overwrites_used=0,
     max_overwrites=MAX_EXISTING_FILE_OVERWRITES,
+    base_content=None,
+    touched_paths=None,
 ):
-    """Create a new confined file; reject overwriting existing files unless explicitly justified and within cap.
+    """Create a new confined file; reject overwriting existing files unless explicitly justified, within cap, and non-stub.
 
     Returns (ok: bool, message: str, overwrote_existing: bool).
     """
@@ -762,6 +881,19 @@ def tool_create_file(
                 f"({overwrites_used}/{max_overwrites} used in this task). Use search_replace for targeted edits.",
                 False,
             )
+        if base_content is not None:
+            ref_orig = base_content
+        else:
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    ref_orig = f.read()
+            except OSError:
+                ref_orig = ""
+        stub_ok, stub_err = check_stub_truncation(
+            worktree_dir, path, ref_orig, content, touched_paths=touched_paths
+        )
+        if not stub_ok:
+            return False, stub_err, False
 
     try:
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -786,6 +918,48 @@ class ToolSession:
         self.max_overwrites = max_overwrites
         self.overwrites_used = 0
         self.edits_applied = 0
+        self.touched_paths = set()
+        self.base_contents = {}
+
+    def _snapshot_base_if_existing(self, rel_path):
+        """Record original content of an existing confined file before its first edit in this task."""
+        norm = _norm_rel_path(rel_path)
+        if norm in self.base_contents:
+            return self.base_contents[norm]
+        try:
+            full = resolve_confined_path(self.worktree_dir, rel_path)
+        except ValueError:
+            return None
+        if os.path.isfile(full) and not os.path.islink(full):
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    data = f.read()
+                self.base_contents[norm] = data
+                return data
+            except OSError:
+                return None
+        return None
+
+    def check_no_unrelocated_truncations(self):
+        """Verify at finish time that no edited existing file was left truncated without relocated content."""
+        for norm, base_text in sorted(self.base_contents.items()):
+            try:
+                full = resolve_confined_path(self.worktree_dir, norm)
+            except ValueError:
+                continue
+            if not os.path.isfile(full) or os.path.islink(full):
+                continue
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    curr_text = f.read()
+            except OSError:
+                continue
+            ok, err = check_stub_truncation(
+                self.worktree_dir, norm, base_text, curr_text, touched_paths=self.touched_paths
+            )
+            if not ok:
+                return False, err
+        return True, ""
 
     def execute(self, call):
         """Execute one normalized tool call dict {'tool': str, 'args': dict}.
@@ -842,29 +1016,39 @@ class ToolSession:
             return ok, out, False
 
         if name == "search_replace":
+            rel_p = args.get("path", "")
+            base_c = self._snapshot_base_if_existing(rel_p)
             ok, out = tool_search_replace(
                 self.worktree_dir,
-                path=args.get("path", ""),
+                path=rel_p,
                 old=args.get("old"),
                 new=args.get("new"),
+                base_content=base_c,
+                touched_paths=self.touched_paths,
             )
             if ok:
                 self.edits_applied += 1
+                self.touched_paths.add(_norm_rel_path(rel_p))
             return ok, out, ok
 
         if name == "create_file":
+            rel_p = args.get("path", "")
+            base_c = self._snapshot_base_if_existing(rel_p)
             ok, out, overwrote = tool_create_file(
                 self.worktree_dir,
-                path=args.get("path", ""),
+                path=rel_p,
                 content=args.get("content"),
                 overwrite=bool(args.get("overwrite", False)),
                 justification=args.get("justification") or args.get("reason") or "",
                 executable=bool(args.get("executable", False)),
                 overwrites_used=self.overwrites_used,
                 max_overwrites=self.max_overwrites,
+                base_content=base_c,
+                touched_paths=self.touched_paths,
             )
             if ok:
                 self.edits_applied += 1
+                self.touched_paths.add(_norm_rel_path(rel_p))
                 if overwrote:
                     self.overwrites_used += 1
             return ok, out, ok
@@ -992,7 +1176,8 @@ def format_tool_messages(task, worktree_dir=None):
         '- `{"tool": "grep", "args": {"pattern": "regex", "path": "."}}`: search text files (path optional).\n'
         '- `{"tool": "read_file", "args": {"path": "rel/path", "start": 1, "end": 200}}`: read numbered lines (max 250 lines/call).\n'
         '- `{"tool": "search_replace", "args": {"path": "rel/path", "old": "exact unique text", "new": "replacement"}}`: '
-        "targeted edit on an existing file (`old` must match uniquely; whole-file rewrites of large files are rejected).\n"
+        "targeted edit on an existing file (`old` must match uniquely; whole-file rewrites of large files and "
+        "large unrelocated truncations >= 40 lines and >= 50% of a file are rejected — create destination files first when splitting/moving content).\n"
         '- `{"tool": "create_file", "args": {"path": "rel/path", "content": "...", "executable": false}}`: '
         "create a new file (refuses existing files unless `overwrite: true` and `justification` >= 15 chars, capped at 1 per task).\n"
         f"{test_tool_doc}"
@@ -1301,8 +1486,10 @@ def run_task_loop(
     slot_ctx=SLOT_CTX_DEFAULT,
     reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
     token_counter=None,
+    task_wall_budget=TASK_WALL_BUDGET_DEFAULT,
+    clock_fn=time.monotonic,
 ):
-    """Execute the v2 structured-edit tool loop with prompt-size preflight on a task in worktree_dir."""
+    """Execute the v2 structured-edit tool loop with prompt-size preflight and per-task wall budget."""
     clean_task = tasks_item6.strip_hidden(task)
     has_tests = bool(clean_task.get("has_tests"))
     messages = format_tool_messages(task, worktree_dir=worktree_dir)
@@ -1315,11 +1502,44 @@ def run_task_loop(
     accumulated_completion_tokens = 0
     stop_reason = "max_turns"
     final_passed = False
+    loop_start = clock_fn()
+    final_turn_note = "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
+
+    def _wall_elapsed():
+        return clock_fn() - loop_start
+
+    def _wall_exceeded():
+        return task_wall_budget is not None and task_wall_budget > 0 and _wall_elapsed() >= task_wall_budget
 
     for turn in range(max_turns):
         t0 = time.time()
-        check_prompt_leak(messages, task)
         seed = 6000 + clean_task["pr_number"] * 100 + turn
+
+        # Per-task wall budget check before sending request
+        if _wall_exceeded():
+            elapsed_w = _wall_elapsed()
+            stop_reason = "task_wall_budget"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": f"task wall budget exceeded ({elapsed_w:.1f}s >= {task_wall_budget}s)",
+                "stop": stop_reason,
+                "gen_s": 0.0,
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
+
+        # Attach final-turn notice directly to the active user prompt ONLY on the actual final turn (turn == max_turns - 1)
+        if max_turns > 1 and turn == max_turns - 1 and messages and messages[-1].get("role") == "user":
+            if final_turn_note.strip() not in (messages[-1].get("content") or ""):
+                messages[-1] = {
+                    "role": "user",
+                    "content": (messages[-1].get("content") or "") + final_turn_note,
+                }
+
+        check_prompt_leak(messages, task)
 
         # Prompt-size preflight before sending request to server
         fits, est_prompt_tokens, max_prompt_tokens = check_context_preflight(
@@ -1348,7 +1568,26 @@ def run_task_loop(
             break
 
         try:
-            reply = ask_fn(messages, seed)
+            if getattr(ask_fn, "_accepts_timeout", False) and task_wall_budget is not None and task_wall_budget > 0:
+                rem_timeout = max(1.0, float(task_wall_budget) - _wall_elapsed())
+                reply = ask_fn(messages, seed, timeout=rem_timeout)
+            else:
+                reply = ask_fn(messages, seed)
+        except (TimeoutError, socket.timeout) as e:
+            elapsed_w = _wall_elapsed()
+            stop_reason = "task_wall_budget"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": f"task wall budget timeout ({elapsed_w:.1f}s / {task_wall_budget}s): {e}",
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": est_prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
+            })
+            break
         except urllib.error.HTTPError as e:
             err_body = ""
             try:
@@ -1372,6 +1611,21 @@ def run_task_loop(
             })
             break
         except urllib.error.URLError as e:
+            if isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)) and _wall_exceeded():
+                elapsed_w = _wall_elapsed()
+                stop_reason = "task_wall_budget"
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": False,
+                    "err": f"task wall budget timeout ({elapsed_w:.1f}s / {task_wall_budget}s): {e.reason}",
+                    "stop": stop_reason,
+                    "gen_s": round(time.time() - t0, 2),
+                    "tokens": 0,
+                    "prompt_tokens": est_prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                })
+                break
             err_text = f"URL Error: {e.reason}"
             stop_reason = "context_overflow" if _is_context_overflow_error(err_text) else "request_error"
             history.append({
@@ -1452,7 +1706,12 @@ def run_task_loop(
             if accumulated_completion_tokens >= task_budget:
                 stop_reason = "budget"
                 break
-            messages.append({"role": "user", "content": f"Tool error: {err_msg}"})
+            if _wall_exceeded():
+                stop_reason = "task_wall_budget"
+                history[-1]["stop"] = stop_reason
+                break
+            if turn < max_turns - 1:
+                messages.append({"role": "user", "content": f"Tool error: {err_msg}"})
             continue
 
         result_lines = []
@@ -1512,8 +1771,12 @@ def run_task_loop(
 
         # Handle finish request
         if requested_finish:
+            stub_ok, stub_err = tool_session.check_no_unrelocated_truncations()
             curr_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
-            if not curr_diff.strip():
+            if not stub_ok:
+                turn_errors.append(stub_err)
+                result_lines.append(f"finish ERROR: {stub_err}")
+            elif not curr_diff.strip():
                 no_diff_err = "Cannot finish: git diff is empty. Apply edits with search_replace or create_file first."
                 turn_errors.append(no_diff_err)
                 result_lines.append(f"finish ERROR: {no_diff_err}")
@@ -1617,10 +1880,14 @@ def run_task_loop(
             stop_reason = "budget"
             break
 
-        feedback = "Tool results:\n" + "\n\n".join(result_lines)
-        if turn == max_turns - 2:
-            feedback += "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
-        messages.append({"role": "user", "content": feedback})
+        if _wall_exceeded():
+            stop_reason = "task_wall_budget"
+            history[-1]["stop"] = stop_reason
+            break
+
+        if turn < max_turns - 1:
+            feedback = "Tool results:\n" + "\n\n".join(result_lines)
+            messages.append({"role": "user", "content": feedback})
 
     # If the loop stopped on max_turns/budget after edits without a final test check, evaluate final state once
     if stop_reason in ("max_turns", "budget") and has_tests and dirty_since_last_test:
@@ -1640,7 +1907,7 @@ def run_task_loop(
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": False if stop_reason in ("context_overflow", "request_error") else final_passed,
+        "passed": False if stop_reason in ("context_overflow", "request_error", "task_wall_budget") else final_passed,
         "stop_reason": stop_reason,
         "stop": stop_reason,
         "turns_executed": len(history),
@@ -1830,10 +2097,10 @@ def server_info(api=None):
 
 
 def server_ask(model, api=None):
-    """Return an ask_fn(prompt_or_messages, seed) that queries /v1/chat/completions on the served model."""
+    """Return an ask_fn(prompt_or_messages, seed, timeout=3600) querying /v1/chat/completions on the served model."""
     api = api or API_URL
 
-    def ask(prompt_or_messages, seed):
+    def ask(prompt_or_messages, seed, timeout=3600):
         messages = (
             prompt_or_messages
             if isinstance(prompt_or_messages, list)
@@ -1854,7 +2121,8 @@ def server_ask(model, api=None):
             {"Content-Type": "application/json"},
         )
         t = time.time()
-        with urllib.request.urlopen(req, timeout=3600) as r:
+        req_timeout = max(1.0, float(timeout)) if timeout is not None else 3600.0
+        with urllib.request.urlopen(req, timeout=req_timeout) as r:
             resp = json.load(r)
         ch = resp["choices"][0]
         msg = ch.get("message") or {}
@@ -1867,6 +2135,7 @@ def server_ask(model, api=None):
             "gen_s": round(time.time() - t, 2),
         }
 
+    ask._accepts_timeout = True
     return ask
 
 
@@ -1901,6 +2170,7 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
                    task_budget=TASK_BUDGET_TOKENS, slot_ctx=None,
                    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
+                   task_wall_budget=TASK_WALL_BUDGET_DEFAULT, clock_fn=time.monotonic,
                    repo_root=None, results_dir=None, ask_fn=None, token_counter=None, resume=False):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
     resume = resume or (os.environ.get("RESUME") == "1")
@@ -1982,6 +2252,8 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 slot_ctx=eff_slot_ctx,
                 reserved_output_tokens=reserved_output_tokens,
                 token_counter=token_counter,
+                task_wall_budget=task_wall_budget,
+                clock_fn=clock_fn,
             )
         except AssertionError:
             raise
@@ -2438,6 +2710,7 @@ def main(argv=None):
     parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
     parser.add_argument("--slot-ctx", type=int, default=None, help="Per-slot context window (default from /props or 65536)")
     parser.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
+    parser.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     subparsers = parser.add_subparsers(dest="subcommand")
@@ -2451,6 +2724,7 @@ def main(argv=None):
     p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
     p_run.add_argument("--slot-ctx", type=int, default=None, help="Per-slot context window (default from /props or 65536)")
     p_run.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
+    p_run.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
@@ -2472,6 +2746,7 @@ def main(argv=None):
             task_budget=args.task_budget,
             slot_ctx=args.slot_ctx,
             reserved_output_tokens=args.reserved_output_tokens,
+            task_wall_budget=args.task_wall_budget,
             resume=getattr(args, "resume", False),
         )
         return 0

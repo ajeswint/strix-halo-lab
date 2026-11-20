@@ -26,6 +26,7 @@ INVITE_OPTS=(--ctx 65536 --np 1)
 PARALLEL=1
 SLOT_CTX=65536
 CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
+TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-$(( CEILING_SECONDS / 7 ))}" # floor(4320/7) = 617 s per task
 RESUME="${RESUME:-0}"
 
 # Refuse to overwrite frozen v1 results
@@ -173,7 +174,7 @@ for task_id in "${TASKS[@]}"; do
   echo "STEP_START ${LABEL} $task_id $(date -u +%FT%TZ) $t0"
   
   set +e
-  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label "$LABEL" --tasks "$task_id" --slot-ctx "$SLOT_CTX" --resume
+  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label "$LABEL" --tasks "$task_id" --slot-ctx "$SLOT_CTX" --task-wall-budget "$TASK_WALL_BUDGET" --resume
   step_rc=$?
   set -e
   if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
