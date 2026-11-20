@@ -82,6 +82,7 @@ class TestSignTestAndReport(unittest.TestCase):
         self.assertEqual(round(ground.sign_test_p(7, 1), 3), 0.035)
 
     def test_toy_report_verdicts(self):
+        self.assertEqual(ground.T_SENSITIVITY, 13)
         p_9_0 = ground.sign_test_p(9, 0)
         self.assertTrue(9 >= ground.T_NOISE and p_9_0 <= 0.05)
 

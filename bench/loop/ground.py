@@ -42,7 +42,7 @@ TEST_SEED = 5050
 K_REVISIONS = 3
 TASK_BUDGET = 4 * debate.MAX_TOKENS  # 24576 completion tokens per (task, seat)
 T_NOISE = 9                          # Pinned net threshold from Stage V
-T_SENSITIVITY = 12                   # Sensitivity line from cross-seed discordance
+T_SENSITIVITY = 13                   # Sensitivity line from cross-seed discordance (ceil(2.5*sqrt(90*0.267)) = 13)
 
 CHECK_ORDER = ("static", "visible", "model_tests")
 SELECTION_KEY = ("static_pass", "visible_pass", "model_pass", "first_wins")

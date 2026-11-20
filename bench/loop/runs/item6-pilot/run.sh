@@ -15,16 +15,25 @@
 set -euo pipefail
 
 WT="${WT:-<path-to-clean-worktree>}"
-DIR="${DIR:-/tmp/lab-seats/item6-pilot}"
+LABEL="${LABEL:-item6-pilot-v2}"
+DIR="${DIR:-/tmp/lab-seats/${LABEL}}"
 LOG="$DIR/run.log"
 EXPECT_HEAD="${EXPECT_HEAD:-<expected-git-commit-sha>}"
 PREREG_FILE="docs/item6-pilot.md"
 REMOTE_REF="${REMOTE_REF:-origin/main}"
 QWEN_MODEL_PATH="/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-INVITE_OPTS=(--ctx 65536 --np 2)
-PARALLEL=2
+INVITE_OPTS=(--ctx 65536 --np 1)
+PARALLEL=1
+SLOT_CTX=65536
 CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
+TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-$(( CEILING_SECONDS / 7 ))}" # floor(4320/7) = 617 s per task
 RESUME="${RESUME:-0}"
+
+# Refuse to overwrite frozen v1 results
+if [[ "$LABEL" == "item6-pilot" ]]; then
+  echo "ERROR: v1 results (label 'item6-pilot') are frozen and must not be overwritten; use LABEL=item6-pilot-v2" >&2
+  exit 1
+fi
 
 # Refuse to run when WT or EXPECT_HEAD is still the placeholder or empty
 if [[ -z "$WT" || "$WT" == "<path-to-clean-worktree>" || "$WT" == "<"*">" ]]; then
@@ -77,7 +86,7 @@ trap on_exit EXIT
 # 2. Pre-registered bar guard: verifies file is tracked, clean, committed, and reachable from pushed remote ref
 bash scripts/prereg-guard.sh --head "$PREREG_FILE" "$REMOTE_REF"
 
-# 3. Memory preflight check before model load (passes QWEN_MODEL_PATH so preflight checks model size + 16 GiB KV/buffer margin covering --ctx 65536 --np 2)
+# 3. Memory preflight check before model load (passes QWEN_MODEL_PATH so preflight checks model size + 16 GiB KV/buffer margin covering --ctx 65536 --np 1)
 preflight() {
   if ! command -v bwrap >/dev/null 2>&1; then
     echo "ERROR: bwrap (bubblewrap) is required for task selftest sandboxes (#6, #13, #16) but is not installed"
@@ -104,13 +113,13 @@ preflight() {
 }
 preflight
 
-# 4. Check served properties (2 slots x 32768 per slot)
+# 4. Check served properties (1 slot x 65536 per slot)
 check_props() {
   local out
   out=$(curl -s http://127.0.0.1:8081/props | python3 -c "import json,sys;p=json.load(sys.stdin);print('total_slots',p.get('total_slots'),'n_ctx',(p.get('default_generation_settings') or {}).get('n_ctx'),'build',p.get('build_info'))")
   echo "props: $out"
-  if [[ "$out" != "total_slots 2 n_ctx 32768 "* ]]; then
-    echo "ERROR: served shape is not 2 slots x 32768: $out"
+  if [[ "$out" != "total_slots 1 n_ctx 65536 "* ]]; then
+    echo "ERROR: served shape is not 1 slot x 65536: $out"
     return 1
   fi
 }
@@ -132,7 +141,7 @@ TASKS=(
   "item6_pr20"
 )
 
-RESULTS_FILE="bench/loop/results/item6-pilot.jsonl"
+RESULTS_FILE="bench/loop/results/${LABEL}.jsonl"
 if [[ "$RESUME" == "1" ]]; then
   echo "=== Resume mode active (RESUME=1): inspecting $RESULTS_FILE ==="
   if [[ -f "$RESULTS_FILE" ]]; then
@@ -162,10 +171,10 @@ for task_id in "${TASKS[@]}"; do
   fi
   echo "=== Starting task $task_id $(date -Iseconds) (remaining_ceiling=${remaining}s) ==="
   t0=$(date +%s.%N)
-  echo "STEP_START item6-pilot $task_id $(date -u +%FT%TZ) $t0"
+  echo "STEP_START ${LABEL} $task_id $(date -u +%FT%TZ) $t0"
   
   set +e
-  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label item6-pilot --tasks "$task_id" --resume
+  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label "$LABEL" --tasks "$task_id" --slot-ctx "$SLOT_CTX" --task-wall-budget "$TASK_WALL_BUDGET" --resume
   step_rc=$?
   set -e
   if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
@@ -178,8 +187,8 @@ for task_id in "${TASKS[@]}"; do
   fi
   
   t1=$(date +%s.%N)
-  echo "STEP_END item6-pilot $task_id $(date -u +%FT%TZ) $t1"
-  python3 -c "print('STEP_WALL item6-pilot $task_id %.1f s' % ($t1-$t0))"
+  echo "STEP_END ${LABEL} $task_id $(date -u +%FT%TZ) $t1"
+  python3 -c "print('STEP_WALL ${LABEL} $task_id %.1f s' % ($t1-$t0))"
   echo "=== Completed task $task_id $(date -Iseconds) ==="
 done
 
@@ -189,5 +198,5 @@ invited=0
 
 # 8. Offline grading and evaluation against reference diffs
 echo "=== Offline grading and report $(date -Iseconds) ==="
-python3 bench/loop/pilot_pr.py grade --label item6-pilot
-echo "=== Item 6 pilot completed $(date -Iseconds) ==="
+python3 bench/loop/pilot_pr.py grade --label "$LABEL"
+echo "=== Item 6 pilot (${LABEL}) completed $(date -Iseconds) ==="
