@@ -1,0 +1,114 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 93267ed..4e5e123 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -7,7 +7,7 @@ Machine state and the decision log: `README.md`. Full working rules: `CLAUDE.md`
+   2. **Relay**: the seat that is replying writes it. The code-writer seat's Relay is for the adversarial-reviewer to read. The adversarial-reviewer's Relay is for the code-writer to read. Short, pasteable as-is.
+   3. **Outline**: a nested outline of the Detail.
+ - Model seats (AJ, 2026-11-05 CT; replaces the 2026-11-06-dated Claude writer / Claude reviewer pair and, before it, the 2026-10-14 Claude-terminal writer / Grok-cloud reviewer pin, for drafts). Domain arms in `.claude/agents/` (systems, trainer, evaluator, red-team) stay. The writer does not review their own work. AJ still decides and runs sudo.
+-  - **code-writer = Google Antigravity, model Gemini 4 Argon, reasoning effort high** (drafts, commands, repo edits). Headless: `agy -p ... --model gemini-4-argon --effort high --dangerously-skip-permissions` via `tools/lab-seats/launch.sh`; interactive: the Antigravity App under `/home/aj/Applications/Antigravity`. The Claude writer (`claude -p --agent code-writer`) is closed; `.claude/agents/code-writer.md` is a stub. Operating rules: `docs/antigravity-writer.md`. The slug `gemini-4-argon` is unconfirmed until `agy models` runs signed in.
++  - **code-writer = Google Antigravity, model Gemini 3.8 Flash, reasoning effort high** (drafts, commands, repo edits). Headless: `agy -p ... --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions` via `tools/lab-seats/launch.sh`; interactive: the Antigravity App under `/home/aj/Applications/Antigravity`. The Claude writer (`claude -p --agent code-writer`) is closed; `.claude/agents/code-writer.md` is a stub. Operating rules: `docs/antigravity-writer.md`. The slug `gemini-3.8-flash-high` is unconfirmed until `agy models` runs signed in.
+   - **adversarial-reviewer = Claude Code, Sonnet, effort high** (reviews only; does not edit the draft). The reviewer's first line is `APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`. `APPROVE-WITH-NITS` does not block paste or the merge; soft nits are parked unless AJ asks for a chase. Ryzen Max Bot merges after an `APPROVE*` sign-off (details in `docs/review-roles.md`). The reviewer's no-write rule is a prompt rule, not enforced. Agent file: `.claude/agents/adversarial-reviewer.md`.
+   - Ryzen Max Bot (the Grok bot on this MAX) launches the writer as an `agy -p` one-shot and the reviewer as a `claude -p` one-shot, and relays. Scratch and wrappers: `/tmp/lab-seats/` via `tools/lab-seats/launch.sh`, cwd `/home/aj/projects/strix-halo-lab`. It does not write product code in place of the writer. Reviewer flags: `--model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer`.
+   - Antigravity reads this file (workspace-root `AGENTS.md`, always on; https://antigravity.google/docs/rules/) but not `CLAUDE.md`, so the writer rules that bind it are here:
+diff --git a/CLAUDE.md b/CLAUDE.md
+index bcd0bda..1777347 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -9,7 +9,7 @@
+ - Do not propose: Docker (podman is installed), Postgres (SQLite decided), Unsloth in the torch env, `download.pytorch.org` ROCm wheels, IOMMU off, GTT above 108 GiB.
+ - When installing into `/data/envs/torch` with the AMD wheel index, always add `--index-strategy unsafe-best-match` and the constraints file `envs/torch-constraints.txt`.
+ - Own errors plainly and correct forward.
+-- Review roles (who writes, who attacks, who judges): `docs/review-roles.md` (canonical; `AGENTS.md` is the seat pin). Standing seats since 2026-11-05 CT: `code-writer` is Google Antigravity (Gemini 4 Argon, effort high; rules in `docs/antigravity-writer.md`; the Claude writer is closed), `adversarial-reviewer` is Claude Code (Sonnet, effort high) and reviews only; both launched by Ryzen Max Bot through `tools/lab-seats/launch.sh`, which merges on `APPROVE*` (soft nits parked unless AJ asks). Full replies are Detail, then Relay, then Outline. `red-team` is a domain arm, not the adversarial-reviewer.
++- Review roles (who writes, who attacks, who judges): `docs/review-roles.md` (canonical; `AGENTS.md` is the seat pin). Standing seats since 2026-11-05 CT: `code-writer` is Google Antigravity (Gemini 3.8 Flash, effort high; rules in `docs/antigravity-writer.md`; the Claude writer is closed), `adversarial-reviewer` is Claude Code (Sonnet, effort high) and reviews only; both launched by Ryzen Max Bot through `tools/lab-seats/launch.sh`, which merges on `APPROVE*` (soft nits parked unless AJ asks). Full replies are Detail, then Relay, then Outline. `red-team` is a domain arm, not the adversarial-reviewer.
+ - Stay in this repo's scope (the Roadmap in docs/roadmap.md). Other projects (aj-ta-unreal, Unreal Engine, etc.) are separate sessions; flag before drifting.
+ - Install the entire stack for a step first, then test. Never test one component while other installs are pending or running.
+ - Model servers start and stop only through `scripts/llmctl.py` (sessions; `llm-serve` skill). Long clients (agent.py, run.py) run as `scripts/llmctl.py run -- ...` inside an ACTIVE session: that is the memory cap (2026-10-07: a 95 GiB python3 OOM-killed Cursor). Ending DeepSeek is the user's, at a terminal.
+diff --git a/README.md b/README.md
+index e0c5d48..5569e49 100644
+--- a/README.md
++++ b/README.md
+@@ -10,7 +10,7 @@ Working repo for a Framework Desktop (Ryzen AI Max+ 395 / Strix Halo, Radeon 806
+ 
+ - **Hardware & OS**: Framework Desktop (Ryzen AI Max+ 395, Radeon 8060S gfx1151, 128 GB unified LPDDR5X). Ubuntu 26.04.1 LTS, ROCm 10.0.0, GTT 108 GiB.
+ - **Serving & lifecycle**: Small models and RAG endpoints serve via `scripts/llmctl.py` sessions only. Memory preflight (`scripts/preflight.sh`) required before any load; NOT READY = stop. Never load beside DeepSeek (~85 GiB GTT).
+-- **Standing seats**: Code writer is Google Antigravity (`gemini-4-argon`, effort high); adversarial reviewer is Claude Code (Sonnet, effort high, reviews only). Relayed via `tools/lab-seats/launch.sh`.
++- **Standing seats**: Code writer is Google Antigravity (`gemini-3.8-flash-high`, effort high); adversarial reviewer is Claude Code (Sonnet, effort high, reviews only). Relayed via `tools/lab-seats/launch.sh`.
+ - **Repo constraints**: SQLite with one writer (WAL mode). No Docker (podman only), no Postgres, no Unsloth in the torch env, no GTT above 108 GiB.
+ 
+ ## Topic docs index
+diff --git a/docs/antigravity-writer.md b/docs/antigravity-writer.md
+index 5194887..be6b390 100644
+--- a/docs/antigravity-writer.md
++++ b/docs/antigravity-writer.md
+@@ -1,6 +1,6 @@
+ # Antigravity writer seat
+ 
+-The `code-writer` seat is Google Antigravity, model Gemini 4 Argon, reasoning effort high. Set by AJ 2026-11-05 CT (America/Chicago); the Claude Code writer (`claude -p --agent code-writer`, Sonnet) is closed. `docs/review-roles.md` is canonical for the roster; this file holds the writer's operating rules, because Antigravity does not read `.claude/agents/` or `CLAUDE.md` on its own. Antigravity's own docs list `AGENTS.md` at the workspace root as an always-on rules file, so `AGENTS.md` carries the binding writer rules in short and this file has the detail (https://antigravity.google/docs/rules/).
++The `code-writer` seat is Google Antigravity, model Gemini 3.8 Flash, reasoning effort high. Set by AJ 2026-11-05 CT (America/Chicago); the Claude Code writer (`claude -p --agent code-writer`, Sonnet) is closed. `docs/review-roles.md` is canonical for the roster; this file holds the writer's operating rules, because Antigravity does not read `.claude/agents/` or `CLAUDE.md` on its own. Antigravity's own docs list `AGENTS.md` at the workspace root as an always-on rules file, so `AGENTS.md` carries the binding writer rules in short and this file has the detail (https://antigravity.google/docs/rules/).
+ 
+ The adversarial-reviewer is unchanged: Claude Code, Sonnet, effort high, `.claude/agents/adversarial-reviewer.md`.
+ 
+@@ -8,8 +8,8 @@ The adversarial-reviewer is unchanged: Claude Code, Sonnet, effort high, `.claud
+ 
+ | Instance | What | Launched by |
+ |---|---|---|
+-| Headless one-shot | `agy` 1.5.1 at `/home/aj/.local/bin/agy`, `agy -p "..." --model gemini-4-argon --effort high --dangerously-skip-permissions` | `tools/lab-seats/launch.sh` (Ryzen Max Bot), cwd = the repo, output in `/tmp/lab-seats/NAME/writer-out.md` |
+-| Interactive App | Antigravity App v2.29.0 linux-x64, `/home/aj/Applications/Antigravity/antigravity` | AJ. Set model Gemini 4 Argon and effort High in the UI after sign-in. |
++| Headless one-shot | `agy` 1.5.1 at `/home/aj/.local/bin/agy`, `agy -p "..." --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions` | `tools/lab-seats/launch.sh` (Ryzen Max Bot), cwd = the repo, output in `/tmp/lab-seats/NAME/writer-out.md` |
++| Interactive App | Antigravity App v2.29.0 linux-x64, `/home/aj/Applications/Antigravity/antigravity` | AJ. Set model Gemini 3.8 Flash and effort High in the UI after sign-in. |
+ 
+ ## Verified, and not
+ 
+@@ -17,7 +17,7 @@ Verified on this MAX 2026-11-05 (CT), without signing in and without a model cal
+ 
+ - `agy --version` prints `1.5.1`. `agy --help` lists `-p/--print/--prompt`, `--model`, `--effort` (`low|medium|high|xhigh|max`), `--dangerously-skip-permissions`, `--print-timeout`, `--output-format`, `--sandbox`, `--settings`, `--agent`.
+ - `agy changelog` (1.5.0) names the models "Gemini 4 Argon and Gemini 3.8 Flash".
+-- `agy models` answers "Please sign in to view available models". So the model slug is **not confirmed**. `gemini-4-argon` is the launcher default and is overridable with `LAB_SEATS_WRITER_MODEL`. A wrong slug exits non-zero with no silent fallback (https://antigravity.google/docs/cli/headless), so the writer fails loudly, not on a different model.
++- `agy models` answers "Please sign in to view available models". So the model slug is **not confirmed**. `gemini-3.8-flash-high` is the launcher default and is overridable with `LAB_SEATS_WRITER_MODEL`. A wrong slug exits non-zero with no silent fallback (https://antigravity.google/docs/cli/headless), so the writer fails loudly, not on a different model.
+ - Print mode takes the prompt as the `-p` argument; stdin is used only with `--input-format stream-json` (same page). The launcher therefore passes the prompt inline and redirects stdin from `/dev/null`, and refuses a writer prompt over 100000 bytes (Linux caps one argument at 128 KiB).
+ 
+ Not verified (no sign-in, so no live one-shot has run): that the slug resolves, that `--effort high` is accepted with that model, how long a real writer run takes (the 3600 s default is unmeasured), host RAM of an `agy` run, and the App's behavior on rules files. `bash tools/lab-seats/test.sh` covers the launcher against a fake `agy`; it proves flags and sequencing, not the real CLI.
+diff --git a/docs/review-roles.md b/docs/review-roles.md
+index 866db89..a321b27 100644
+--- a/docs/review-roles.md
++++ b/docs/review-roles.md
+@@ -1,18 +1,18 @@
+ # Review roles
+ 
+ Source of truth for the roster, the reply format, and precedence. `CLAUDE.md` and `AGENTS.md` carry the same seat pin. If a roster line disagrees with this file, this file wins.
+-Updated 2026-11-05 CT (AJ, America/Chicago): the writer seat moved from Claude Code (Sonnet) to Google Antigravity, Gemini 4 Argon, effort high; the reviewer is unchanged. The earlier 2026-11-06-dated entry (Claude writer plus Claude reviewer) is superseded for the writer. The 2026-10-14 roster (kept below as history) is historical for drafts. The README decision log keeps its paragraph. `orchestrator/orch.py` on DeepSeek was not that cloud agent and is unchanged.
++Updated 2026-11-05 CT (AJ, America/Chicago): the writer seat moved from Claude Code (Sonnet) to Google Antigravity, Gemini 3.8 Flash, effort high; the reviewer is unchanged. The earlier 2026-11-06-dated entry (Claude writer plus Claude reviewer) is superseded for the writer. The 2026-10-14 roster (kept below as history) is historical for drafts. The README decision log keeps its paragraph. `orchestrator/orch.py` on DeepSeek was not that cloud agent and is unchanged.
+ 
+ ## Seats
+ 
+ | Seat | Who | Does |
+ |---|---|---|
+-| code-writer | Google Antigravity, model Gemini 4 Argon, reasoning effort high. Headless `agy` one-shot and the interactive App; rules in `docs/antigravity-writer.md`. `.claude/agents/code-writer.md` is a stub (not a Claude agent). | Drafts code, commands, and repo edits. Does not review its own draft. Works on a branch, stages named paths only, pushes only if the task says so (see Writer git rules). |
++| code-writer | Google Antigravity, model Gemini 3.8 Flash, reasoning effort high. Headless `agy` one-shot and the interactive App; rules in `docs/antigravity-writer.md`. `.claude/agents/code-writer.md` is a stub (not a Claude agent). | Drafts code, commands, and repo edits. Does not review its own draft. Works on a branch, stages named paths only, pushes only if the task says so (see Writer git rules). |
+ | adversarial-reviewer | Claude Code, Sonnet, effort high. `.claude/agents/adversarial-reviewer.md`. | Reviews only. Does not edit the draft. First line is `APPROVE`, `APPROVE-WITH-NITS`, or `REQUEST-CHANGES`. |
+ | Ryzen Max Bot | Grok bot on this MAX. | Launches the writer as an `agy -p` one-shot and the reviewer as a `claude -p` one-shot, relays, and merges the PR on an `APPROVE*` sign-off. Does not write product code in place of the writer. |
+ | User (AJ) | Human. | Final judge. Runs sudo and host actions. |
+ 
+-Gemini 4 Argon is the writer's model through Antigravity. That is not the benched "Gemini overseer" of the 2026-10-14 roster, which stays benched until AJ un-benches it and is not a draft seat.
++Gemini 3.8 Flash is the writer's model through Antigravity. That is not the benched "Gemini overseer" of the 2026-10-14 roster, which stays benched until AJ un-benches it and is not a draft seat.
+ 
+ Domain arms, invoked by name, are not these seats: `systems`, `trainer`, `evaluator`, `red-team`.
+ 
+@@ -53,14 +53,14 @@ tools/lab-seats/launch.sh --task "Read docs/review-roles.md and confirm the stan
+ That writes the scratch files under `/tmp/lab-seats/` and `nohup`s the launch script. The launch script runs the writer `agy -p` one-shot, then the reviewer `claude -p` one-shot. Flags:
+ 
+ ```
+-agy -p "PROMPT" --model gemini-4-argon --effort high --dangerously-skip-permissions
++agy -p "PROMPT" --model gemini-3.8-flash-high --effort high --dangerously-skip-permissions
+ ```
+ 
+ ```
+ claude -p --model sonnet --effort high --permission-mode bypassPermissions --agent adversarial-reviewer
+ ```
+ 
+-The first line is the shape; the launcher reads PROMPT from `writer-prompt.txt` (`agy -p` takes the prompt as an argument, not stdin; https://antigravity.google/docs/cli/headless). `gemini-4-argon` is the launcher default and is **unconfirmed**: `agy models` needs a sign-in. Override with `LAB_SEATS_WRITER_MODEL`; an unknown slug fails the writer non-zero, with no silent fallback. `--dangerously-skip-permissions` is there because headless `agy` has no prompt and soft-denies any tool without an allow rule (exit 0, nothing done); the reasoning and its cost are in `docs/antigravity-writer.md`.
++The first line is the shape; the launcher reads PROMPT from `writer-prompt.txt` (`agy -p` takes the prompt as an argument, not stdin; https://antigravity.google/docs/cli/headless). `gemini-3.8-flash-high` is the launcher default and is **unconfirmed**: `agy models` needs a sign-in. Override with `LAB_SEATS_WRITER_MODEL`; an unknown slug fails the writer non-zero, with no silent fallback. `--dangerously-skip-permissions` is there because headless `agy` has no prompt and soft-denies any tool without an allow rule (exit 0, nothing done); the reasoning and its cost are in `docs/antigravity-writer.md`.
+ 
+ `claude --bg` does not combine with `-p` (https://code.claude.com/docs/en/cli-reference). Standing automation is the nohup wrapper, not a background TUI panel. `effort: high` is also set in the reviewer's agent file (https://code.claude.com/docs/en/sub-agents).
+ 
