@@ -382,18 +382,133 @@ def check_context_preflight(
     return (prompt_tokens <= max_prompt_tokens), prompt_tokens, max_prompt_tokens
 
 
-def check_prompt_leak(prompt, task):
-    """Tripwire: assert no hidden fields, sentinels, or unredacted grading seeds appear in a prompt or message list."""
+class PromptLeakError(AssertionError):
+    """Raised by check_prompt_leak when hidden content, a per-run sentinel, or literal 104729 enters a prompt."""
+
+    def __init__(self, message, branch="unknown", leaked_prompt=None):
+        super().__init__(message)
+        self.branch = branch
+        self.leaked_prompt = leaked_prompt
+
+
+def generate_run_sentinel():
+    """Generate a random per-run sentinel token that cannot collide with repository text."""
+    return f"PILOT-RUN-SENTINEL-{secrets.token_hex(16)}"
+
+
+def default_run_dir(label):
+    """Return the default uncommitted run instrumentation directory under /tmp/lab-seats/<label>/."""
+    safe_label = re.sub(r"[^A-Za-z0-9._-]", "_", str(label or "item6-pilot-v2"))
+    return os.path.join("/tmp/lab-seats", safe_label)
+
+
+def _summarize_tool_args(tool_name, args):
+    """Return a compact dict of tool arguments (path/pattern and payload sizes) for per-turn logging."""
+    if not isinstance(args, dict):
+        return {}
+    summary = {}
+    for key in (
+        "path",
+        "pattern",
+        "glob",
+        "glob_pattern",
+        "start",
+        "end",
+        "max_matches",
+        "max_entries",
+        "overwrite",
+        "executable",
+    ):
+        if key in args and args[key] is not None:
+            summary[key] = args[key]
+    if "old" in args and isinstance(args["old"], str):
+        summary["old_chars"] = len(args["old"])
+    if "new" in args and isinstance(args["new"], str):
+        summary["new_chars"] = len(args["new"])
+    if "content" in args and isinstance(args["content"], str):
+        summary["content_chars"] = len(args["content"])
+    if "summary" in args and isinstance(args["summary"], str):
+        summary["summary_chars"] = len(args["summary"])
+    return summary
+
+
+def _safe_uncommitted_run_dir(run_dir, label=None, repo_root=None):
+    """Resolve run_dir and guarantee instrumentation/leak histories never write inside the git repo."""
+    if not run_dir:
+        return None
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+    real_run = os.path.realpath(run_dir)
+    real_repo = os.path.realpath(repo_root)
+    if real_run == real_repo or real_run.startswith(real_repo + os.sep):
+        return default_run_dir(label or "item6-pilot-v2")
+    return run_dir
+
+
+def _append_turn_log(run_dir, record, label=None, repo_root=None):
+    """Append one per-turn instrumentation JSON line into run_dir/turn_events.jsonl (never inside repo)."""
+    target_dir = _safe_uncommitted_run_dir(run_dir, label=label, repo_root=repo_root)
+    if not target_dir:
+        return None
+    os.makedirs(target_dir, exist_ok=True)
+    log_path = os.path.join(target_dir, "turn_events.jsonl")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    return log_path
+
+
+def _save_leak_history(run_dir, task_id, turn, leak_branch, messages, label=None, repo_root=None):
+    """Persist the leaked message history under run_dir (mode 0o600, never inside repo, never committed)."""
+    target_dir = _safe_uncommitted_run_dir(run_dir, label=label, repo_root=repo_root)
+    if not target_dir:
+        return None
+    os.makedirs(target_dir, exist_ok=True)
+    hist_path = os.path.join(target_dir, f"leak_history_{task_id}_turn{turn}.json")
+    payload = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "task_id": task_id,
+        "turn": turn,
+        "leak_branch": leak_branch,
+        "messages": messages,
+    }
+    fd = os.open(hist_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return hist_path
+
+
+def check_prompt_leak(prompt, task, run_sentinel=None):
+    """Tripwire: assert no hidden fields, per-run sentinel, or unredacted grading seed 104729 appear in a prompt or message list."""
     text = messages_to_text(prompt)
     for hidden_key in ("hidden_diff", "merged_commit"):
         if dict.__contains__(task, hidden_key):
             val = dict.__getitem__(task, hidden_key)
             if val and isinstance(val, str) and len(val) >= 7 and val in text:
-                raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!")
-    if "LEAK_SENTINEL" in text or "ORACLE-SENTINEL" in text:
-        raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
+                raise PromptLeakError(
+                    f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!",
+                    branch=hidden_key,
+                    leaked_prompt=prompt,
+                )
+    sentinels = []
+    if run_sentinel and isinstance(run_sentinel, str):
+        sentinels.append(run_sentinel)
+    if dict.__contains__(task, "hidden_sentinel"):
+        hs = dict.__getitem__(task, "hidden_sentinel")
+        if hs and isinstance(hs, str) and hs not in sentinels:
+            sentinels.append(hs)
+    for sentinel in sentinels:
+        if sentinel in text:
+            raise PromptLeakError(
+                "LEAK TRIPWIRE TRIGGERED: per-run sentinel string leaked into prompt!",
+                branch="run_sentinel",
+                leaked_prompt=prompt,
+            )
     if "104729" in text:
-        raise AssertionError("LEAK TRIPWIRE TRIGGERED: literal grading seed 104729 leaked into prompt!")
+        raise PromptLeakError(
+            "LEAK TRIPWIRE TRIGGERED: literal grading seed 104729 leaked into prompt!",
+            branch="grading_seed_104729",
+            leaked_prompt=prompt,
+        )
 
 
 def redact_grading_seed(text):
@@ -424,7 +539,7 @@ def build_worktree_context(task, worktree_dir, max_chars_per_file=12000):
     return "\n\n".join(sections)
 
 
-def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None):
+def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None, run_sentinel=None):
     """Format the turn prompt for the agentic loop.
 
     Never includes reference diffs or oracle solutions.
@@ -448,7 +563,7 @@ def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None)
             "- Or provide a valid unified git diff in a ```diff block.\n"
             "- Standard library or repository dependencies only; no unrequested subagents; no GPU work."
         )
-        check_prompt_leak(prompt, task)
+        check_prompt_leak(prompt, task, run_sentinel=run_sentinel)
         return prompt
 
     err_text = redact_grading_seed((test_error or "").strip())
@@ -461,7 +576,7 @@ def format_turn_prompt(task, last_code=None, test_error=None, worktree_dir=None)
         f"```\n{err_text}\n```\n\n"
         "Analyze the error, locate the cause, and output the corrected files or unified diff."
     )
-    check_prompt_leak(prompt, task)
+    check_prompt_leak(prompt, task, run_sentinel=run_sentinel)
     return prompt
 
 
@@ -1155,7 +1270,7 @@ def build_target_file_manifest(task, worktree_dir):
     return "\n".join(lines)
 
 
-def format_tool_messages(task, worktree_dir=None):
+def format_tool_messages(task, worktree_dir=None, run_sentinel=None):
     """Build initial [system, user] messages for the v2 structured-edit tool loop.
 
     Never includes reference diffs, merged commits, or full target-file dumps.
@@ -1205,7 +1320,7 @@ def format_tool_messages(task, worktree_dir=None):
         {"role": "system", "content": system_msg},
         {"role": "user", "content": user_msg},
     ]
-    check_prompt_leak(messages, task)
+    check_prompt_leak(messages, task, run_sentinel=run_sentinel)
     return messages
 
 
@@ -1488,11 +1603,66 @@ def run_task_loop(
     token_counter=None,
     task_wall_budget=TASK_WALL_BUDGET_DEFAULT,
     clock_fn=time.monotonic,
+    run_sentinel=None,
+    run_dir=None,
+    label=None,
+    repo_root=None,
 ):
-    """Execute the v2 structured-edit tool loop with prompt-size preflight and per-task wall budget."""
+    """Execute the v2 structured-edit tool loop with prompt-size preflight, per-task wall budget, and instrumentation."""
     clean_task = tasks_item6.strip_hidden(task)
     has_tests = bool(clean_task.get("has_tests"))
-    messages = format_tool_messages(task, worktree_dir=worktree_dir)
+    leak_branch = None
+    try:
+        messages = format_tool_messages(task, worktree_dir=worktree_dir, run_sentinel=run_sentinel)
+    except PromptLeakError as exc:
+        leak_branch = exc.branch
+        if run_dir:
+            hist_file = _save_leak_history(
+                run_dir, clean_task["id"], 0, leak_branch, exc.leaked_prompt, label=label, repo_root=repo_root
+            )
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": 0,
+                    "event": "prompt_leak",
+                    "leak_branch": leak_branch,
+                    "message": str(exc),
+                    "history_file": hist_file,
+                },
+                label=label,
+                repo_root=repo_root,
+            )
+        final_diff = (
+            capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+            if os.path.isdir(os.path.join(worktree_dir, ".git"))
+            else ""
+        )
+        return {
+            "task_id": clean_task["id"],
+            "pr_number": clean_task["pr_number"],
+            "has_tests": has_tests,
+            "passed": False,
+            "stop_reason": "prompt_leak",
+            "stop": "prompt_leak",
+            "leak_branch": leak_branch,
+            "turns_executed": 1,
+            "history": [{
+                "turn": 0,
+                "seed": 6000 + clean_task["pr_number"] * 100,
+                "passed": False,
+                "err": str(exc),
+                "stop": "prompt_leak",
+                "leak_branch": leak_branch,
+                "gen_s": 0.0,
+                "tokens": 0,
+                "prompt_tokens": 0,
+            }],
+            "total_completion_tokens": 0,
+            "final_diff": final_diff,
+        }
+
     tool_session = ToolSession(worktree_dir)
     history = []
     seen_code_hashes = set()
@@ -1539,7 +1709,41 @@ def run_task_loop(
                     "content": (messages[-1].get("content") or "") + final_turn_note,
                 }
 
-        check_prompt_leak(messages, task)
+        try:
+            check_prompt_leak(messages, task, run_sentinel=run_sentinel)
+        except PromptLeakError as exc:
+            leak_branch = exc.branch
+            if run_dir:
+                hist_file = _save_leak_history(
+                    run_dir, clean_task["id"], turn, leak_branch, messages, label=label, repo_root=repo_root
+                )
+                _append_turn_log(
+                    run_dir,
+                    {
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "task_id": clean_task["id"],
+                        "turn": turn,
+                        "event": "prompt_leak",
+                        "leak_branch": leak_branch,
+                        "message": str(exc),
+                        "history_file": hist_file,
+                    },
+                    label=label,
+                    repo_root=repo_root,
+                )
+            stop_reason = "prompt_leak"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": str(exc),
+                "stop": stop_reason,
+                "leak_branch": leak_branch,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": 0,
+            })
+            break
 
         # Prompt-size preflight before sending request to server
         fits, est_prompt_tokens, max_prompt_tokens = check_context_preflight(
@@ -1677,6 +1881,22 @@ def run_task_loop(
                 if parse_errors
                 else "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
             )
+            if run_dir:
+                _append_turn_log(
+                    run_dir,
+                    {
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "task_id": clean_task["id"],
+                        "turn": turn,
+                        "event": "turn_parse_error",
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": comp_tokens,
+                        "tools": [],
+                        "result_chars": len(err_msg),
+                    },
+                    label=label,
+                    repo_root=repo_root,
+                )
             if last_turn_err is not None and err_msg.strip() == last_turn_err.strip():
                 history.append({
                     "turn": turn,
@@ -1719,6 +1939,7 @@ def run_task_loop(
             result_lines.append("Parse warnings: " + "; ".join(parse_errors))
 
         call_summaries = []
+        turn_tool_events = []
         any_edit_ok = False
         any_tool_ok = False
         turn_errors = []
@@ -1729,14 +1950,17 @@ def run_task_loop(
 
         for idx, call in enumerate(calls, start=1):
             tname = call.get("tool", "")
+            targs_summary = _summarize_tool_args(tname, call.get("args") or {})
             if tname == "finish":
                 requested_finish = True
                 call_summaries.append({"tool": "finish", "ok": True})
+                turn_tool_events.append({"tool": "finish", "args": targs_summary, "ok": True, "result_chars": 0})
                 continue
             if tname == "run_tests":
                 if not has_tests:
                     msg = "This task has no automated test command; call finish when your edits are complete."
                     call_summaries.append({"tool": "run_tests", "ok": True})
+                    turn_tool_events.append({"tool": "run_tests", "args": targs_summary, "ok": True, "result_chars": len(msg)})
                     result_lines.append(f"[{idx}] run_tests: {msg}")
                     any_tool_ok = True
                     continue
@@ -1749,6 +1973,7 @@ def run_task_loop(
                 test_out_this_turn = t_out_clean
                 dirty_since_last_test = False
                 call_summaries.append({"tool": "run_tests", "ok": t_ok})
+                turn_tool_events.append({"tool": "run_tests", "args": targs_summary, "ok": t_ok, "result_chars": len(t_out_clean)})
                 if t_ok:
                     any_tool_ok = True
                     result_lines.append(f"[{idx}] run_tests PASSED:\n{t_out_clean}")
@@ -1759,6 +1984,7 @@ def run_task_loop(
 
             ok, out, is_edit = tool_session.execute(call)
             call_summaries.append({"tool": tname, "ok": ok})
+            turn_tool_events.append({"tool": tname, "args": targs_summary, "ok": ok, "result_chars": len(out or "")})
             if ok:
                 any_tool_ok = True
                 if is_edit:
@@ -1768,6 +1994,22 @@ def run_task_loop(
             else:
                 turn_errors.append(out)
                 result_lines.append(f"[{idx}] {tname} ERROR:\n{_truncate_tool_output(out)}")
+
+        if run_dir:
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": turn,
+                    "event": "turn_tools",
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": comp_tokens,
+                    "tools": turn_tool_events,
+                },
+                label=label,
+                repo_root=repo_root,
+            )
 
         # Handle finish request
         if requested_finish:
@@ -1903,11 +2145,11 @@ def run_task_loop(
     else:
         final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
 
-    return {
+    out_res = {
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": False if stop_reason in ("context_overflow", "request_error", "task_wall_budget") else final_passed,
+        "passed": False if stop_reason in ("context_overflow", "request_error", "task_wall_budget", "prompt_leak") else final_passed,
         "stop_reason": stop_reason,
         "stop": stop_reason,
         "turns_executed": len(history),
@@ -1915,6 +2157,9 @@ def run_task_loop(
         "total_completion_tokens": accumulated_completion_tokens,
         "final_diff": final_diff,
     }
+    if leak_branch is not None:
+        out_res["leak_branch"] = leak_branch
+    return out_res
 
 
 def selftest():
@@ -2171,7 +2416,8 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                    task_budget=TASK_BUDGET_TOKENS, slot_ctx=None,
                    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
                    task_wall_budget=TASK_WALL_BUDGET_DEFAULT, clock_fn=time.monotonic,
-                   repo_root=None, results_dir=None, ask_fn=None, token_counter=None, resume=False):
+                   repo_root=None, results_dir=None, ask_fn=None, token_counter=None, resume=False,
+                   run_dir=None, run_sentinel=None, tasks_override=None):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
     resume = resume or (os.environ.get("RESUME") == "1")
     if repo_root is None:
@@ -2183,7 +2429,12 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
     os.makedirs(diffs_dir, exist_ok=True)
     jsonl_path = os.path.join(results_dir, f"{label}.jsonl")
 
-    all_tasks = tasks_item6.load_tasks()
+    if run_sentinel is None:
+        run_sentinel = generate_run_sentinel()
+    if run_dir is None and ask_fn is None:
+        run_dir = default_run_dir(label)
+
+    all_tasks = tasks_override if tasks_override is not None else tasks_item6.load_tasks()
     if tasks_arg:
         want = [x.strip() for x in tasks_arg.split(",") if x.strip()]
         by_id = {t["id"]: t for t in all_tasks}
@@ -2215,7 +2466,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 if line.strip():
                     row = json.loads(line)
                     existing_by_id[row["task_id"]] = row
-                    existing_raw_by_id[row["task_id"]] = line.strip()
+                    existing_raw_by_id[row["task_id"]] = line.rstrip("\r\n")
 
     if resume:
         selected_tasks = [t for t in selected_tasks if tasks_item6.strip_hidden(t)["id"] not in existing_by_id]
@@ -2239,12 +2490,22 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         clean_task = tasks_item6.strip_hidden(task)
         task_id = clean_task["id"]
         base_sha = clean_task["base_commit"]
+        # Hidden fields are attached solely for check_prompt_leak; run_task_loop immediately strips them for model prompts
+        guard_task = dict(clean_task)
+        if dict.__contains__(task, "merged_commit"):
+            guard_task["merged_commit"] = dict.__getitem__(task, "merged_commit")
+        if dict.__contains__(task, "hidden_diff"):
+            guard_task["hidden_diff"] = dict.__getitem__(task, "hidden_diff")
+        elif "merged_commit" in guard_task:
+            guard_task["hidden_diff"] = tasks_item6.get_hidden_diff(task, repo_root=repo_root)
+        guard_task["hidden_sentinel"] = run_sentinel
+
         wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
         t_start = time.time()
         try:
             create_isolated_scratch_repo(repo_root, base_sha, wt_dir)
             res = run_task_loop(
-                clean_task,
+                guard_task,
                 ask_fn,
                 wt_dir,
                 max_turns=max_turns,
@@ -2254,11 +2515,55 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 token_counter=token_counter,
                 task_wall_budget=task_wall_budget,
                 clock_fn=clock_fn,
+                run_sentinel=run_sentinel,
+                run_dir=run_dir,
+                label=label,
+                repo_root=repo_root,
             )
-        except AssertionError:
-            raise
+        except PromptLeakError as exc:
+            partial_diff = (
+                capture_worktree_diff(wt_dir, base_sha)
+                if os.path.isdir(os.path.join(wt_dir, ".git"))
+                else ""
+            )
+            if run_dir:
+                hist_file = _save_leak_history(
+                    run_dir, task_id, 0, exc.branch, exc.leaked_prompt, label=label, repo_root=repo_root
+                )
+                _append_turn_log(
+                    run_dir,
+                    {
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "task_id": task_id,
+                        "turn": 0,
+                        "event": "prompt_leak",
+                        "leak_branch": exc.branch,
+                        "message": str(exc),
+                        "history_file": hist_file,
+                    },
+                    label=label,
+                    repo_root=repo_root,
+                )
+            res = {
+                "task_id": task_id,
+                "pr_number": clean_task["pr_number"],
+                "has_tests": bool(clean_task.get("has_tests")),
+                "passed": False,
+                "stop_reason": "prompt_leak",
+                "stop": "prompt_leak",
+                "leak_branch": exc.branch,
+                "turns_executed": 1,
+                "history": [{"turn": 0, "passed": False, "err": str(exc), "stop": "prompt_leak", "leak_branch": exc.branch}],
+                "total_completion_tokens": 0,
+                "final_diff": partial_diff,
+            }
         except Exception as exc:
-            # Isolate per-task failures so one task never aborts the remaining tasks
+            # Isolate per-task failures (including AssertionError) so one task never aborts the remaining tasks
+            partial_diff = (
+                capture_worktree_diff(wt_dir, base_sha)
+                if os.path.isdir(os.path.join(wt_dir, ".git"))
+                else ""
+            )
             res = {
                 "task_id": task_id,
                 "pr_number": clean_task["pr_number"],
@@ -2269,7 +2574,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 "turns_executed": 0,
                 "history": [{"turn": 0, "passed": False, "err": f"{type(exc).__name__}: {exc}", "stop": "task_error"}],
                 "total_completion_tokens": 0,
-                "final_diff": "",
+                "final_diff": partial_diff,
             }
         finally:
             if os.path.exists(wt_dir):
@@ -2712,6 +3017,7 @@ def main(argv=None):
     parser.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
     parser.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
+    parser.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
@@ -2726,6 +3032,7 @@ def main(argv=None):
     p_run.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
     p_run.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
+    p_run.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
     p_grade.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
@@ -2748,6 +3055,7 @@ def main(argv=None):
             reserved_output_tokens=args.reserved_output_tokens,
             task_wall_budget=args.task_wall_budget,
             resume=getattr(args, "resume", False),
+            run_dir=getattr(args, "run_dir", None),
         )
         return 0
 

@@ -26,7 +26,7 @@ INVITE_OPTS=(--ctx 65536 --np 1)
 PARALLEL=1
 SLOT_CTX=65536
 CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
-TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-$(( CEILING_SECONDS / 7 ))}" # floor(4320/7) = 617 s per task
+TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-617}" # floor(4320/7) = 617 s per task (fixed across full and resume runs)
 RESUME="${RESUME:-0}"
 
 # Refuse to overwrite frozen v1 results
@@ -131,7 +131,7 @@ invited=1
 check_props
 
 # 6. Run the 7 PR tasks through the feedback loop
-TASKS=(
+ALL_TASKS=(
   "item6_pr06"
   "item6_pr08"
   "item6_pr13"
@@ -140,14 +140,43 @@ TASKS=(
   "item6_pr16"
   "item6_pr20"
 )
+TASKS=("${ALL_TASKS[@]}")
+
+check_results_complete() {
+  local results_file="$1"
+  shift
+  python3 - "$results_file" "$@" <<'PY'
+import json, os, sys
+results_file = sys.argv[1]
+expected = sys.argv[2:]
+present = set()
+if os.path.exists(results_file):
+    with open(results_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                tid = row.get("task_id")
+                if tid:
+                    present.add(tid)
+            except json.JSONDecodeError:
+                pass
+missing = [tid for tid in expected if tid not in present]
+if missing:
+    print(",".join(missing))
+    sys.exit(1)
+PY
+}
 
 RESULTS_FILE="bench/loop/results/${LABEL}.jsonl"
 if [[ "$RESUME" == "1" ]]; then
   echo "=== Resume mode active (RESUME=1): inspecting $RESULTS_FILE ==="
   if [[ -f "$RESULTS_FILE" ]]; then
     filtered_tasks=()
-    for task_id in "${TASKS[@]}"; do
-      if grep -q "\"task_id\": \"$task_id\"" "$RESULTS_FILE" 2>/dev/null; then
+    for task_id in "${ALL_TASKS[@]}"; do
+      if check_results_complete "$RESULTS_FILE" "$task_id" >/dev/null 2>&1; then
         echo "RESUME: skipping already completed task $task_id"
       else
         echo "RESUME: queuing missing task $task_id"
@@ -161,42 +190,56 @@ fi
 
 export PYTHONUNBUFFERED=1
 gpu_start=$(date +%s)
-for task_id in "${TASKS[@]}"; do
-  elapsed=$(( $(date +%s) - gpu_start ))
-  remaining=$(( CEILING_SECONDS - elapsed ))
-  if [[ $remaining -le 0 ]]; then
-    echo "incomplete ceiling_exceeded wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
-    echo "ERROR: GPU run exceeded the 1.2 h ceiling (${CEILING_SECONDS}s) before task $task_id; stopping and recording incomplete run."
-    exit 124
-  fi
-  echo "=== Starting task $task_id $(date -Iseconds) (remaining_ceiling=${remaining}s) ==="
-  t0=$(date +%s.%N)
-  echo "STEP_START ${LABEL} $task_id $(date -u +%FT%TZ) $t0"
-  
-  set +e
-  timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label "$LABEL" --tasks "$task_id" --slot-ctx "$SLOT_CTX" --task-wall-budget "$TASK_WALL_BUDGET" --resume
-  step_rc=$?
-  set -e
-  if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
+if [[ ${#TASKS[@]} -gt 0 ]]; then
+  for task_id in "${TASKS[@]}"; do
     elapsed=$(( $(date +%s) - gpu_start ))
-    echo "incomplete ceiling_exceeded task=$task_id wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
-    echo "ERROR: GPU run hit the 1.2 h ceiling (${CEILING_SECONDS}s) during task $task_id (rc=$step_rc); stopping and recording incomplete run."
-    exit 124
-  elif [[ $step_rc -ne 0 ]]; then
-    echo "ERROR: task $task_id exited with rc=$step_rc (continuing to next task)"
-  fi
-  
-  t1=$(date +%s.%N)
-  echo "STEP_END ${LABEL} $task_id $(date -u +%FT%TZ) $t1"
-  python3 -c "print('STEP_WALL ${LABEL} $task_id %.1f s' % ($t1-$t0))"
-  echo "=== Completed task $task_id $(date -Iseconds) ==="
-done
+    remaining=$(( CEILING_SECONDS - elapsed ))
+    if [[ $remaining -le 0 ]]; then
+      echo "incomplete ceiling_exceeded wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
+      echo "ERROR: GPU run exceeded the 1.2 h ceiling (${CEILING_SECONDS}s) before task $task_id; stopping and recording incomplete run."
+      exit 124
+    fi
+    echo "=== Starting task $task_id $(date -Iseconds) (remaining_ceiling=${remaining}s) ==="
+    t0=$(date +%s.%N)
+    echo "STEP_START ${LABEL} $task_id $(date -u +%FT%TZ) $t0"
+
+    set +e
+    timeout --kill-after=30 "$remaining" scripts/llmctl.py run -- python3 bench/loop/pilot_pr.py run --label "$LABEL" --tasks "$task_id" --slot-ctx "$SLOT_CTX" --task-wall-budget "$TASK_WALL_BUDGET" --run-dir "$DIR" --resume
+    step_rc=$?
+    set -e
+    if [[ $step_rc -eq 124 || $step_rc -eq 137 ]]; then
+      elapsed=$(( $(date +%s) - gpu_start ))
+      echo "incomplete ceiling_exceeded task=$task_id wall_s=$elapsed ceiling_s=$CEILING_SECONDS end=$(date -Iseconds)" > "$DIR/run.status"
+      echo "ERROR: GPU run hit the 1.2 h ceiling (${CEILING_SECONDS}s) during task $task_id (rc=$step_rc); stopping and recording incomplete run."
+      exit 124
+    elif [[ $step_rc -ne 0 ]]; then
+      echo "ERROR: task $task_id exited with rc=$step_rc (continuing to next task)"
+    fi
+
+    t1=$(date +%s.%N)
+    echo "STEP_END ${LABEL} $task_id $(date -u +%FT%TZ) $t1"
+    python3 -c "print('STEP_WALL ${LABEL} $task_id %.1f s' % ($t1-$t0))"
+    echo "=== Completed task $task_id $(date -Iseconds) ==="
+  done
+fi
 
 # 7. End model session
 scripts/llmctl.py bye
 invited=0
 
-# 8. Offline grading and evaluation against reference diffs
+# 8. Completeness check: verify results jsonl contains every expected task id
+set +e
+missing_ids=$(check_results_complete "$RESULTS_FILE" "${ALL_TASKS[@]}")
+complete_rc=$?
+set -e
+if [[ $complete_rc -ne 0 ]]; then
+  wall_now=$(( $(date +%s) - start ))
+  echo "incomplete missing=${missing_ids} wall_s=${wall_now} end=$(date -Iseconds)" > "$DIR/run.status"
+  echo "ERROR: results file $RESULTS_FILE is missing expected task ids: ${missing_ids}"
+  exit 1
+fi
+
+# 9. Offline grading and evaluation against reference diffs
 echo "=== Offline grading and report $(date -Iseconds) ==="
 python3 bench/loop/pilot_pr.py grade --label "$LABEL"
 echo "=== Item 6 pilot (${LABEL}) completed $(date -Iseconds) ==="
