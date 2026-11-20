@@ -67,22 +67,39 @@ class Endpoint:
     test_only: bool = False
     preflight: tuple = ()         # test-only override of the preflight argv
     ctx: int = 32768              # default --ctx when invite does not give one (llm-serve.sh uses the same defaults)
+    gtt_by_ctx_np: tuple = ()     # optional ((ctx, np, gtt_need_gib), ...) measured deltas for non-default shapes
+
+
+def expected_gtt(ep, opts):
+    """Return the expected GTT delta (GiB) for ep at the requested (ctx, np) shape."""
+    ctx = opts["ctx"] if opts.get("ctx") is not None else ep.ctx
+    np_ = opts.get("np", 1)
+    for c, n, g in ep.gtt_by_ctx_np:
+        if c == ctx and n == np_:
+            return g
+    return ep.gtt_need
 
 
 # gtt_need is a delta (absolute GTT carries the ~5.8 GiB non-llama client). Measured 2026-10-07 (invite, sampler max):
-# qwen +22.4 at ctx 65536 np 4 (28.2 over 5.8; the stale Qwen ended earlier: 28.3), file 20.8; deepseek +85.5
-# (91.1 over 5.8 now, 91.47 peak over 5.8 in the v3 fixer run), file 84.7; laguna +20.7 at ctx 32768 np 1 (21.17
-# over 0.52 idle, 2026-10-05 smoke), file 19.1. KV cache and buffers grow with ctx and np.
+# qwen +22.4 at ctx 65536 np 4 (28.2 over 5.8; the stale Qwen ended earlier: 28.3), file 20.8; measured 2026-11-18
+# (item6-pilot run 1, vk, ctx 65536 np 2): +22.3 (23.5 over 1.2); ctx 65536 np 1 uses the same 65536-token KV pool
+# (unmeasured directly, expected ~22.3-22.4). deepseek +85.5 (91.1 over 5.8 now, 91.47 peak over 5.8 in the v3 fixer
+# run), file 84.7; laguna +20.7 at ctx 32768 np 1 (21.17 over 0.52 idle, 2026-10-05 smoke), file 19.1. KV cache and
+# buffers grow with ctx and np.
 ENDPOINTS = {e.name: e for e in (
-    Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22.4, serve="qwen"),
+    Endpoint("qwen", "user", "llm-8081", 8081, "/data/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22.4, serve="qwen",
+             ctx=65536, gtt_by_ctx_np=((65536, 2, 22.3), (65536, 4, 22.4))),
     Endpoint("laguna", "user", "llm-8081", 8081, "/data/models/Laguna-XS-2.1-Q4_K_M.gguf", 20.7, serve="laguna"),
     # CRAwDAD pair + RAGs: measured 2026-10-15 by scripts/first-load.sh (invite note at /health, vk, default ctx,
     # np 1, baseline 7.3 GiB, llama.cpp v0.7.0): qwen32 +26.7, r1d32 +26.8 (ctx 32768), rag1 +2.3, rag2 +1.8,
     # rerank +7.3 (ctx 8192). The estimates were 27.9 / 28.0 / 2.0 / 1.0 / 6.6. rag2 --backend cpu adds +0.0 (RAM).
     # One sample at /health, not a sampler max; GTT after the probe's requests was within 0.07 GiB of it.
-    Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 26.7, serve="qwen32"),
+    # 2-slot 64k shapes measured 2026-11-17 (crawdad-par-probe-v1 / crawdad-v8-d2p2, vk, ctx 65536 np 2, baseline
+    # 1.2 GiB): qwen32 +34.7 (35.9 over 1.2), r1d32 +34.8 (36.0 over 1.2).
+    Endpoint("qwen32", "user", "llm-8081", 8081, "/data/models/Qwen3-32B-Q4_K_M.gguf", 26.7, serve="qwen32",
+             gtt_by_ctx_np=((65536, 2, 34.7),)),
     Endpoint("r1d32", "user", "llm-8081", 8081, "/data/models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf", 26.8,
-             serve="r1d32"),
+             serve="r1d32", gtt_by_ctx_np=((65536, 2, 34.8),)),
     Endpoint("rag1", "user", "llm-8081", 8081, "/data/models/rag/Qwen3-Embedding-0.6B-Q8_0.gguf", 2.3,
              serve="rag1", ctx=8192),
     Endpoint("rag2", "user", "llm-8081", 8081, "/data/models/rag/embeddinggemma-2-Q8_0.gguf", 1.8,
@@ -359,7 +376,8 @@ def do_invite(db, name, opts, note=None):
         if not health(ep, ep.health_wait):
             raise RuntimeError(f"no /health on :{ep.port} within {ep.health_wait} s or unit exited")
         g = gtt_used()
-        sset(db, sid, "ACTIVE", pid=main_pid(ep), note=f"GTT {gib(g) if g is not None else '?'}, {f'+{(g - g0) / GiB:.1f}' if g is not None else '?'} over the {gib(g0)} before (expected +{ep.gtt_need:g} GiB)")
+        exp_gtt = expected_gtt(ep, opts)
+        sset(db, sid, "ACTIVE", pid=main_pid(ep), note=f"GTT {gib(g) if g is not None else '?'}, {f'+{(g - g0) / GiB:.1f}' if g is not None else '?'} over the {gib(g0)} before (expected +{exp_gtt:g} GiB)")
         say(f"session {sid}: ACTIVE {name} on :{ep.port}, GTT {gib(g) if g is not None else '?'}")
         return 0
     except BaseException as e:   # includes KeyboardInterrupt: nothing may stay resident under a FAILED row

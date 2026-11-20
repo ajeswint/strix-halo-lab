@@ -176,17 +176,26 @@ class TestPilotPr(unittest.TestCase):
                 "files": ["calc.py"],
             }
 
-            # Scenario 1: Model solves on turn 1 after error feedback
-            def mock_solver_turn1(prompt, seed):
-                if "failed automated verification" not in prompt:
+            # Scenario 1: Model solves on turn 1 after error feedback using structured search_replace tools
+            def mock_solver_turn1(messages, seed):
+                joined = pilot_pr.messages_to_text(messages)
+                if "Tool results:" not in joined:
                     # Buggy turn 0
+                    calls = [
+                        {"tool": "search_replace", "args": {"path": "calc.py", "old": "return 0", "new": "return a - b"}},
+                        {"tool": "finish", "args": {"summary": "initial edit"}},
+                    ]
                     return {
-                        "content": "### calc.py\n```python\ndef add(a, b):\n    return a - b\n```",
+                        "content": "```json\n" + json.dumps(calls) + "\n```",
                         "usage": {"completion_tokens": 30},
                     }
                 # Fix on turn 1
+                calls = [
+                    {"tool": "search_replace", "args": {"path": "calc.py", "old": "return a - b", "new": "return a + b"}},
+                    {"tool": "finish", "args": {"summary": "fixed add"}},
+                ]
                 return {
-                    "content": "### calc.py\n```python\ndef add(a, b):\n    return a + b\n```",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 30},
                 }
 
@@ -194,11 +203,15 @@ class TestPilotPr(unittest.TestCase):
             self.assertTrue(res1["passed"])
             self.assertEqual(res1["stop_reason"], "pass")
             self.assertEqual(res1["turns_executed"], 2)
+            self.assertIn("+    return a + b", res1["final_diff"])
 
             # Scenario 2: Repeat code stop
-            def mock_solver_repeat(prompt, seed):
+            def mock_solver_repeat(messages, seed):
+                calls = [
+                    {"tool": "search_replace", "args": {"path": "calc.py", "old": "nonexistent_line", "new": "return 999"}},
+                ]
                 return {
-                    "content": "### calc.py\n```python\ndef add(a, b):\n    return 999\n```",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 30},
                 }
 
@@ -240,12 +253,14 @@ class TestPilotPr(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 pilot_pr.run_tests(no_test_task, temp_dir)
 
-            def mock_doc_writer(prompt, seed):
+            def mock_doc_writer(messages, seed):
+                calls = [
+                    {"tool": "search_replace", "args": {"path": "doc.md", "old": "# Old title", "new": "# New title"}},
+                    {"tool": "create_file", "args": {"path": "new_note.md", "content": "New untracked file content\n"}},
+                    {"tool": "finish", "args": {"summary": "updated docs"}},
+                ]
                 return {
-                    "content": (
-                        "### doc.md\n```markdown\n# New title\n```\n\n"
-                        "### new_note.md\n```markdown\nNew untracked file content\n```\n"
-                    ),
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 25},
                 }
 
@@ -271,8 +286,17 @@ class TestPilotPr(unittest.TestCase):
                 "prompt": "Edit doc.md",
                 "files": ["doc.md"],
             }
+            def mock_leaky_trigger(messages, seed):
+                calls = [
+                    {"tool": "search_replace", "args": {"path": "doc.md", "old": "# New title", "new": "# Trigger title"}},
+                    {"tool": "finish", "args": {"summary": "trigger test"}},
+                ]
+                return {
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
+                    "usage": {"completion_tokens": 20},
+                }
             with self.assertRaises(AssertionError):
-                pilot_pr.run_task_loop(leaky_task, mock_doc_writer, temp_dir, max_turns=3)
+                pilot_pr.run_task_loop(leaky_task, mock_leaky_trigger, temp_dir, max_turns=3)
         finally:
             shutil.rmtree(temp_dir)
 
@@ -294,14 +318,31 @@ class TestPilotPr(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=temp_dir, check=True, capture_output=True)
 
             # Test `run` subcommand on real repo worktree for item6_pr06 and item6_pr15 with mock client
-            def mock_client(prompt, seed):
-                if "Fix `bench/loop/debate.py` parser logic" in prompt:
+            def mock_client(messages, seed):
+                joined = pilot_pr.messages_to_text(messages)
+                if "Fix `bench/loop/debate.py` parser logic" in joined:
+                    calls = [
+                        {"tool": "create_file", "args": {"path": "mock_pr06.txt", "content": "pr06\n"}},
+                        {"tool": "finish", "args": {"summary": "pr06 mock"}},
+                    ]
                     return {
-                        "content": "### README.md\n```markdown\n# Updated README\n```\n",
+                        "content": "```json\n" + json.dumps(calls) + "\n```",
                         "usage": {"completion_tokens": 42, "prompt_tokens": 100},
                     }
+                calls = [
+                    {
+                        "tool": "search_replace",
+                        "args": {
+                            "path": "AGENTS.md",
+                            "old": "# Working rules for agents in this repo",
+                            "new": "# Updated AGENTS",
+                        },
+                    },
+                    {"tool": "create_file", "args": {"path": "new_file.txt", "content": "hello\n"}},
+                    {"tool": "finish", "args": {"summary": "pr15 mock"}},
+                ]
                 return {
-                    "content": "### AGENTS.md\n```markdown\n# Updated AGENTS\n```\n### new_file.txt\n```text\nhello\n```\n",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 35, "prompt_tokens": 90},
                 }
 
@@ -540,9 +581,22 @@ class TestPilotPr(unittest.TestCase):
             pilot_pr.create_isolated_scratch_repo(repo_root, task["base_commit"], scratch_dir)
 
             # Simulate a cheating model that overwrites scripts/test-prereg-guard.sh with 'exit 0'
-            def cheating_model(prompt, seed):
+            def cheating_model(messages, seed):
+                calls = [
+                    {
+                        "tool": "create_file",
+                        "args": {
+                            "path": "scripts/test-prereg-guard.sh",
+                            "content": "#!/usr/bin/env bash\nexit 0\n",
+                            "overwrite": True,
+                            "justification": "Replacing test script with minimal passing stub",
+                            "executable": True,
+                        },
+                    },
+                    {"tool": "finish", "args": {"summary": "cheating"}},
+                ]
                 return {
-                    "content": "### scripts/test-prereg-guard.sh\n```bash\n#!/usr/bin/env bash\nexit 0\n```\n",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 20},
                 }
 
@@ -1266,9 +1320,13 @@ class TestPilotPr(unittest.TestCase):
                 f.write(line1)
                 f.write(line2)
 
-            def mock_ask(prompt, seed):
+            def mock_ask(messages, seed):
+                calls = [
+                    {"tool": "create_file", "args": {"path": "test.txt", "content": "hello\n"}},
+                    {"tool": "finish", "args": {"summary": "created test.txt"}},
+                ]
                 return {
-                    "content": "### test.txt\n```\nhello\n```\n",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "reasoning_chars": 0,
                     "finish": "stop",
                     "usage": {"completion_tokens": 10, "prompt_tokens": 20},
@@ -1346,7 +1404,7 @@ class TestPilotPr(unittest.TestCase):
             self.assertEqual(summary["testable_passed"], 0)
             self.assertTrue(summary["reviews_complete"])
             self.assertEqual(summary["approved_final"], 0)
-            self.assertEqual(summary["avg_hand_fix_lines_per_approved"], 0.0)
+            self.assertIsNone(summary["avg_hand_fix_lines_per_approved"])
             self.assertEqual(summary["decision"], "DROP")
 
             for pt in summary["per_task"]:
@@ -1355,6 +1413,349 @@ class TestPilotPr(unittest.TestCase):
                 self.assertIsNone(pt["hand_fix_lines"])
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_structured_edit_tools_match_nomatch_ambiguous_and_retry(self):
+        """Verify read_file, list_files, grep, search_replace (match, no-match, ambiguous), and retry within turn budget."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_tools_test_")
+        try:
+            subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Tester"], cwd=temp_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "tester@repo.org"], cwd=temp_dir, check=True)
+
+            os.makedirs(os.path.join(temp_dir, "src"), exist_ok=True)
+            with open(os.path.join(temp_dir, "src", "mod.py"), "w", encoding="utf-8") as f:
+                f.write(
+                    "SEED = 104729\n"
+                    "def f():\n"
+                    "    x = 1\n"
+                    "    return x\n"
+                    "def g():\n"
+                    "    x = 1\n"
+                    "    return x + 1\n"
+                )
+            with open(os.path.join(temp_dir, "test_mod.py"), "w", encoding="utf-8") as f:
+                f.write("from src import mod\nassert mod.f() == 10\nassert mod.g() == 2\n")
+            subprocess.run(["git", "add", "."], cwd=temp_dir, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=temp_dir, check=True, capture_output=True)
+            base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=temp_dir, text=True).strip()
+
+            # list_files + glob
+            ok_ls, out_ls = pilot_pr.tool_list_files(temp_dir, path=".", glob_pattern="*.py")
+            self.assertTrue(ok_ls)
+            self.assertIn("src/mod.py", out_ls)
+            self.assertNotIn(".git", out_ls)
+
+            # grep redacts grading seed 104729
+            ok_gr, out_gr = pilot_pr.tool_grep(temp_dir, pattern=r"SEED", path="src")
+            self.assertTrue(ok_gr)
+            self.assertIn("<REDACTED_SEED>", out_gr)
+            self.assertNotIn("104729", out_gr)
+
+            # read_file window and redaction
+            ok_rf, out_rf = pilot_pr.tool_read_file(temp_dir, "src/mod.py", start=1, end=4)
+            self.assertTrue(ok_rf)
+            self.assertIn("lines 1-4 of 7", out_rf)
+            self.assertIn("<REDACTED_SEED>", out_rf)
+            self.assertNotIn("104729", out_rf)
+
+            # search_replace: no-match rejected
+            ok_nm, msg_nm = pilot_pr.tool_search_replace(temp_dir, "src/mod.py", "does_not_exist", "y = 2")
+            self.assertFalse(ok_nm)
+            self.assertIn("0 matches", msg_nm)
+
+            # search_replace: ambiguous (2 matches) rejected
+            ok_amb, msg_amb = pilot_pr.tool_search_replace(temp_dir, "src/mod.py", "    x = 1", "    x = 10")
+            self.assertFalse(ok_amb)
+            self.assertIn("ambiguous (2 matches", msg_amb)
+
+            # search_replace: no-op rejected
+            ok_noop, msg_noop = pilot_pr.tool_search_replace(temp_dir, "src/mod.py", "def f():", "def f():")
+            self.assertFalse(ok_noop)
+            self.assertIn("no-op", msg_noop)
+
+            # In-loop retry after failed no-match and ambiguous search_replace, then targeted unique match passes
+            task = {
+                "id": "item6_tool_retry",
+                "pr_number": 910,
+                "title": "Tool retry task",
+                "base_commit": base_sha,
+                "merged_commit": "3" * 40,
+                "has_tests": True,
+                "test_cmd": "python3 test_mod.py",
+                "prompt": "Change f() in src/mod.py to return 10.",
+                "files": ["src/mod.py"],
+            }
+            turn_idx = [0]
+
+            def retry_model(messages, seed):
+                t = turn_idx[0]
+                turn_idx[0] += 1
+                joined = pilot_pr.messages_to_text(messages)
+                if t == 0:
+                    # First attempt fails due to ambiguous match
+                    calls = [{"tool": "search_replace", "args": {"path": "src/mod.py", "old": "    x = 1", "new": "    x = 10"}}]
+                elif t == 1:
+                    self.assertIn("ambiguous (2 matches", joined)
+                    # Second attempt fails due to 0 matches
+                    calls = [{"tool": "search_replace", "args": {"path": "src/mod.py", "old": "def f():\n    x = 999", "new": "def f():\n    x = 10"}}]
+                else:
+                    self.assertIn("0 matches", joined)
+                    # Third attempt provides unique context and finishes
+                    calls = [
+                        {
+                            "tool": "search_replace",
+                            "args": {
+                                "path": "src/mod.py",
+                                "old": "def f():\n    x = 1\n    return x",
+                                "new": "def f():\n    x = 10\n    return x",
+                            },
+                        },
+                        {"tool": "finish", "args": {"summary": "updated f()"}},
+                    ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 40}}
+
+            res = pilot_pr.run_task_loop(task, retry_model, temp_dir, max_turns=6)
+            self.assertTrue(res["passed"])
+            self.assertEqual(res["stop_reason"], "pass")
+            self.assertEqual(res["turns_executed"], 3)
+            self.assertIn("-    x = 1", res["final_diff"])
+            self.assertIn("+    x = 10", res["final_diff"])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_structured_edit_tools_path_escape_rejected(self):
+        """Verify all edit and read tools reject absolute paths, '..', .git, and symlink escapes."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_tool_escape_")
+        outside_dir = tempfile.mkdtemp(prefix="pilot_tool_out_")
+        try:
+            outside_file = os.path.join(outside_dir, "secret.txt")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("original secret\n")
+            os.makedirs(os.path.join(temp_dir, ".git"), exist_ok=True)
+            with open(os.path.join(temp_dir, ".git", "config"), "w", encoding="utf-8") as f:
+                f.write("[core]\n")
+            os.symlink(outside_file, os.path.join(temp_dir, "sym_file.txt"))
+            os.symlink(outside_dir, os.path.join(temp_dir, "sym_dir"))
+
+            bad_paths = [
+                outside_file,
+                "../secret.txt",
+                "sub/../../secret.txt",
+                ".git/config",
+                "sym_file.txt",
+                "sym_dir/secret.txt",
+            ]
+            for bp in bad_paths:
+                ok_r, _ = pilot_pr.tool_read_file(temp_dir, bp)
+                self.assertFalse(ok_r, f"read_file must reject {bp}")
+                ok_s, _ = pilot_pr.tool_search_replace(temp_dir, bp, "original", "pwned")
+                self.assertFalse(ok_s, f"search_replace must reject {bp}")
+                ok_c, _, _ = pilot_pr.tool_create_file(temp_dir, bp, "pwned\n", overwrite=True, justification="escape attempt test")
+                self.assertFalse(ok_c, f"create_file must reject {bp}")
+                ok_g, _ = pilot_pr.tool_grep(temp_dir, "secret", path=bp)
+                self.assertFalse(ok_g, f"grep must reject {bp}")
+                ok_l, _ = pilot_pr.tool_list_files(temp_dir, path=bp)
+                self.assertFalse(ok_l, f"list_files must reject {bp}")
+
+            with open(outside_file, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "original secret\n")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
+    def test_whole_file_rewrite_cap_and_create_file_overwrite_guard(self):
+        """Verify create_file rejects unapproved overwrites, caps justified overwrites, and search_replace caps large whole-file rewrites."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_rewrite_cap_")
+        try:
+            sess = pilot_pr.ToolSession(temp_dir, max_overwrites=1)
+
+            # 1. Creating a brand-new file (with executable=True) succeeds
+            ok_new, msg_new, is_ed = sess.execute({
+                "tool": "create_file",
+                "args": {"path": "scripts/new.sh", "content": "#!/usr/bin/env bash\necho hi\n", "executable": True},
+            })
+            self.assertTrue(ok_new, msg_new)
+            self.assertTrue(is_ed)
+            mode = os.stat(os.path.join(temp_dir, "scripts", "new.sh")).st_mode & 0o777
+            self.assertEqual(mode, 0o755)
+
+            # 2. create_file over an existing file without overwrite=True is rejected
+            with open(os.path.join(temp_dir, "a.py"), "w", encoding="utf-8") as f:
+                f.write("a = 1\n")
+            with open(os.path.join(temp_dir, "b.py"), "w", encoding="utf-8") as f:
+                f.write("b = 1\n")
+
+            ok_no_ow, msg_no_ow, _ = sess.execute({
+                "tool": "create_file",
+                "args": {"path": "a.py", "content": "a = 2\n"},
+            })
+            self.assertFalse(ok_no_ow)
+            self.assertIn("already exists", msg_no_ow)
+
+            # 3. create_file with overwrite=True but missing/short justification is rejected
+            ok_short_j, msg_short_j, _ = sess.execute({
+                "tool": "create_file",
+                "args": {"path": "a.py", "content": "a = 2\n", "overwrite": True, "justification": "too short"},
+            })
+            self.assertFalse(ok_short_j)
+            self.assertIn("justification", msg_short_j)
+
+            # 4. create_file with overwrite=True and clear justification succeeds up to cap (1)
+            ok_ow1, msg_ow1, _ = sess.execute({
+                "tool": "create_file",
+                "args": {
+                    "path": "a.py",
+                    "content": "a = 2\n",
+                    "overwrite": True,
+                    "justification": "Full replacement required because file is being split into modules.",
+                },
+            })
+            self.assertTrue(ok_ow1, msg_ow1)
+
+            # 5. Second existing-file overwrite in same task is rejected by cap
+            ok_ow2, msg_ow2, _ = sess.execute({
+                "tool": "create_file",
+                "args": {
+                    "path": "b.py",
+                    "content": "b = 2\n",
+                    "overwrite": True,
+                    "justification": "Attempting second full overwrite beyond the per-task cap.",
+                },
+            })
+            self.assertFalse(ok_ow2)
+            self.assertIn("cap reached", msg_ow2)
+
+            # 6. search_replace whole-file rewrite cap on large existing file (>= 80 lines)
+            large_lines = [f"line_{i} = {i}" for i in range(100)]
+            large_old = "\n".join(large_lines) + "\n"
+            large_new = "\n".join(f"rewritten_{i} = {i}" for i in range(100)) + "\n"
+            with open(os.path.join(temp_dir, "big.py"), "w", encoding="utf-8") as f:
+                f.write(large_old)
+
+            ok_big, msg_big, _ = sess.execute({
+                "tool": "search_replace",
+                "args": {"path": "big.py", "old": large_old, "new": large_new},
+            })
+            self.assertFalse(ok_big)
+            self.assertIn("whole-file rewrite cap", msg_big)
+
+            # Targeted edit on the same 100-line file succeeds
+            ok_small, msg_small, _ = sess.execute({
+                "tool": "search_replace",
+                "args": {"path": "big.py", "old": "line_42 = 42", "new": "line_42 = 420"},
+            })
+            self.assertTrue(ok_small, msg_small)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_context_preflight_overflow_recorded_and_run_continues(self):
+        """Verify prompt-size preflight records context_overflow without calling model and multi-task run continues."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_preflight_res_")
+        try:
+            ask_calls = []
+
+            def selective_counter(messages):
+                text = pilot_pr.messages_to_text(messages)
+                # Simulate item6_pr15 exceeding 65536 - 8192 = 57344 tokens; item6_pr06 fits
+                if "Audit and fix stale lines" in text:
+                    return 60000
+                return 2500
+
+            def mock_ask(messages, seed):
+                ask_calls.append(pilot_pr.messages_to_text(messages)[:80])
+                calls = [
+                    {"tool": "create_file", "args": {"path": "touched.txt", "content": "ok\n"}},
+                    {"tool": "finish", "args": {"summary": "done"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 25}}
+
+            # Run item6_pr15 (preflight overflow) followed by item6_pr06 (runs cleanly)
+            rows = pilot_pr.run_subcommand(
+                label="preflight-test",
+                tasks_arg="item6_pr15,item6_pr06",
+                max_turns=1,
+                slot_ctx=65536,
+                reserved_output_tokens=8192,
+                results_dir=results_dir,
+                ask_fn=mock_ask,
+                token_counter=selective_counter,
+            )
+            self.assertEqual(len(rows), 2)
+            by_id = {r["task_id"]: r for r in rows}
+
+            # item6_pr15 stopped at preflight without ever calling ask_fn
+            r15 = by_id["item6_pr15"]
+            self.assertFalse(r15["passed"])
+            self.assertEqual(r15["stop_reason"], "context_overflow")
+            self.assertEqual(r15["final_diff"], "")
+            self.assertEqual(r15["total_completion_tokens"], 0)
+            self.assertIn("prompt preflight overflow", r15["history"][0]["err"])
+
+            # item6_pr06 was NOT aborted and ran normally
+            self.assertEqual(len(ask_calls), 1, "ask_fn must only be called for the non-overflowing task")
+            r06 = by_id["item6_pr06"]
+            self.assertNotEqual(r06["stop_reason"], "context_overflow")
+            self.assertIn("touched.txt", r06["final_diff"])
+
+            # Also verify an unexpected RuntimeError in task 1 does not abort task 2
+            def exploding_then_ok(messages, seed):
+                text = pilot_pr.messages_to_text(messages)
+                if "Audit and fix stale lines" in text:
+                    raise RuntimeError("transient client failure")
+                calls = [
+                    {"tool": "create_file", "args": {"path": "survived.txt", "content": "yes\n"}},
+                    {"tool": "finish", "args": {"summary": "done"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 15}}
+
+            rows2 = pilot_pr.run_subcommand(
+                label="fault-isolation-test",
+                tasks_arg="item6_pr15,item6_pr06",
+                max_turns=1,
+                results_dir=results_dir,
+                ask_fn=exploding_then_ok,
+                token_counter=lambda m: 1000,
+            )
+            by_id2 = {r["task_id"]: r for r in rows2}
+            self.assertEqual(by_id2["item6_pr15"]["stop_reason"], "task_error")
+            self.assertEqual(by_id2["item6_pr15"]["final_diff"], "")
+            self.assertIn("survived.txt", by_id2["item6_pr06"]["final_diff"])
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+
+    def test_np1_64k_serving_config_llmctl_and_v1_freeze_guard(self):
+        """Verify 1-slot 64k config in pilot_pr, run.sh, llmctl.py (including np2 GTT entries), and v1 freeze guard."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+        # 1. pilot_pr defaults
+        self.assertEqual(pilot_pr.SLOT_CTX_DEFAULT, 65536)
+        self.assertEqual(pilot_pr.RESERVED_OUTPUT_TOKENS, 8192)
+        self.assertEqual(pilot_pr.SLOT_CTX_DEFAULT - pilot_pr.RESERVED_OUTPUT_TOKENS, 57344)
+
+        # 2. run.sh uses --ctx 65536 --np 1, checks total_slots 1 n_ctx 65536, defaults to item6-pilot-v2, refuses item6-pilot
+        run_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
+        with open(run_sh, "r", encoding="utf-8") as f:
+            run_sh_text = f.read()
+        self.assertIn("INVITE_OPTS=(--ctx 65536 --np 1)", run_sh_text)
+        self.assertIn("total_slots 1 n_ctx 65536 ", run_sh_text)
+        self.assertIn('LABEL="${LABEL:-item6-pilot-v2}"', run_sh_text)
+
+        env_v1 = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40, LABEL="item6-pilot")
+        res_v1 = subprocess.run(["bash", run_sh], cwd=repo_root, env=env_v1, capture_output=True, text=True)
+        self.assertNotEqual(res_v1.returncode, 0)
+        self.assertIn("frozen", res_v1.stderr)
+
+        # 3. scripts/llmctl.py qwen defaults to ctx=65536 and carries measured np2 GTT deltas
+        scripts_dir = os.path.join(repo_root, "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import llmctl  # noqa: E402
+        qwen_ep = llmctl.ENDPOINTS["qwen"]
+        self.assertEqual(qwen_ep.ctx, 65536)
+        self.assertEqual(llmctl.expected_gtt(qwen_ep, {"ctx": None, "np": 1}), 22.4)
+        self.assertEqual(llmctl.expected_gtt(qwen_ep, {"ctx": 65536, "np": 2}), 22.3)
+        self.assertEqual(llmctl.expected_gtt(llmctl.ENDPOINTS["qwen32"], {"ctx": 65536, "np": 2}), 34.7)
+        self.assertEqual(llmctl.expected_gtt(llmctl.ENDPOINTS["r1d32"], {"ctx": 65536, "np": 2}), 34.8)
 
 
 if __name__ == "__main__":

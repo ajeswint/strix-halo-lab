@@ -9,8 +9,10 @@ Can be executed with:
 """
 import argparse
 import ast
+import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,9 +32,20 @@ API_URL = "http://127.0.0.1:8081"
 SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}
 REASONING_BUDGET = 4096
 MAX_TOKENS = 8192
-MAX_TURNS_DEFAULT = 4
+SLOT_CTX_DEFAULT = 65536
+RESERVED_OUTPUT_TOKENS = MAX_TOKENS
+MAX_TURNS_DEFAULT = 12
 TASK_BUDGET_TOKENS = 32768
-BUDGET_MESSAGE = "Reasoning budget reached. Write the code block now."
+BUDGET_MESSAGE = "Reasoning budget reached. Output your tool call JSON block now."
+
+READ_FILE_MAX_LINES = 250
+GREP_MAX_MATCHES = 50
+LIST_FILES_MAX_ENTRIES = 200
+MAX_EXISTING_FILE_OVERWRITES = 1
+MIN_OVERWRITE_JUSTIFICATION_LEN = 15
+SEARCH_REPLACE_REWRITE_MIN_LINES = 80
+SEARCH_REPLACE_REWRITE_MAX_RATIO = 0.80
+TOOL_RESULT_MAX_CHARS = 12000
 
 FIXED_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
 SAFE_ENV_KEYS = ("LANG", "LC_ALL", "LC_CTYPE", "TERM")
@@ -290,16 +304,89 @@ def has_bwrap():
 
 
 
+def messages_to_text(prompt_or_messages):
+    """Flatten either a prompt string or a list of chat message dicts into plain text."""
+    if isinstance(prompt_or_messages, str):
+        return prompt_or_messages
+    if isinstance(prompt_or_messages, list):
+        parts = []
+        for m in prompt_or_messages:
+            if isinstance(m, dict):
+                role = m.get("role", "")
+                content = m.get("content") or ""
+                parts.append(f"{role}: {content}")
+            else:
+                parts.append(str(m))
+        return "\n\n".join(parts)
+    return str(prompt_or_messages or "")
+
+
+def estimate_tokens_heuristic(prompt_or_messages):
+    """Conservative offline token estimator calibrated against Qwen3.6 on item6_pr15 (3.191 chars/tok)."""
+    text = messages_to_text(prompt_or_messages)
+    n_msgs = len(prompt_or_messages) if isinstance(prompt_or_messages, list) else 1
+    return math.ceil(len(text) / 3.0) + (16 * n_msgs) + 64
+
+
+def server_tokenize(api=None):
+    """Return a token_counter(prompt_or_messages) using llama-server POST /tokenize with heuristic fallback."""
+    api = api or API_URL
+
+    def count_tokens(prompt_or_messages):
+        text = messages_to_text(prompt_or_messages)
+        n_msgs = len(prompt_or_messages) if isinstance(prompt_or_messages, list) else 1
+        body = {"content": text, "add_special": True}
+        req = urllib.request.Request(
+            f"{api}/tokenize",
+            json.dumps(body).encode("utf-8"),
+            {"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.load(r)
+            tokens = resp.get("tokens")
+            if isinstance(tokens, list):
+                return len(tokens) + (16 * n_msgs) + 64
+        except Exception:
+            pass
+        return estimate_tokens_heuristic(prompt_or_messages)
+
+    return count_tokens
+
+
+def count_prompt_tokens(prompt_or_messages, token_counter=None):
+    """Measure prompt tokens via token_counter if provided, else conservative heuristic."""
+    if token_counter is not None:
+        return int(token_counter(prompt_or_messages))
+    return estimate_tokens_heuristic(prompt_or_messages)
+
+
+def check_context_preflight(
+    prompt_or_messages,
+    slot_ctx=SLOT_CTX_DEFAULT,
+    reserved_output=RESERVED_OUTPUT_TOKENS,
+    token_counter=None,
+):
+    """Preflight check ensuring prompt fits within slot_ctx minus reserved output budget.
+
+    Returns (fits: bool, prompt_tokens: int, max_prompt_tokens: int).
+    """
+    max_prompt_tokens = max(0, int(slot_ctx) - int(reserved_output))
+    prompt_tokens = count_prompt_tokens(prompt_or_messages, token_counter=token_counter)
+    return (prompt_tokens <= max_prompt_tokens), prompt_tokens, max_prompt_tokens
+
+
 def check_prompt_leak(prompt, task):
-    """Tripwire: assert no hidden fields, sentinels, or unredacted grading seeds appear in a prompt."""
+    """Tripwire: assert no hidden fields, sentinels, or unredacted grading seeds appear in a prompt or message list."""
+    text = messages_to_text(prompt)
     for hidden_key in ("hidden_diff", "merged_commit"):
         if dict.__contains__(task, hidden_key):
             val = dict.__getitem__(task, hidden_key)
-            if val and isinstance(val, str) and len(val) >= 7 and val in prompt:
+            if val and isinstance(val, str) and len(val) >= 7 and val in text:
                 raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!")
-    if "LEAK_SENTINEL" in prompt or "ORACLE-SENTINEL" in prompt:
+    if "LEAK_SENTINEL" in text or "ORACLE-SENTINEL" in text:
         raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
-    if "104729" in prompt:
+    if "104729" in text:
         raise AssertionError("LEAK TRIPWIRE TRIGGERED: literal grading seed 104729 leaked into prompt!")
 
 
@@ -400,6 +487,541 @@ def resolve_confined_path(worktree_dir, rel_path):
     if final_real == root_real or not final_real.startswith(root_real + os.sep):
         raise ValueError(f"Resolved path outside scratch root: {rel_path}")
     return curr
+
+
+def resolve_confined_dir(worktree_dir, rel_path="."):
+    """Resolve a directory (or file) path confined inside worktree_dir, allowing '.' for the root."""
+    root_real = os.path.realpath(worktree_dir)
+    if rel_path is None:
+        return root_real
+    if not isinstance(rel_path, str):
+        raise ValueError("Non-string path")
+    norm = rel_path.replace("\\", "/").strip()
+    if norm in ("", ".", "./"):
+        return root_real
+    return resolve_confined_path(worktree_dir, rel_path)
+
+
+def tool_list_files(worktree_dir, path=".", glob_pattern=None, max_entries=LIST_FILES_MAX_ENTRIES):
+    """List regular non-symlink files under a confined path inside worktree_dir, skipping .git."""
+    try:
+        target = resolve_confined_dir(worktree_dir, path)
+    except ValueError as e:
+        return False, f"list_files error: {e}"
+    root_real = os.path.realpath(worktree_dir)
+    if not os.path.exists(target):
+        return False, f"list_files error: path not found: {path}"
+    if os.path.isfile(target):
+        rel = os.path.relpath(target, root_real).replace(os.sep, "/")
+        return True, rel
+
+    entries = []
+    truncated = False
+    for dirpath, dirnames, filenames in os.walk(target, followlinks=False):
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d != ".git" and not os.path.islink(os.path.join(dirpath, d))
+        )
+        for fn in sorted(filenames):
+            full = os.path.join(dirpath, fn)
+            if os.path.islink(full):
+                continue
+            rel = os.path.relpath(full, root_real).replace(os.sep, "/")
+            if glob_pattern and not (
+                fnmatch.fnmatch(rel, glob_pattern) or fnmatch.fnmatch(fn, glob_pattern)
+            ):
+                continue
+            entries.append(rel)
+            if len(entries) >= max_entries:
+                truncated = True
+                break
+        if truncated:
+            break
+    if not entries:
+        return True, "(no matching files)"
+    out = "\n".join(entries)
+    if truncated:
+        out += f"\n... [truncated at {max_entries} entries]"
+    return True, out
+
+
+def tool_grep(worktree_dir, pattern, path=".", max_matches=GREP_MAX_MATCHES):
+    """Search confined text files under path using a regex pattern, redacting grading seed 104729."""
+    if not pattern or not isinstance(pattern, str):
+        return False, "grep error: 'pattern' must be a non-empty string."
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return False, f"grep error: invalid regex {pattern!r}: {e}"
+    try:
+        target = resolve_confined_dir(worktree_dir, path)
+    except ValueError as e:
+        return False, f"grep error: {e}"
+    if not os.path.exists(target):
+        return False, f"grep error: path not found: {path}"
+
+    root_real = os.path.realpath(worktree_dir)
+    files_to_scan = []
+    if os.path.isfile(target) and not os.path.islink(target):
+        files_to_scan.append(target)
+    else:
+        for dirpath, dirnames, filenames in os.walk(target, followlinks=False):
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if d != ".git" and not os.path.islink(os.path.join(dirpath, d))
+            )
+            for fn in sorted(filenames):
+                full = os.path.join(dirpath, fn)
+                if not os.path.islink(full):
+                    files_to_scan.append(full)
+
+    matches = []
+    truncated = False
+    for full in files_to_scan:
+        try:
+            with open(full, "rb") as bf:
+                raw = bf.read(262144)
+            if b"\x00" in raw:
+                continue
+            text = redact_grading_seed(raw.decode("utf-8", errors="replace"))
+        except OSError:
+            continue
+        rel = os.path.relpath(full, root_real).replace(os.sep, "/")
+        for idx, line in enumerate(text.splitlines(), start=1):
+            if regex.search(line):
+                snippet = line if len(line) <= 200 else (line[:200] + "...")
+                matches.append(f"{rel}:{idx}: {snippet}")
+                if len(matches) >= max_matches:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+    if not matches:
+        return True, f"(no matches for {pattern!r})"
+    out = "\n".join(matches)
+    if truncated:
+        out += f"\n... [truncated at {max_matches} matches]"
+    return True, out
+
+
+def tool_read_file(worktree_dir, path, start=1, end=None, max_lines=READ_FILE_MAX_LINES):
+    """Read a confined file's 1-indexed line window (capped at max_lines), redacting grading seed 104729."""
+    try:
+        full_path = resolve_confined_path(worktree_dir, path)
+    except ValueError as e:
+        return False, f"read_file error: {e}"
+    if not os.path.exists(full_path):
+        return False, f"read_file error: file does not exist: {path}"
+    if not os.path.isfile(full_path) or os.path.islink(full_path):
+        return False, f"read_file error: not a regular file: {path}"
+
+    try:
+        start_i = int(start) if start is not None else 1
+        end_i = int(end) if end is not None else None
+    except (TypeError, ValueError):
+        return False, "read_file error: 'start' and 'end' must be integers."
+    if start_i < 1:
+        return False, f"read_file error: 'start' must be >= 1 (got {start_i})."
+    if end_i is not None and end_i < start_i:
+        return False, f"read_file error: 'end' ({end_i}) must be >= 'start' ({start_i})."
+
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            raw_text = redact_grading_seed(f.read())
+    except OSError as e:
+        return False, f"read_file error ({path}): {e}"
+
+    lines = raw_text.splitlines()
+    total = len(lines)
+    if total == 0:
+        return True, f"File: {path} (empty, 0 lines)"
+    if start_i > total:
+        return False, f"read_file error ({path}): start line {start_i} exceeds file length ({total} lines)."
+
+    eff_end = min(total, end_i) if end_i is not None else total
+    capped = False
+    if eff_end - start_i + 1 > max_lines:
+        eff_end = start_i + max_lines - 1
+        capped = True
+
+    numbered = [f"{i:4d}: {lines[i - 1]}" for i in range(start_i, eff_end + 1)]
+    header = f"File: {path} (lines {start_i}-{eff_end} of {total})"
+    body = "\n".join(numbered)
+    if capped and eff_end < total:
+        body += f"\n... [truncated at {max_lines} lines; call read_file(path={path!r}, start={eff_end + 1}) to continue]"
+    return True, f"{header}\n{body}"
+
+
+def tool_search_replace(worktree_dir, path, old, new):
+    """Apply an exact, unique search-and-replace edit to an existing confined file with a whole-file rewrite cap."""
+    try:
+        full_path = resolve_confined_path(worktree_dir, path)
+    except ValueError as e:
+        return False, f"search_replace error: {e}"
+    if not os.path.exists(full_path):
+        return False, f"search_replace error ({path}): file does not exist. Use create_file for new files."
+    if not os.path.isfile(full_path) or os.path.islink(full_path):
+        return False, f"search_replace error ({path}): not a regular file."
+    if not isinstance(old, str) or old == "":
+        return False, f"search_replace error ({path}): 'old' must be a non-empty string."
+    if not isinstance(new, str):
+        return False, f"search_replace error ({path}): 'new' must be a string."
+    if old == new:
+        return False, f"search_replace error ({path}): 'old' and 'new' are identical (no-op edit)."
+
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError as e:
+        return False, f"search_replace error ({path}): {e}"
+
+    occurrences = content.count(old)
+    if occurrences == 0:
+        return (
+            False,
+            f"search_replace error ({path}): 'old' text not found (0 matches). "
+            "Use read_file to inspect exact lines and whitespace before retrying.",
+        )
+    if occurrences > 1:
+        return (
+            False,
+            f"search_replace error ({path}): 'old' text is ambiguous ({occurrences} matches; must match uniquely). "
+            "Include more surrounding context lines to make the match unique.",
+        )
+
+    total_lines = len(content.splitlines())
+    old_lines = len(old.splitlines())
+    new_lines = len(new.splitlines())
+    if (
+        total_lines >= SEARCH_REPLACE_REWRITE_MIN_LINES
+        and (old_lines / max(total_lines, 1)) >= SEARCH_REPLACE_REWRITE_MAX_RATIO
+        and new_lines >= SEARCH_REPLACE_REWRITE_MIN_LINES
+    ):
+        return (
+            False,
+            f"search_replace rejected ({path}): whole-file rewrite cap exceeded "
+            f"({old_lines}/{total_lines} lines replaced with {new_lines} lines). "
+            "Make smaller, targeted edits instead of rewriting the whole file.",
+        )
+
+    updated = content.replace(old, new, 1)
+    try:
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(updated)
+    except OSError as e:
+        return False, f"search_replace error ({path}): failed writing file: {e}"
+
+    return True, f"search_replace OK ({path}): replaced {old_lines} lines with {new_lines} lines."
+
+
+def tool_create_file(
+    worktree_dir,
+    path,
+    content,
+    overwrite=False,
+    justification="",
+    executable=False,
+    overwrites_used=0,
+    max_overwrites=MAX_EXISTING_FILE_OVERWRITES,
+):
+    """Create a new confined file; reject overwriting existing files unless explicitly justified and within cap.
+
+    Returns (ok: bool, message: str, overwrote_existing: bool).
+    """
+    try:
+        full_path = resolve_confined_path(worktree_dir, path)
+    except ValueError as e:
+        return False, f"create_file error: {e}", False
+    if not isinstance(content, str):
+        return False, f"create_file error ({path}): 'content' must be a string.", False
+
+    existed = os.path.exists(full_path)
+    if existed:
+        if os.path.isdir(full_path):
+            return False, f"create_file error ({path}): path is a directory.", False
+        if not overwrite:
+            return (
+                False,
+                f"create_file rejected ({path}): file already exists. Use search_replace for targeted edits "
+                f"to existing files, or pass overwrite=true with a clear justification if a full rewrite is "
+                f"strictly required (cap: {max_overwrites} existing-file overwrite per task).",
+                False,
+            )
+        if not isinstance(justification, str) or len(justification.strip()) < MIN_OVERWRITE_JUSTIFICATION_LEN:
+            return (
+                False,
+                f"create_file rejected ({path}): overwrite=true requires a justification of at least "
+                f"{MIN_OVERWRITE_JUSTIFICATION_LEN} characters explaining why search_replace is insufficient.",
+                False,
+            )
+        if overwrites_used >= max_overwrites:
+            return (
+                False,
+                f"create_file rejected ({path}): whole-file overwrite cap reached "
+                f"({overwrites_used}/{max_overwrites} used in this task). Use search_replace for targeted edits.",
+                False,
+            )
+
+    try:
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        if executable:
+            os.chmod(full_path, 0o755)
+    except OSError as e:
+        return False, f"create_file error ({path}): {e}", False
+
+    suffix = " (overwrote existing)" if existed else ""
+    if executable:
+        suffix += " (chmod +x)"
+    return True, f"create_file OK ({path}): wrote {len(content.splitlines())} lines{suffix}.", existed
+
+
+class ToolSession:
+    """Stateful tool executor for a single task inside a confined scratch worktree."""
+
+    def __init__(self, worktree_dir, max_overwrites=MAX_EXISTING_FILE_OVERWRITES):
+        self.worktree_dir = worktree_dir
+        self.max_overwrites = max_overwrites
+        self.overwrites_used = 0
+        self.edits_applied = 0
+
+    def execute(self, call):
+        """Execute one normalized tool call dict {'tool': str, 'args': dict}.
+
+        Returns (ok: bool, output: str, is_edit: bool).
+        """
+        if not isinstance(call, dict):
+            return False, "Tool call must be a JSON object with 'tool' and 'args'.", False
+        name = call.get("tool")
+        args = call.get("args")
+        if not isinstance(name, str) or not name.strip():
+            return False, "Tool call missing 'tool' name.", False
+        if args is None:
+            args = {}
+        if not isinstance(args, dict):
+            return False, f"Tool '{name}' 'args' must be a JSON object.", False
+        name = name.strip()
+
+        if name == "list_files":
+            raw_me = args.get("max_entries")
+            try:
+                max_entries = LIST_FILES_MAX_ENTRIES if raw_me is None else max(1, min(int(raw_me), LIST_FILES_MAX_ENTRIES))
+            except (TypeError, ValueError):
+                return False, "list_files error: 'max_entries' must be an integer.", False
+            ok, out = tool_list_files(
+                self.worktree_dir,
+                path=args.get("path", "."),
+                glob_pattern=args.get("glob") or args.get("glob_pattern"),
+                max_entries=max_entries,
+            )
+            return ok, out, False
+
+        if name == "grep":
+            raw_mm = args.get("max_matches")
+            try:
+                max_matches = GREP_MAX_MATCHES if raw_mm is None else max(1, min(int(raw_mm), GREP_MAX_MATCHES))
+            except (TypeError, ValueError):
+                return False, "grep error: 'max_matches' must be an integer.", False
+            ok, out = tool_grep(
+                self.worktree_dir,
+                pattern=args.get("pattern", ""),
+                path=args.get("path", "."),
+                max_matches=max_matches,
+            )
+            return ok, out, False
+
+        if name == "read_file":
+            ok, out = tool_read_file(
+                self.worktree_dir,
+                path=args.get("path", ""),
+                start=args.get("start", 1),
+                end=args.get("end"),
+            )
+            return ok, out, False
+
+        if name == "search_replace":
+            ok, out = tool_search_replace(
+                self.worktree_dir,
+                path=args.get("path", ""),
+                old=args.get("old"),
+                new=args.get("new"),
+            )
+            if ok:
+                self.edits_applied += 1
+            return ok, out, ok
+
+        if name == "create_file":
+            ok, out, overwrote = tool_create_file(
+                self.worktree_dir,
+                path=args.get("path", ""),
+                content=args.get("content"),
+                overwrite=bool(args.get("overwrite", False)),
+                justification=args.get("justification") or args.get("reason") or "",
+                executable=bool(args.get("executable", False)),
+                overwrites_used=self.overwrites_used,
+                max_overwrites=self.max_overwrites,
+            )
+            if ok:
+                self.edits_applied += 1
+                if overwrote:
+                    self.overwrites_used += 1
+            return ok, out, ok
+
+        return False, f"Unknown tool: {name!r}. Valid tools: list_files, grep, read_file, search_replace, create_file, run_tests, finish.", False
+
+
+def _normalize_tool_call_obj(obj):
+    """Normalize a single parsed JSON dict into {'tool': name, 'args': dict}."""
+    if not isinstance(obj, dict):
+        return None
+    if "function" in obj and isinstance(obj["function"], dict):
+        fn = obj["function"]
+        name = fn.get("name")
+        raw_args = fn.get("arguments", {})
+    else:
+        name = obj.get("tool") or obj.get("name")
+        if "args" in obj:
+            raw_args = obj["args"]
+        elif "arguments" in obj:
+            raw_args = obj["arguments"]
+        else:
+            raw_args = {k: v for k, v in obj.items() if k not in ("tool", "name")}
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if isinstance(raw_args, str):
+        try:
+            raw_args = json.loads(raw_args)
+        except json.JSONDecodeError:
+            return None
+    if raw_args is None:
+        raw_args = {}
+    if not isinstance(raw_args, dict):
+        return None
+    return {"tool": name.strip(), "args": raw_args}
+
+
+def extract_tool_calls(response_text, raw_tool_calls=None):
+    """Extract structured tool calls from OpenAI tool_calls or fenced ```json / ```tool blocks.
+
+    Returns (calls: list[dict], parse_errors: list[str]).
+    """
+    calls = []
+    parse_errors = []
+
+    if raw_tool_calls and isinstance(raw_tool_calls, list):
+        for tc in raw_tool_calls:
+            norm = _normalize_tool_call_obj(tc)
+            if norm is not None:
+                calls.append(norm)
+            else:
+                parse_errors.append(f"Invalid structured tool_call object: {tc!r}")
+        if calls:
+            return calls, parse_errors
+
+    text = response_text or ""
+    blocks = re.findall(r"```(?:tool|json)\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if not blocks:
+        stripped = text.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            blocks = [stripped]
+
+    for blk in blocks:
+        blk_s = blk.strip()
+        if not blk_s:
+            continue
+        try:
+            parsed = json.loads(blk_s)
+        except json.JSONDecodeError as e:
+            parse_errors.append(f"Invalid JSON in tool block: {e}")
+            continue
+        items = parsed if isinstance(parsed, list) else [parsed]
+        for item in items:
+            norm = _normalize_tool_call_obj(item)
+            if norm is not None:
+                calls.append(norm)
+            else:
+                parse_errors.append(f"JSON object is not a valid tool call (missing 'tool' name): {str(item)[:160]}")
+
+    return calls, parse_errors
+
+
+def build_target_file_manifest(task, worktree_dir):
+    """Build a compact manifest of target files (paths + line counts) without dumping full file contents."""
+    clean_task = tasks_item6.strip_hidden(task)
+    lines = []
+    for rel_path in clean_task.get("files", []):
+        if worktree_dir:
+            try:
+                full_path = resolve_confined_path(worktree_dir, rel_path)
+            except ValueError:
+                continue
+            if os.path.exists(full_path) and os.path.isfile(full_path) and not os.path.islink(full_path):
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                        n_lines = len(f.read().splitlines())
+                    lines.append(f"- `{rel_path}` (existing, {n_lines} lines)")
+                except OSError:
+                    lines.append(f"- `{rel_path}` (existing)")
+            else:
+                lines.append(f"- `{rel_path}` (new file)")
+        else:
+            lines.append(f"- `{rel_path}`")
+    return "\n".join(lines)
+
+
+def format_tool_messages(task, worktree_dir=None):
+    """Build initial [system, user] messages for the v2 structured-edit tool loop.
+
+    Never includes reference diffs, merged commits, or full target-file dumps.
+    """
+    clean_task = tasks_item6.strip_hidden(task)
+    has_tests = bool(clean_task.get("has_tests"))
+    test_tool_doc = (
+        '- `{"tool": "run_tests", "args": {}}`: run the task\'s verification command in the sandbox.\n'
+        if has_tests
+        else ""
+    )
+    system_msg = (
+        "You are a software engineer editing a clean git scratch repository at its base commit.\n"
+        "You MUST make changes using structured tool calls inside a ```json code block.\n"
+        "You may emit a single JSON object or a JSON array of tool calls per turn.\n\n"
+        "Available tools:\n"
+        '- `{"tool": "list_files", "args": {"path": ".", "glob": "*.py"}}`: list files under path (glob optional).\n'
+        '- `{"tool": "grep", "args": {"pattern": "regex", "path": "."}}`: search text files (path optional).\n'
+        '- `{"tool": "read_file", "args": {"path": "rel/path", "start": 1, "end": 200}}`: read numbered lines (max 250 lines/call).\n'
+        '- `{"tool": "search_replace", "args": {"path": "rel/path", "old": "exact unique text", "new": "replacement"}}`: '
+        "targeted edit on an existing file (`old` must match uniquely; whole-file rewrites of large files are rejected).\n"
+        '- `{"tool": "create_file", "args": {"path": "rel/path", "content": "...", "executable": false}}`: '
+        "create a new file (refuses existing files unless `overwrite: true` and `justification` >= 15 chars, capped at 1 per task).\n"
+        f"{test_tool_doc}"
+        '- `{"tool": "finish", "args": {"summary": "brief summary"}}`: finish and verify your edits.\n\n'
+        "Rules:\n"
+        "- Always read files with `read_file` or `grep` before editing them.\n"
+        "- Make targeted edits with `search_replace`; never emit raw unified diffs.\n"
+        "- The harness applies your edits and generates the git diff automatically.\n"
+        "- Standard library or repository dependencies only; no unrequested subagents; no GPU work."
+    )
+
+    manifest = build_target_file_manifest(clean_task, worktree_dir)
+    test_note = (
+        f"\n\nVerification command (`run_tests`): `{clean_task['test_cmd']}`"
+        if has_tests and clean_task.get("test_cmd")
+        else "\n\nThis task has no automated test command; call `finish` once all edits are applied."
+    )
+    user_msg = (
+        f"{clean_task['prompt']}\n\n"
+        f"Expected target files:\n{manifest}{test_note}\n\n"
+        "Start by reading the relevant files using `read_file` / `grep`, then apply targeted edits "
+        "with `search_replace` / `create_file`, and call `finish` when done."
+    )
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_msg},
+    ]
+    check_prompt_leak(messages, task)
+    return messages
 
 
 def validate_patch_paths(worktree_dir, patch_text):
@@ -662,25 +1284,71 @@ def _is_context_overflow_error(err_text: str) -> bool:
     return "context" in low and any(w in low for w in ("size", "overflow", "exceed", "window", "limit", "length"))
 
 
-def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_budget=TASK_BUDGET_TOKENS):
-    """Execute the agentic loop on a task in worktree_dir."""
+def _truncate_tool_output(text, max_chars=TOOL_RESULT_MAX_CHARS):
+    """Bound individual tool result payloads so context does not blow up unexpectedly."""
+    s = redact_grading_seed(text or "")
+    if len(s) > max_chars:
+        return s[:max_chars] + f"\n... [truncated {len(s) - max_chars} chars] ..."
+    return s
+
+
+def run_task_loop(
+    task,
+    ask_fn,
+    worktree_dir,
+    max_turns=MAX_TURNS_DEFAULT,
+    task_budget=TASK_BUDGET_TOKENS,
+    slot_ctx=SLOT_CTX_DEFAULT,
+    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
+    token_counter=None,
+):
+    """Execute the v2 structured-edit tool loop with prompt-size preflight on a task in worktree_dir."""
     clean_task = tasks_item6.strip_hidden(task)
     has_tests = bool(clean_task.get("has_tests"))
+    messages = format_tool_messages(task, worktree_dir=worktree_dir)
+    tool_session = ToolSession(worktree_dir)
     history = []
     seen_code_hashes = set()
-    last_code = None
-    last_err = None
+    last_test_err = None
+    last_turn_err = None
+    dirty_since_last_test = False
     accumulated_completion_tokens = 0
     stop_reason = "max_turns"
+    final_passed = False
 
     for turn in range(max_turns):
         t0 = time.time()
-        prompt = format_turn_prompt(clean_task, last_code, last_err, worktree_dir=worktree_dir)
-        check_prompt_leak(prompt, task)
-        seed = 6000 + clean_task["pr_number"] * 10 + turn
+        check_prompt_leak(messages, task)
+        seed = 6000 + clean_task["pr_number"] * 100 + turn
+
+        # Prompt-size preflight before sending request to server
+        fits, est_prompt_tokens, max_prompt_tokens = check_context_preflight(
+            messages,
+            slot_ctx=slot_ctx,
+            reserved_output=reserved_output_tokens,
+            token_counter=token_counter,
+        )
+        if not fits:
+            err_text = (
+                f"prompt preflight overflow: {est_prompt_tokens} tokens exceeds slot budget "
+                f"{max_prompt_tokens} (slot_ctx={slot_ctx}, reserved_output={reserved_output_tokens})"
+            )
+            stop_reason = "context_overflow"
+            history.append({
+                "turn": turn,
+                "seed": seed,
+                "passed": False,
+                "err": err_text,
+                "stop": stop_reason,
+                "gen_s": round(time.time() - t0, 2),
+                "tokens": 0,
+                "prompt_tokens": est_prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
+            })
+            break
 
         try:
-            reply = ask_fn(prompt, seed)
+            reply = ask_fn(messages, seed)
         except urllib.error.HTTPError as e:
             err_body = ""
             try:
@@ -699,7 +1367,8 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
                 "stop": stop_reason,
                 "gen_s": round(time.time() - t0, 2),
                 "tokens": 0,
-                "prompt_tokens": 0,
+                "prompt_tokens": est_prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
             })
             break
         except urllib.error.URLError as e:
@@ -713,19 +1382,22 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
                 "stop": stop_reason,
                 "gen_s": round(time.time() - t0, 2),
                 "tokens": 0,
-                "prompt_tokens": 0,
+                "prompt_tokens": est_prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
             })
             break
 
         gen_s = round(time.time() - t0, 2)
         comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
-        prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or 0
+        prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or est_prompt_tokens
         accumulated_completion_tokens += comp_tokens
 
-        content = reply.get("content", "")
-        code_hash = hashlib.sha256(content.encode()).hexdigest()
+        content = reply.get("content", "") or ""
+        raw_tool_calls = reply.get("tool_calls")
+        hash_payload = content + (json.dumps(raw_tool_calls, sort_keys=True) if raw_tool_calls else "")
+        code_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()
 
-        # Stop check: repeat code
+        # Stop check: repeat code / identical reply
         if code_hash in seen_code_hashes:
             history.append({
                 "turn": turn,
@@ -736,61 +1408,228 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
                 "gen_s": gen_s,
                 "tokens": comp_tokens,
                 "prompt_tokens": prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
             })
             stop_reason = "repeat_code"
             break
         seen_code_hashes.add(code_hash)
 
-        # Apply updates
-        updates = extract_file_updates(content)
-        ok, msg = apply_updates(worktree_dir, updates)
+        messages.append({"role": "assistant", "content": content})
 
-        if not ok:
-            passed = False
-            test_out = f"Failed to apply updates: {msg}"
-        elif not has_tests:
-            # No test command when has_tests is False: do not call run_tests
-            passed = True
-            test_out = ""
-        else:
-            # Run automated tests
-            passed, test_out = run_tests(clean_task, worktree_dir)
-
-        # Stop check: repeat error
-        if not passed and last_err is not None and test_out.strip() == last_err.strip():
+        calls, parse_errors = extract_tool_calls(content, raw_tool_calls=raw_tool_calls)
+        if not calls:
+            err_msg = (
+                "; ".join(parse_errors)
+                if parse_errors
+                else "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
+            )
+            if last_turn_err is not None and err_msg.strip() == last_turn_err.strip():
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": False,
+                    "err": err_msg,
+                    "stop": "repeat_error",
+                    "gen_s": gen_s,
+                    "tokens": comp_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                })
+                stop_reason = "repeat_error"
+                break
             history.append({
                 "turn": turn,
                 "seed": seed,
                 "passed": False,
-                "err": test_out,
-                "stop": "repeat_error",
+                "err": err_msg,
+                "tool_calls": [],
                 "gen_s": gen_s,
                 "tokens": comp_tokens,
                 "prompt_tokens": prompt_tokens,
+                "preflight_prompt_tokens": est_prompt_tokens,
             })
-            stop_reason = "repeat_error"
-            break
+            last_turn_err = err_msg
+            if accumulated_completion_tokens >= task_budget:
+                stop_reason = "budget"
+                break
+            messages.append({"role": "user", "content": f"Tool error: {err_msg}"})
+            continue
+
+        result_lines = []
+        if parse_errors:
+            result_lines.append("Parse warnings: " + "; ".join(parse_errors))
+
+        call_summaries = []
+        any_edit_ok = False
+        any_tool_ok = False
+        turn_errors = []
+        requested_finish = False
+        ran_tests_this_turn = False
+        test_passed_this_turn = False
+        test_out_this_turn = ""
+
+        for idx, call in enumerate(calls, start=1):
+            tname = call.get("tool", "")
+            if tname == "finish":
+                requested_finish = True
+                call_summaries.append({"tool": "finish", "ok": True})
+                continue
+            if tname == "run_tests":
+                if not has_tests:
+                    msg = "This task has no automated test command; call finish when your edits are complete."
+                    call_summaries.append({"tool": "run_tests", "ok": True})
+                    result_lines.append(f"[{idx}] run_tests: {msg}")
+                    any_tool_ok = True
+                    continue
+                t_ok, t_out = run_tests(clean_task, worktree_dir)
+                t_out_clean = redact_grading_seed((t_out or "").strip())
+                if len(t_out_clean) > 2500:
+                    t_out_clean = "... [truncated] ...\n" + t_out_clean[-2500:]
+                ran_tests_this_turn = True
+                test_passed_this_turn = t_ok
+                test_out_this_turn = t_out_clean
+                dirty_since_last_test = False
+                call_summaries.append({"tool": "run_tests", "ok": t_ok})
+                if t_ok:
+                    any_tool_ok = True
+                    result_lines.append(f"[{idx}] run_tests PASSED:\n{t_out_clean}")
+                else:
+                    turn_errors.append(t_out_clean)
+                    result_lines.append(f"[{idx}] run_tests FAILED:\n{t_out_clean}")
+                continue
+
+            ok, out, is_edit = tool_session.execute(call)
+            call_summaries.append({"tool": tname, "ok": ok})
+            if ok:
+                any_tool_ok = True
+                if is_edit:
+                    any_edit_ok = True
+                    dirty_since_last_test = True
+                result_lines.append(f"[{idx}] {tname} OK:\n{_truncate_tool_output(out)}")
+            else:
+                turn_errors.append(out)
+                result_lines.append(f"[{idx}] {tname} ERROR:\n{_truncate_tool_output(out)}")
+
+        # Handle finish request
+        if requested_finish:
+            curr_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+            if not curr_diff.strip():
+                no_diff_err = "Cannot finish: git diff is empty. Apply edits with search_replace or create_file first."
+                turn_errors.append(no_diff_err)
+                result_lines.append(f"finish ERROR: {no_diff_err}")
+            elif not has_tests:
+                final_passed = True
+                stop_reason = "applied_no_tests"
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": True,
+                    "err": "",
+                    "tool_calls": call_summaries,
+                    "gen_s": gen_s,
+                    "tokens": comp_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                })
+                break
+            else:
+                if not ran_tests_this_turn or dirty_since_last_test:
+                    t_ok, t_out = run_tests(clean_task, worktree_dir)
+                    t_out_clean = redact_grading_seed((t_out or "").strip())
+                    if len(t_out_clean) > 2500:
+                        t_out_clean = "... [truncated] ...\n" + t_out_clean[-2500:]
+                    ran_tests_this_turn = True
+                    test_passed_this_turn = t_ok
+                    test_out_this_turn = t_out_clean
+                    dirty_since_last_test = False
+                if test_passed_this_turn:
+                    final_passed = True
+                    stop_reason = "pass"
+                    history.append({
+                        "turn": turn,
+                        "seed": seed,
+                        "passed": True,
+                        "err": "",
+                        "tool_calls": call_summaries,
+                        "gen_s": gen_s,
+                        "tokens": comp_tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "preflight_prompt_tokens": est_prompt_tokens,
+                    })
+                    break
+                turn_errors.append(test_out_this_turn)
+                result_lines.append(f"finish verification FAILED:\n{test_out_this_turn}")
+
+        # Repeat-error stop check on repeated identical test failure
+        if ran_tests_this_turn and not test_passed_this_turn:
+            if last_test_err is not None and test_out_this_turn.strip() == last_test_err.strip():
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": False,
+                    "err": test_out_this_turn,
+                    "stop": "repeat_error",
+                    "tool_calls": call_summaries,
+                    "gen_s": gen_s,
+                    "tokens": comp_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                })
+                stop_reason = "repeat_error"
+                break
+            last_test_err = test_out_this_turn
+
+        # Repeat-error stop check when a turn makes no progress and repeats the identical tool error
+        joined_err = "\n".join(turn_errors).strip()
+        if not any_tool_ok and joined_err:
+            if last_turn_err is not None and joined_err == last_turn_err.strip():
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": False,
+                    "err": joined_err,
+                    "stop": "repeat_error",
+                    "tool_calls": call_summaries,
+                    "gen_s": gen_s,
+                    "tokens": comp_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                })
+                stop_reason = "repeat_error"
+                break
+            last_turn_err = joined_err
+        else:
+            last_turn_err = None
 
         history.append({
             "turn": turn,
             "seed": seed,
-            "passed": passed,
-            "err": "" if passed else test_out,
+            "passed": bool(ran_tests_this_turn and test_passed_this_turn),
+            "err": joined_err,
+            "tool_calls": call_summaries,
             "gen_s": gen_s,
             "tokens": comp_tokens,
             "prompt_tokens": prompt_tokens,
+            "preflight_prompt_tokens": est_prompt_tokens,
         })
-
-        if passed:
-            stop_reason = "pass" if has_tests else "applied_no_tests"
-            break
 
         if accumulated_completion_tokens >= task_budget:
             stop_reason = "budget"
             break
 
-        last_code = content
-        last_err = test_out
+        feedback = "Tool results:\n" + "\n\n".join(result_lines)
+        if turn == max_turns - 2:
+            feedback += "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
+        messages.append({"role": "user", "content": feedback})
+
+    # If the loop stopped on max_turns/budget after edits without a final test check, evaluate final state once
+    if stop_reason in ("max_turns", "budget") and has_tests and dirty_since_last_test:
+        t_ok, _ = run_tests(clean_task, worktree_dir)
+        if t_ok:
+            final_passed = True
+            stop_reason = "pass"
+            if history:
+                history[-1]["passed"] = True
 
     if stop_reason in ("context_overflow", "request_error"):
         final_diff = ""
@@ -801,7 +1640,7 @@ def run_task_loop(task, ask_fn, worktree_dir, max_turns=MAX_TURNS_DEFAULT, task_
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": False if stop_reason in ("context_overflow", "request_error") else (history[-1]["passed"] if history else False),
+        "passed": False if stop_reason in ("context_overflow", "request_error") else final_passed,
         "stop_reason": stop_reason,
         "stop": stop_reason,
         "turns_executed": len(history),
@@ -895,30 +1734,44 @@ def selftest():
             "hidden_diff": "+def compute():\n+    return 42",
         }
 
-        # Case A: Fails turn 0, model fixes in turn 1 with test error feedback
-        def mock_model_turn1_pass(prompt, seed):
-            if "failed automated verification" not in prompt:
-                # Turn 0: produce buggy code
+        # Case A: Model reads, makes a failed search_replace, retries & fixes, then finishes
+        def mock_model_turn1_pass(messages, seed):
+            joined = messages_to_text(messages)
+            if "Tool results:" not in joined:
+                # Turn 0: read file and submit buggy edit + finish
+                calls = [
+                    {"tool": "read_file", "args": {"path": "test_target.py", "start": 1, "end": 10}},
+                    {"tool": "search_replace", "args": {"path": "test_target.py", "old": "return 0", "new": "return 1"}},
+                    {"tool": "finish", "args": {"summary": "attempt 1"}},
+                ]
                 return {
-                    "content": "### test_target.py\n```python\ndef compute():\n    return 1\n```",
+                    "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 50},
                 }
-            # Turn 1: fix code based on error
+            # Turn 1: fix code based on test error
+            calls = [
+                {"tool": "search_replace", "args": {"path": "test_target.py", "old": "return 1", "new": "return 42"}},
+                {"tool": "finish", "args": {"summary": "fixed"}},
+            ]
             return {
-                "content": "### test_target.py\n```python\ndef compute():\n    return 42\n```",
+                "content": "```json\n" + json.dumps(calls) + "\n```",
                 "usage": {"completion_tokens": 50},
             }
 
-        res = run_task_loop(mock_task, mock_model_turn1_pass, temp_dir, max_turns=3)
-        assert res["passed"] is True, "Mock task expected to pass in turn 1"
+        res = run_task_loop(mock_task, mock_model_turn1_pass, temp_dir, max_turns=4)
+        assert res["passed"] is True, f"Mock task expected to pass in turn 1: {res}"
         assert res["turns_executed"] == 2, f"Expected 2 turns, got {res['turns_executed']}"
         assert res["stop_reason"] == "pass", f"Expected stop_reason 'pass', got {res['stop_reason']}"
-        print("[OK] Mock loop execution with feedback pass verified")
+        assert "+    return 42" in res["final_diff"], "Harness did not capture git diff"
+        print("[OK] Structured edit loop with feedback pass verified")
 
         # Case B: Repeat code stop check
-        def mock_model_repeat(prompt, seed):
+        def mock_model_repeat(messages, seed):
+            calls = [
+                {"tool": "search_replace", "args": {"path": "test_target.py", "old": "nonexistent", "new": "x"}},
+            ]
             return {
-                "content": "### test_target.py\n```python\ndef compute():\n    return 10\n```",
+                "content": "```json\n" + json.dumps(calls) + "\n```",
                 "usage": {"completion_tokens": 40},
             }
 
@@ -926,6 +1779,25 @@ def selftest():
         assert res_repeat["passed"] is False
         assert res_repeat["stop_reason"] == "repeat_code"
         print("[OK] Repeat code stop rule verified")
+
+        # Case C: Context preflight overflow check (never invokes ask_fn)
+        called_overflow = []
+        def should_not_be_called(messages, seed):
+            called_overflow.append(True)
+            return {"content": "", "usage": {}}
+
+        res_ovf = run_task_loop(
+            mock_task,
+            should_not_be_called,
+            temp_dir,
+            slot_ctx=100,
+            reserved_output_tokens=50,
+            token_counter=lambda m: 999,
+        )
+        assert not called_overflow, "ask_fn must not be called when preflight detects overflow"
+        assert res_ovf["stop_reason"] == "context_overflow"
+        assert res_ovf["final_diff"] == ""
+        print("[OK] Context preflight overflow verified")
 
     finally:
         shutil.rmtree(temp_dir)
@@ -950,17 +1822,26 @@ def server_info(api=None):
     """Query GET /props on the served endpoint."""
     with urllib.request.urlopen(f"{api or API_URL}/props", timeout=10) as r:
         p = json.load(r)
-    return {k: p.get(k) for k in ("build_info", "model_path", "model_alias")}
+    info = {k: p.get(k) for k in ("build_info", "model_path", "model_alias", "total_slots")}
+    dgs = p.get("default_generation_settings") or {}
+    if "n_ctx" in dgs:
+        info["n_ctx"] = dgs["n_ctx"]
+    return info
 
 
 def server_ask(model, api=None):
-    """Return an ask_fn(prompt, seed) that queries /v1/chat/completions on the served model."""
+    """Return an ask_fn(prompt_or_messages, seed) that queries /v1/chat/completions on the served model."""
     api = api or API_URL
 
-    def ask(prompt, seed):
+    def ask(prompt_or_messages, seed):
+        messages = (
+            prompt_or_messages
+            if isinstance(prompt_or_messages, list)
+            else [{"role": "user", "content": prompt_or_messages}]
+        )
         body = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "max_tokens": MAX_TOKENS,
             "reasoning_budget_tokens": REASONING_BUDGET,
             "reasoning_budget_message": BUDGET_MESSAGE,
@@ -976,9 +1857,11 @@ def server_ask(model, api=None):
         with urllib.request.urlopen(req, timeout=3600) as r:
             resp = json.load(r)
         ch = resp["choices"][0]
+        msg = ch.get("message") or {}
         return {
-            "content": ch["message"].get("content") or "",
-            "reasoning_chars": len(ch["message"].get("reasoning_content") or ""),
+            "content": msg.get("content") or "",
+            "tool_calls": msg.get("tool_calls"),
+            "reasoning_chars": len(msg.get("reasoning_content") or ""),
             "finish": ch.get("finish_reason"),
             "usage": resp.get("usage", {}),
             "gen_s": round(time.time() - t, 2),
@@ -1007,7 +1890,8 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
     if (
         test_rate >= (3.0 / 6.0 - 1e-9)
         and app_rate >= (3.0 / 7.0 - 1e-9)
-        and (avg_hand_fix_lines is None or avg_hand_fix_lines <= 20.0)
+        and avg_hand_fix_lines is not None
+        and avg_hand_fix_lines <= 20.0
     ):
         return "KEEP"
     return "INCONCLUSIVE"
@@ -1015,7 +1899,9 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 
 
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
-                   task_budget=TASK_BUDGET_TOKENS, repo_root=None, results_dir=None, ask_fn=None, resume=False):
+                   task_budget=TASK_BUDGET_TOKENS, slot_ctx=None,
+                   reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
+                   repo_root=None, results_dir=None, ask_fn=None, token_counter=None, resume=False):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
     resume = resume or (os.environ.get("RESUME") == "1")
     if repo_root is None:
@@ -1042,9 +1928,13 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         resolved_model = served_model(model, api=api)
         srv_info = server_info(api=api)
         ask_fn = server_ask(resolved_model, api=api)
+        if token_counter is None:
+            token_counter = server_tokenize(api=api)
+        eff_slot_ctx = slot_ctx if slot_ctx is not None else (srv_info.get("n_ctx") or SLOT_CTX_DEFAULT)
     else:
         resolved_model = model or "mock"
         srv_info = {"build_info": "mock", "model_path": "mock", "model_alias": resolved_model}
+        eff_slot_ctx = slot_ctx if slot_ctx is not None else SLOT_CTX_DEFAULT
 
     # Load existing rows so running one task at a time updates/appends cleanly
     existing_by_id = {}
@@ -1059,6 +1949,20 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
 
     if resume:
         selected_tasks = [t for t in selected_tasks if tasks_item6.strip_hidden(t)["id"] not in existing_by_id]
+
+    def _flush_jsonl():
+        order_ids = [t["id"] for t in all_tasks]
+        ordered_tids = [tid for tid in order_ids if tid in existing_by_id]
+        for tid in existing_by_id:
+            if tid not in ordered_tids:
+                ordered_tids.append(tid)
+        selected_ids = {tasks_item6.strip_hidden(t)["id"] for t in selected_tasks}
+        with open(jsonl_path, "w", encoding="utf-8") as f:
+            for tid in ordered_tids:
+                if tid in existing_raw_by_id and (resume or tid not in selected_ids):
+                    f.write(existing_raw_by_id[tid] + "\n")
+                else:
+                    f.write(json.dumps(existing_by_id[tid]) + "\n")
 
     results = []
     for task in selected_tasks:
@@ -1075,41 +1979,51 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 wt_dir,
                 max_turns=max_turns,
                 task_budget=task_budget,
+                slot_ctx=eff_slot_ctx,
+                reserved_output_tokens=reserved_output_tokens,
+                token_counter=token_counter,
             )
-            res["wall_s"] = round(time.time() - t_start, 2)
-            res["model"] = resolved_model
-            res["server"] = srv_info
-
-            diff_file = os.path.join(diffs_dir, f"{task_id}.diff")
-            with open(diff_file, "w", encoding="utf-8") as df:
-                df.write(res["final_diff"])
-            res["diff_file"] = os.path.relpath(diff_file, repo_root) if diff_file.startswith(repo_root) else diff_file
-
-            existing_by_id[task_id] = res
-            results.append(res)
-            print(
-                f"{task_id:14} pr=#{res['pr_number']:<2} has_tests={str(res['has_tests']):<5} "
-                f"passed={str(res['passed']):<5} stop={res['stop_reason']:<16} turns={res['turns_executed']} "
-                f"tok={res['total_completion_tokens']} diff_lines={len(res['final_diff'].splitlines())}",
-                flush=True,
-            )
+        except AssertionError:
+            raise
+        except Exception as exc:
+            # Isolate per-task failures so one task never aborts the remaining tasks
+            res = {
+                "task_id": task_id,
+                "pr_number": clean_task["pr_number"],
+                "has_tests": bool(clean_task.get("has_tests")),
+                "passed": False,
+                "stop_reason": "task_error",
+                "stop": "task_error",
+                "turns_executed": 0,
+                "history": [{"turn": 0, "passed": False, "err": f"{type(exc).__name__}: {exc}", "stop": "task_error"}],
+                "total_completion_tokens": 0,
+                "final_diff": "",
+            }
         finally:
             if os.path.exists(wt_dir):
                 shutil.rmtree(wt_dir, ignore_errors=True)
 
-    # Write updated JSONL in canonical task order
-    order_ids = [t["id"] for t in all_tasks]
-    ordered_tids = [tid for tid in order_ids if tid in existing_by_id]
-    for tid in existing_by_id:
-        if tid not in ordered_tids:
-            ordered_tids.append(tid)
+        res["wall_s"] = round(time.time() - t_start, 2)
+        res["model"] = resolved_model
+        res["server"] = srv_info
 
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        for tid in ordered_tids:
-            if tid in existing_raw_by_id and (resume or tid not in [tasks_item6.strip_hidden(t)["id"] for t in selected_tasks]):
-                f.write(existing_raw_by_id[tid] + "\n")
-            else:
-                f.write(json.dumps(existing_by_id[tid]) + "\n")
+        diff_file = os.path.join(diffs_dir, f"{task_id}.diff")
+        with open(diff_file, "w", encoding="utf-8") as df:
+            df.write(res["final_diff"])
+        res["diff_file"] = os.path.relpath(diff_file, repo_root) if diff_file.startswith(repo_root) else diff_file
+
+        existing_by_id[task_id] = res
+        results.append(res)
+        _flush_jsonl()
+        print(
+            f"{task_id:14} pr=#{res['pr_number']:<2} has_tests={str(res['has_tests']):<5} "
+            f"passed={str(res['passed']):<5} stop={res['stop_reason']:<16} turns={res['turns_executed']} "
+            f"tok={res['total_completion_tokens']} diff_lines={len(res['final_diff'].splitlines())}",
+            flush=True,
+        )
+
+    if not results and os.path.exists(jsonl_path):
+        _flush_jsonl()
 
     return results
 
@@ -1480,7 +2394,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
 
     total_evaluated = len(per_task)
     final_app_count = approved_final if (has_all_reviews and total_evaluated > 0) else None
-    avg_hf = (sum(hand_fix_lines_approved) / len(hand_fix_lines_approved)) if hand_fix_lines_approved else 0.0
+    avg_hf = (sum(hand_fix_lines_approved) / len(hand_fix_lines_approved)) if hand_fix_lines_approved else None
 
     decision = compute_keep_drop(
         testable_passed=testable_passed,
@@ -1500,7 +2414,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         "approved_first_pass": approved_first if has_all_reviews else None,
         "approved_final": final_app_count,
         "final_approve_rate": round(final_app_count / total_evaluated, 4) if (final_app_count is not None and total_evaluated > 0) else None,
-        "avg_hand_fix_lines_per_approved": round(avg_hf, 2) if final_app_count is not None else None,
+        "avg_hand_fix_lines_per_approved": round(avg_hf, 2) if (final_app_count is not None and avg_hf is not None) else None,
         "decision": decision,
         "per_task": per_task,
     }
@@ -1516,27 +2430,31 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Item 6 Pilot PR Loop Runner")
     parser.add_argument("--selftest", action="store_true", help="Run CPU-only self-tests")
-    parser.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    parser.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
     parser.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
     parser.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
     parser.add_argument("--model", type=str, default=None, help="Expected model alias")
     parser.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     parser.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    parser.add_argument("--slot-ctx", type=int, default=None, help="Per-slot context window (default from /props or 65536)")
+    parser.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
     parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
     p_run = subparsers.add_parser("run", help="Run agentic loop on PR tasks in scratch worktrees")
-    p_run.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_run.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
     p_run.add_argument("--tasks", type=str, default=None, help="Comma-separated task IDs")
     p_run.add_argument("--api", type=str, default=API_URL, help="Served model API URL (default :8081)")
     p_run.add_argument("--model", type=str, default=None, help="Expected model alias")
     p_run.add_argument("-k", "--max-turns", type=int, default=MAX_TURNS_DEFAULT, help="Max turns per task")
     p_run.add_argument("--task-budget", type=int, default=TASK_BUDGET_TOKENS, help="Max completion tokens per task")
+    p_run.add_argument("--slot-ctx", type=int, default=None, help="Per-slot context window (default from /props or 65536)")
+    p_run.add_argument("--reserved-output-tokens", type=int, default=RESERVED_OUTPUT_TOKENS, help="Output token budget reserved in context preflight")
     p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
-    p_grade.add_argument("--label", type=str, default="item6-pilot", help="Run label")
+    p_grade.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
     p_grade.add_argument("--reviews-file", type=str, default=None, help="Path to adversarial-reviewer verdicts JSON")
 
     args = parser.parse_args(argv)
@@ -1552,6 +2470,8 @@ def main(argv=None):
             model=args.model,
             max_turns=args.max_turns,
             task_budget=args.task_budget,
+            slot_ctx=args.slot_ctx,
+            reserved_output_tokens=args.reserved_output_tokens,
             resume=getattr(args, "resume", False),
         )
         return 0

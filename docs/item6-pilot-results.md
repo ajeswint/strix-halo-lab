@@ -8,7 +8,7 @@ Final post-run results for Roadmap Item 6 pilot (`docs/item6-pilot.md`), evaluat
 - **Primary Thresholds**:
   - **Authoritative Test Pass Rate**: **0 / 6** (0.0%). Pre-registered DROP threshold is $< 2/6$ ($< 33.3\%$).
   - **Reviewer Approval Rate**: **0 / 7** (0.0%). Pre-registered DROP threshold is $< 2/7$ ($< 28.6\%$).
-  - **Reviewer Hand-Fix Lines**: **n/a (no approved PRs)**. In `bench/loop/results/item6-pilot.grade.json`, `avg_hand_fix_lines_per_approved` appears as `0.0` solely because the denominator of approved PRs is zero. Among the 5 non-empty diffs reviewed by Grok 4.7 high, reported hand-fix lines were **800, 194, 1858, 170, and 30**, all well above the $\le 20$ lines bar.
+  - **Reviewer Hand-Fix Lines**: **n/a (no approved PRs)**. In the frozen v1 `bench/loop/results/item6-pilot.grade.json`, `avg_hand_fix_lines_per_approved` appears as `0.0` solely because the v1 grader emitted `0.0` on a zero denominator of approved PRs (subsequently fixed in `bench/loop/pilot_pr.py` for v2 to emit `null`). Among the 5 non-empty diffs reviewed by Grok 4.7 high, reported hand-fix lines were **800, 194, 1858, 170, and 30**, all well above the $\le 20$ lines bar.
 - **Decision Partition**: Both DROP criteria are independently met. The pilot conclusively demonstrates that the single-model local agentic loop (`Qwen3.6-35B-A3B`) on real repository pull requests does not justify scaling to a full benchmark without a fundamental architectural redesign.
 
 ## 2. Hardware, Model, and Serving Configuration
@@ -39,7 +39,7 @@ The evaluation was executed in two phases due to a context overflow on task `ite
 
 The authoritative grade was computed via `python3 bench/loop/pilot_pr.py grade --label item6-pilot` in `/tmp/wt-item6-run2` at HEAD `9115f8b` with `reviews_complete: true` (exit code 0).
 
-A single official grade file is committed: [`bench/loop/results/item6-pilot.grade.json`](file:///tmp/wt-item6-results/bench/loop/results/item6-pilot.grade.json). An earlier, superseded Nov 18 pre-review grade file (`reviews_complete: false`) was overwritten during grading in the run worktree and was not committed.
+A single official grade file is committed: [`bench/loop/results/item6-pilot.grade.json`](../bench/loop/results/item6-pilot.grade.json). An earlier, superseded Nov 18 pre-review grade file (`reviews_complete: false`) was overwritten during grading in the run worktree and was not committed.
 
 ### Summary Metrics
 
@@ -71,20 +71,20 @@ Offline adversarial reviews were conducted by `grok-4.7-high` using `cursor-agen
 
 ### Review Protocol & Assembly
 
-- **Runner Command**: As recorded in [`bench/loop/results/item6-pilot.tier2/run.sh`](file:///tmp/wt-item6-results/bench/loop/results/item6-pilot.tier2/run.sh):
+- **Runner Command**: As recorded in [`bench/loop/results/item6-pilot.tier2/run.sh`](../bench/loop/results/item6-pilot.tier2/run.sh):
   ```bash
   cursor-agent -p --trust --mode ask --model grok-4.7-high --output-format json \
     "Read the file packet.md in the current directory in full and follow its instructions exactly. Read no other file and use no other tool."
   ```
-- **Session Isolation**: Each task was reviewed in an isolated working directory containing only `packet.md` without repo access, git history, or knowledge of the merged solutions (`hidden_diff`). Fresh, independent sessions were verified by distinct `session_id`s in [`tier2-sessions.json`](file:///tmp/wt-item6-results/bench/loop/results/item6-pilot.tier2/tier2-sessions.json).
+- **Session Isolation**: Each task was reviewed in an isolated working directory containing only `packet.md` without repo access, git history, or knowledge of the merged solutions (`hidden_diff`). Fresh, independent sessions were verified by distinct `session_id`s in [`tier2-sessions.json`](../bench/loop/results/item6-pilot.tier2/tier2-sessions.json).
 - **Automatic Non-Approvals (PR #13 and PR #15)**: Section 10 of `docs/item6-pilot.md` explicitly specifies:
   > *"A task with an empty diff (including context_overflow, and item6_pr13's empty diff) is an automatic non-approval with no Grok review. In offline grading (`pilot_pr.py grade`), `hand_fix_lines` is n/a (`None`) and excluded from the hand-fix average."*
   Because `item6_pr13` and `item6_pr15` produced empty diffs, neither task received a Grok review packet; both were scored automatically as `NON-APPROVAL` with excluded hand-fix lines. Even if both tasks had hypothetically been approved, the 0/6 authoritative test pass rate independently mandates DROP.
 
 ### Execution History and Failed Attempts
 
-Raw artifacts for all review attempts are preserved under [`bench/loop/results/item6-pilot.tier2/`](file:///tmp/wt-item6-results/bench/loop/results/item6-pilot.tier2/):
-1. **Attempt 1 (Nov 18, 23:46 CST, `attempt1-trust-prompt/`)**: `cursor-agent` halted immediately because the directory was not yet marked trusted and `--trust` was omitted. Exit code 1 on all tasks; zero usable reviews produced.
+Raw artifacts for all review attempts are preserved under [`bench/loop/results/item6-pilot.tier2/`](../bench/loop/results/item6-pilot.tier2/):
+1. **Attempt 1 (Nov 18, 23:46 CST, `attempt1-trust-prompt/`)**: `cursor-agent` halted immediately on `item6_pr06`, `item6_pr08`, `item6_pr16`, and `item6_pr20` with exit code 1 because the directory was not yet marked trusted and `--trust` was omitted; `item6_pr14` exited with code 126 (`/usr/bin/timeout: Argument list too long`). Zero usable reviews were produced.
 2. **Attempt 2 (Nov 18, 23:47 CST, `attempt2-usage-limit/`)**: `cursor-agent` halted immediately with `ActionRequiredError: Weekly usage limit reached`. No credits were purchased, and no usable reviews were produced.
 3. **Successful Execution (Nov 20, 11:37–11:42 AM CST, `success/`)**: Launched upon weekly quota reset with `--trust`. All 5 tasks completed cleanly with exit code 0 within 65 to 265 seconds. This was the sole set of completed reviews and did not overwrite or replace any earlier verdicts.
 
