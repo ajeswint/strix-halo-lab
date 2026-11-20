@@ -1,0 +1,42 @@
+[
+  {
+    "task_id": "item6_pr06",
+    "session_id": "a123b68d-d8e7-421a-94aa-98247603851f",
+    "request_id": "cb10f166-6de9-47f0-a9e5-52c962c9d311",
+    "duration_ms": 65604,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T11:38:57-06:00"
+  },
+  {
+    "task_id": "item6_pr08",
+    "session_id": "2badfd6c-3852-4059-9b7c-64e4c90b9efb",
+    "request_id": "a2c89fe1-3f97-4e78-969b-7432611d273c",
+    "duration_ms": 265212,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T11:42:17-06:00"
+  },
+  {
+    "task_id": "item6_pr14",
+    "session_id": "61baf09a-82f2-425a-ae7f-5e9fb3ff9636",
+    "request_id": "112492c5-f69d-46b0-bbb0-870efeaeec13",
+    "duration_ms": 149751,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T11:40:20-06:00"
+  },
+  {
+    "task_id": "item6_pr16",
+    "session_id": "f28b0b2f-08bd-46d5-82eb-fce07a2484d7",
+    "request_id": "1c77f0bf-9bf7-4404-a367-39deb61a435e",
+    "duration_ms": 227359,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T11:41:38-06:00"
+  },
+  {
+    "task_id": "item6_pr20",
+    "session_id": "a4779277-aa65-4c65-93a7-c533c9f927ed",
+    "request_id": "f79333f7-9faf-46b3-86a9-090bc586728d",
+    "duration_ms": 227565,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T11:41:50-06:00"
+  }
+]
