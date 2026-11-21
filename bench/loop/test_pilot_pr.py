@@ -18,12 +18,12 @@ class ExplodingTaskDict(dict):
     """Tripwire dictionary that explodes if hidden fields are accessed."""
 
     def __getitem__(self, key):
-        if key in ("hidden_diff", "merged_commit"):
+        if key in ("hidden_diff", "merged_commit", "hidden_sentinel"):
             raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: In-loop access to '{key}'!")
         return super().__getitem__(key)
 
     def get(self, key, default=None):
-        if key in ("hidden_diff", "merged_commit"):
+        if key in ("hidden_diff", "merged_commit", "hidden_sentinel"):
             raise AssertionError(f"LEAK TRIPWIRE TRIGGERED: In-loop get() for '{key}'!")
         return super().get(key, default)
 
@@ -273,20 +273,31 @@ class TestPilotPr(unittest.TestCase):
             self.assertIn("new_note.md", res["final_diff"])
             self.assertIn("+New untracked file content", res["final_diff"])
 
-            # 2. Leak tripwire on every turn prompt (including feedback turn 1)
+            # 2. Leak tripwire on every turn prompt (including feedback turn 1) using per-run random sentinel
+            run_sentinel = pilot_pr.generate_run_sentinel()
+            s_half = len(run_sentinel) // 2
             leaky_task = {
                 "id": "item6_leaky",
                 "pr_number": 902,
                 "title": "Leaky task",
                 "base_commit": base_sha,
                 "merged_commit": "2222222222222222222222222222222222222222",
+                "hidden_sentinel": run_sentinel,
                 "has_tests": True,
-                # Test output echoes LEAK_SENTINEL on failure so turn 1 prompt triggers tripwire
-                "test_cmd": "echo 'LEAK_SENTINEL in error' && exit 1",
+                # Assemble the sentinel at test runtime so Turn 0 prompt is clean and Turn 1 feedback trips the wire
+                "test_cmd": f"printf '%s%s in error\\n' '{run_sentinel[:s_half]}' '{run_sentinel[s_half:]}' && exit 1",
                 "prompt": "Edit doc.md",
                 "files": ["doc.md"],
             }
+            # Direct check_prompt_leak raises PromptLeakError (subclass of AssertionError)
+            with self.assertRaises(AssertionError) as cm:
+                pilot_pr.check_prompt_leak(f"leaked {run_sentinel}", leaky_task, run_sentinel=run_sentinel)
+            self.assertIsInstance(cm.exception, pilot_pr.PromptLeakError)
+            self.assertEqual(cm.exception.branch, "run_sentinel")
+
+            ask_calls = []
             def mock_leaky_trigger(messages, seed):
+                ask_calls.append(len(messages))
                 calls = [
                     {"tool": "search_replace", "args": {"path": "doc.md", "old": "# New title", "new": "# Trigger title"}},
                     {"tool": "finish", "args": {"summary": "trigger test"}},
@@ -295,8 +306,20 @@ class TestPilotPr(unittest.TestCase):
                     "content": "```json\n" + json.dumps(calls) + "\n```",
                     "usage": {"completion_tokens": 20},
                 }
-            with self.assertRaises(AssertionError):
-                pilot_pr.run_task_loop(leaky_task, mock_leaky_trigger, temp_dir, max_turns=3)
+
+            res_leak = pilot_pr.run_task_loop(
+                leaky_task,
+                mock_leaky_trigger,
+                temp_dir,
+                max_turns=3,
+                run_sentinel=run_sentinel,
+            )
+            # Turn 1 must NEVER reach ask_fn (fail closed), and partial diff from turn 0 is preserved
+            self.assertEqual(len(ask_calls), 1, "Leaked prompt on turn 1 must never be sent to ask_fn")
+            self.assertFalse(res_leak["passed"])
+            self.assertEqual(res_leak["stop_reason"], "prompt_leak")
+            self.assertEqual(res_leak["leak_branch"], "run_sentinel")
+            self.assertIn("+# Trigger title", res_leak["final_diff"])
         finally:
             shutil.rmtree(temp_dir)
 
@@ -1997,6 +2020,614 @@ class TestPilotPr(unittest.TestCase):
             self.assertEqual(saw_note2, [False, False, True])
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_pr16_read_and_grep_run_py_with_oracle_sentinel_does_not_trip(self):
+        """Reading or grepping bench/loop/run.py at PR #16 base (containing ORACLE-SENTINEL-7f3a91c2) must not trip and must leave a record."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_pr16_noleak_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_pr16_noleak_run_")
+        try:
+            task16 = tasks_item6.get_task("item6_pr16")
+            self.assertEqual(task16["base_commit"], "6c56cc09eaafb2376422e73515b39f8193893740")
+
+            turn_seen = []
+            saw_oracle_sentinel_in_prompt = [False]
+
+            def pr16_reader_model(messages, seed):
+                idx = len(turn_seen)
+                turn_seen.append(idx)
+                joined = pilot_pr.messages_to_text(messages)
+                if idx == 0:
+                    calls = [
+                        {"tool": "grep", "args": {"pattern": "ORACLE-SENTINEL", "path": "bench/loop/run.py"}},
+                        {"tool": "read_file", "args": {"path": "bench/loop/run.py", "start": 345, "end": 360}},
+                    ]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 30}}
+                # Turn 1 receives tool output containing ORACLE-SENTINEL-7f3a91c2; check_prompt_leak must NOT trip
+                if "ORACLE-SENTINEL-7f3a91c2" in joined:
+                    saw_oracle_sentinel_in_prompt[0] = True
+                calls = [
+                    {"tool": "create_file", "args": {"path": "bench/loop/pr16_probe.txt", "content": "checked\n"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 25}}
+
+            rows = pilot_pr.run_subcommand(
+                label="pr16-sentinel-check",
+                tasks_arg="item6_pr16",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=pr16_reader_model,
+                token_counter=lambda m: 1500,
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(turn_seen), 2, "Turn 1 must execute after reading ORACLE-SENTINEL-7f3a91c2")
+            self.assertTrue(
+                saw_oracle_sentinel_in_prompt[0],
+                "Tool results from bench/loop/run.py at 6c56cc09 must contain ORACLE-SENTINEL-7f3a91c2",
+            )
+            row = rows[0]
+            self.assertEqual(row["task_id"], "item6_pr16")
+            self.assertNotEqual(row["stop_reason"], "prompt_leak")
+            self.assertIn("pr16_probe.txt", row["final_diff"])
+
+            # Verify JSONL record and diff were flushed
+            jsonl_path = os.path.join(results_dir, "pr16-sentinel-check.jsonl")
+            self.assertTrue(os.path.exists(jsonl_path))
+            with open(jsonl_path, "r", encoding="utf-8") as f:
+                lines = [json.loads(ln) for ln in f if ln.strip()]
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["task_id"], "item6_pr16")
+
+            # Verify per-turn instrumentation logged tool name, path/pattern args, and result_chars in run_dir
+            events_path = os.path.join(run_dir, "turn_events.jsonl")
+            self.assertTrue(os.path.exists(events_path))
+            with open(events_path, "r", encoding="utf-8") as f:
+                events = [json.loads(ln) for ln in f if ln.strip()]
+            self.assertGreaterEqual(len(events), 2)
+            t0_tools = {t["tool"]: t for t in events[0]["tools"]}
+            self.assertIn("grep", t0_tools)
+            self.assertEqual(t0_tools["grep"]["args"].get("pattern"), "ORACLE-SENTINEL")
+            self.assertEqual(t0_tools["grep"]["args"].get("path"), "bench/loop/run.py")
+            self.assertGreater(t0_tools["grep"]["result_chars"], 0)
+            self.assertIn("read_file", t0_tools)
+            self.assertEqual(t0_tools["read_file"]["args"].get("path"), "bench/loop/run.py")
+            self.assertGreater(t0_tools["read_file"]["result_chars"], 0)
+            # No leak history file should exist when no leak fired
+            self.assertFalse(any(fn.startswith("leak_history_") for fn in os.listdir(run_dir)))
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_genuine_hidden_diff_leak_fails_closed_records_prompt_leak_and_continues(self):
+        """A genuine hidden_diff leak fails closed, records stop_reason=prompt_leak, keeps partial diff, logs leak history to run_dir, and continues other tasks."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_hdiff_leak_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_hdiff_leak_run_")
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        try:
+            # Verify per-run sentinels are random and distinct
+            s1 = pilot_pr.generate_run_sentinel()
+            s2 = pilot_pr.generate_run_sentinel()
+            self.assertNotEqual(s1, s2)
+            self.assertTrue(s1.startswith("PILOT-RUN-SENTINEL-"))
+
+            # Verify repo-internal run_dir is redirected away from git repo
+            redirected = pilot_pr._safe_uncommitted_run_dir(
+                os.path.join(repo_root, "bench", "loop", "results"),
+                label="safety-test",
+                repo_root=repo_root,
+            )
+            self.assertTrue(redirected.startswith("/tmp/lab-seats/"))
+
+            # Build two tasks: task A leaks its own hidden_diff into turn-1 tool output after making a partial edit;
+            # task B runs cleanly right after to prove run_subcommand does not re-raise AssertionError and continues.
+            base_pr06 = tasks_item6.get_task("item6_pr06")
+            base_pr15 = tasks_item6.get_task("item6_pr15")
+            leaked_marker = "diff --git a/secret_oracle.py b/secret_oracle.py\n+SECRET_ORACLE_ANSWER = 999999"
+            task_a = dict(base_pr06)
+            task_a["hidden_diff"] = leaked_marker
+            # Simulated leaky test_cmd prints the hidden_diff on failure so turn 1 prompt contains hidden_diff
+            task_a["test_cmd"] = (
+                "python3 -c \"print(" + repr(leaked_marker) + "); raise SystemExit(1)\""
+            )
+
+            ask_calls_by_task = {"pr06": 0, "pr15": 0}
+
+            def mock_two_task_model(messages, seed):
+                joined = pilot_pr.messages_to_text(messages)
+                # Ensure leaked hidden_diff NEVER reaches the model!
+                self.assertNotIn(leaked_marker, joined, "Leaked hidden_diff must NEVER be sent to ask_fn!")
+                if "Fix `bench/loop/debate.py` parser logic" in joined:
+                    ask_calls_by_task["pr06"] += 1
+                    calls = [
+                        {"tool": "create_file", "args": {"path": "partial_before_leak.txt", "content": "partial edit\n"}},
+                        {"tool": "run_tests", "args": {}},
+                    ]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 30}}
+                ask_calls_by_task["pr15"] += 1
+                calls = [
+                    {"tool": "create_file", "args": {"path": "after_leak_ok.txt", "content": "continued\n"}},
+                    {"tool": "finish", "args": {"summary": "done"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+
+            rows = pilot_pr.run_subcommand(
+                label="hidden-diff-leak",
+                tasks_arg="item6_pr06,item6_pr15",
+                max_turns=3,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=mock_two_task_model,
+                token_counter=lambda m: 1200,
+                tasks_override=[task_a, base_pr15],
+            )
+            self.assertEqual(len(rows), 2, "run_subcommand must record both tasks and not abort on prompt_leak")
+            by_id = {r["task_id"]: r for r in rows}
+
+            # Task A: failed closed before turn 1 ask_fn, recorded as prompt_leak, partial diff preserved
+            self.assertEqual(ask_calls_by_task["pr06"], 1, "Turn 1 with leaked hidden_diff must not be sent to model")
+            r_a = by_id["item6_pr06"]
+            self.assertFalse(r_a["passed"])
+            self.assertEqual(r_a["stop_reason"], "prompt_leak")
+            self.assertEqual(r_a["stop"], "prompt_leak")
+            self.assertEqual(r_a["leak_branch"], "hidden_diff")
+            self.assertIn("partial_before_leak.txt", r_a["final_diff"])
+
+            # Task B: continued cleanly after task A's prompt_leak
+            self.assertEqual(ask_calls_by_task["pr15"], 1)
+            r_b = by_id["item6_pr15"]
+            self.assertTrue(r_b["passed"])
+            self.assertEqual(r_b["stop_reason"], "applied_no_tests")
+            self.assertIn("after_leak_ok.txt", r_b["final_diff"])
+
+            # Verify JSONL was flushed with both records and does NOT leak raw hidden_diff content
+            jsonl_path = os.path.join(results_dir, "hidden-diff-leak.jsonl")
+            with open(jsonl_path, "r", encoding="utf-8") as f:
+                raw_jsonl = f.read()
+            self.assertNotIn(leaked_marker, raw_jsonl, "JSONL must not contain raw leaked hidden_diff")
+            parsed_rows = [json.loads(ln) for ln in raw_jsonl.splitlines() if ln.strip()]
+            self.assertEqual([r["task_id"] for r in parsed_rows], ["item6_pr06", "item6_pr15"])
+
+            # Verify partial diff file was written on disk
+            diff_a = os.path.join(results_dir, "hidden-diff-leak.diffs", "item6_pr06.diff")
+            with open(diff_a, "r", encoding="utf-8") as f:
+                self.assertIn("partial_before_leak.txt", f.read())
+
+            # Verify instrumentation logged leak_branch and saved leaked message history ONLY under run_dir
+            events_path = os.path.join(run_dir, "turn_events.jsonl")
+            with open(events_path, "r", encoding="utf-8") as f:
+                events = [json.loads(ln) for ln in f if ln.strip()]
+            leak_events = [e for e in events if e.get("event") == "prompt_leak"]
+            self.assertEqual(len(leak_events), 1)
+            self.assertEqual(leak_events[0]["leak_branch"], "hidden_diff")
+            hist_file = leak_events[0]["history_file"]
+            self.assertTrue(os.path.exists(hist_file))
+            self.assertTrue(os.path.realpath(hist_file).startswith(os.path.realpath(run_dir) + os.sep))
+            with open(hist_file, "r", encoding="utf-8") as f:
+                hist_data = json.load(f)
+            self.assertEqual(hist_data["leak_branch"], "hidden_diff")
+            self.assertIn(leaked_marker, pilot_pr.messages_to_text(hist_data["messages"]))
+
+            # Also verify zero-edit turn-0 leak (e.g. prompt contains hidden_diff) produces empty diff & prompt_leak
+            task_zero = dict(base_pr15)
+            task_zero["hidden_diff"] = "UNIQUE_TURN0_HIDDEN_DIFF_LEAK"
+            task_zero["prompt"] = task_zero["prompt"] + "\n" + task_zero["hidden_diff"]
+            zero_ask_calls = []
+            def never_called(messages, seed):
+                zero_ask_calls.append(True)
+                return {"content": "", "usage": {}}
+            rows_z = pilot_pr.run_subcommand(
+                label="zero-edit-leak",
+                tasks_arg="item6_pr15",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=never_called,
+                tasks_override=[task_zero],
+            )
+            self.assertEqual(len(zero_ask_calls), 0)
+            self.assertEqual(rows_z[0]["stop_reason"], "prompt_leak")
+            self.assertEqual(rows_z[0]["final_diff"], "")
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_resume_frozen_v2_queues_only_pr16_and_matches_committed_sha256sums(self):
+        """RESUME=1 on frozen v2 run-1 evidence queues only item6_pr16 and leaves existing 6 records and diffs byte-for-byte identical against committed SHA256SUMS."""
+        import hashlib
+
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        committed_res = os.path.join(repo_root, "bench", "loop", "results")
+        sums_path = os.path.join(committed_res, "item6-pilot-v2.SHA256SUMS")
+        self.assertTrue(os.path.exists(sums_path), f"Committed SHA256SUMS missing: {sums_path}")
+
+        def _sha256_bytes(data: bytes) -> str:
+            return hashlib.sha256(data).hexdigest()
+
+        def _sha256_file(path: str) -> str:
+            with open(path, "rb") as f:
+                return _sha256_bytes(f.read())
+
+        # 1. Verify all committed entries in item6-pilot-v2.SHA256SUMS match on disk
+        expected_hashes = {}
+        with open(sums_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                digest, rel = line.split(None, 1)
+                expected_hashes[rel] = digest
+                full_p = os.path.join(committed_res, rel)
+                self.assertTrue(os.path.exists(full_p), f"Missing committed frozen file: {rel}")
+                self.assertEqual(_sha256_file(full_p), digest, f"SHA256 mismatch on committed {rel}")
+
+        self.assertEqual(len(expected_hashes), 9)
+        self.assertNotIn("item6-pilot-v2.diffs/item6_pr16.diff", expected_hashes)
+
+        # 2. Copy frozen jsonl and diffs into a temp results dir and run RESUME=1 across all 7 tasks
+        tmp_res = tempfile.mkdtemp(prefix="pilot_v2_resume_res_")
+        tmp_run = tempfile.mkdtemp(prefix="pilot_v2_resume_run_")
+        try:
+            shutil.copy2(
+                os.path.join(committed_res, "item6-pilot-v2.jsonl"),
+                os.path.join(tmp_res, "item6-pilot-v2.jsonl"),
+            )
+            shutil.copytree(
+                os.path.join(committed_res, "item6-pilot-v2.diffs"),
+                os.path.join(tmp_res, "item6-pilot-v2.diffs"),
+            )
+
+            executed_prompts = []
+
+            def mock_pr16_resume(messages, seed):
+                executed_prompts.append(pilot_pr.messages_to_text(messages)[:120])
+                calls = [
+                    {"tool": "create_file", "args": {"path": "bench/loop/resume_probe.txt", "content": "pr16\n"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 18}}
+
+            rows = pilot_pr.run_subcommand(
+                label="item6-pilot-v2",
+                tasks_arg=None,
+                max_turns=1,
+                results_dir=tmp_res,
+                run_dir=tmp_run,
+                ask_fn=mock_pr16_resume,
+                token_counter=lambda m: 1500,
+                resume=True,
+            )
+
+            # Only item6_pr16 should have been queued and run
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["task_id"], "item6_pr16")
+            self.assertEqual(len(executed_prompts), 1)
+
+            # Verify all 6 frozen diff files remain byte-for-byte identical to committed SHA256SUMS
+            for rel, digest in expected_hashes.items():
+                if rel.startswith("item6-pilot-v2.diffs/"):
+                    self.assertEqual(
+                        _sha256_file(os.path.join(tmp_res, rel)),
+                        digest,
+                        f"Frozen diff {rel} was modified during RESUME=1!",
+                    )
+            self.assertTrue(os.path.exists(os.path.join(tmp_res, "item6-pilot-v2.diffs", "item6_pr16.diff")))
+
+            # Verify the 6 frozen JSONL lines remain byte-for-byte identical to committed item6-pilot-v2.jsonl
+            resumed_jsonl = os.path.join(tmp_res, "item6-pilot-v2.jsonl")
+            with open(resumed_jsonl, "rb") as f:
+                all_lines = f.readlines()
+            self.assertEqual(len(all_lines), 7)
+            frozen_6_lines = [ln for ln in all_lines if json.loads(ln)["task_id"] != "item6_pr16"]
+            self.assertEqual(len(frozen_6_lines), 6)
+            self.assertEqual(
+                _sha256_bytes(b"".join(frozen_6_lines)),
+                expected_hashes["item6-pilot-v2.jsonl"],
+                "Existing 6 frozen JSONL records must be byte-for-byte identical to committed SHA256SUMS!",
+            )
+        finally:
+            shutil.rmtree(tmp_res, ignore_errors=True)
+            shutil.rmtree(tmp_run, ignore_errors=True)
+
+    def test_launcher_completeness_check_writes_incomplete_missing_and_exits_nonzero(self):
+        """Verify run.sh checks all 7 task IDs at the end, writes incomplete missing=<ids> and exits non-zero when any is missing, and defaults TASK_WALL_BUDGET=617."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        run_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
+        frozen_jsonl = os.path.join(repo_root, "bench", "loop", "results", "item6-pilot-v2.jsonl")
+
+        with open(run_sh, "r", encoding="utf-8") as f:
+            run_sh_text = f.read()
+
+        self.assertIn('TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-617}"', run_sh_text)
+        self.assertIn('--run-dir "$DIR"', run_sh_text)
+        self.assertIn("check_results_complete", run_sh_text)
+        self.assertIn("incomplete missing=", run_sh_text)
+
+        # Extract on_exit and check_results_complete directly from run.sh and exercise both missing & complete cases
+        tmp_dir = tempfile.mkdtemp(prefix="pilot_complete_check_")
+        try:
+            harness_sh = os.path.join(tmp_dir, "test_complete.sh")
+            script = (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"RUN_SH={run_sh!r}\n"
+                'DIR="$1"\n'
+                'RESULTS_FILE="$2"\n'
+                "start=$(date +%s)\n"
+                "invited=0\n"
+                'eval "$(sed -n \'/^on_exit() {/,/^}/p\' "$RUN_SH")"\n'
+                'eval "$(sed -n \'/^check_results_complete() {/,/^}/p\' "$RUN_SH")"\n'
+                'eval "$(sed -n \'/^ALL_TASKS=(/,/^)/p\' "$RUN_SH")"\n'
+                "trap on_exit EXIT\n"
+                'echo "running $(date -Iseconds)" > "$DIR/run.status"\n'
+                "set +e\n"
+                'missing_ids=$(check_results_complete "$RESULTS_FILE" "${ALL_TASKS[@]}")\n'
+                "complete_rc=$?\n"
+                "set -e\n"
+                "if [[ $complete_rc -ne 0 ]]; then\n"
+                "  wall_now=$(( $(date +%s) - start ))\n"
+                '  echo "incomplete missing=${missing_ids} wall_s=${wall_now} end=$(date -Iseconds)" > "$DIR/run.status"\n'
+                "  exit 1\n"
+                "fi\n"
+                "exit 0\n"
+            )
+            with open(harness_sh, "w", encoding="utf-8") as f:
+                f.write(script)
+            os.chmod(harness_sh, 0o755)
+
+            # Case 1: Frozen 6-record item6-pilot-v2.jsonl (missing item6_pr16) -> must exit non-zero & write incomplete missing=item6_pr16
+            d_miss = os.path.join(tmp_dir, "miss")
+            os.makedirs(d_miss, exist_ok=True)
+            r_miss = subprocess.run(["bash", harness_sh, d_miss, frozen_jsonl], capture_output=True, text=True)
+            self.assertNotEqual(r_miss.returncode, 0, "Missing item6_pr16 must exit non-zero")
+            with open(os.path.join(d_miss, "run.status"), "r", encoding="utf-8") as f:
+                st_miss = f.read().strip()
+            self.assertTrue(
+                st_miss.startswith("incomplete missing=item6_pr16 "),
+                f"Expected 'incomplete missing=item6_pr16 ...', got: {st_miss!r}",
+            )
+            self.assertNotIn("done rc=0", st_miss)
+
+            # Case 2: All 7 records present -> must exit 0 & write done rc=0
+            d_ok = os.path.join(tmp_dir, "ok")
+            os.makedirs(d_ok, exist_ok=True)
+            full_jsonl = os.path.join(tmp_dir, "full7.jsonl")
+            shutil.copy2(frozen_jsonl, full_jsonl)
+            with open(full_jsonl, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"task_id": "item6_pr16", "pr_number": 16}) + "\n")
+            r_ok = subprocess.run(["bash", harness_sh, d_ok, full_jsonl], capture_output=True, text=True)
+            self.assertEqual(r_ok.returncode, 0, f"Complete 7-record jsonl should exit 0: {r_ok.stderr}")
+            with open(os.path.join(d_ok, "run.status"), "r", encoding="utf-8") as f:
+                st_ok = f.read().strip()
+            self.assertTrue(st_ok.startswith("done rc=0 "), f"Expected 'done rc=0 ...', got: {st_ok!r}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_pr16_reading_own_target_files_at_base_does_not_trip_but_full_hidden_diff_trips(self):
+        """Reading/grepping/listing item6_pr16's own target files at base 6c56cc0 (context lines shared with reference diff) must not trip; injecting full hidden_diff still trips."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        results_dir = tempfile.mkdtemp(prefix="pilot_pr16_ctx_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_pr16_ctx_run_")
+        try:
+            task16 = tasks_item6.get_task("item6_pr16")
+            self.assertEqual(task16["base_commit"], "6c56cc09eaafb2376422e73515b39f8193893740")
+            full_hidden_diff = tasks_item6.get_hidden_diff(task16, repo_root=repo_root)
+            self.assertIn("diff --git a/README.md b/README.md", full_hidden_diff)
+            # Context line shared verbatim between README.md at base 6c56cc0 and item6_pr16's hidden_diff
+            shared_context_line = "docs/crawdad-v10-noise.md"
+            self.assertIn(shared_context_line, full_hidden_diff)
+
+            turn_calls = []
+            saw_readme_context = [False]
+            saw_list_files = [False]
+
+            def read_target_files_model(messages, seed):
+                turn_idx = len(turn_calls)
+                turn_calls.append(turn_idx)
+                joined = pilot_pr.messages_to_text(messages)
+                if turn_idx == 0:
+                    # Read, grep, and list item6_pr16's own target files at base 6c56cc0
+                    calls = [
+                        {"tool": "list_files", "args": {"path": "."}},
+                        {"tool": "list_files", "args": {"path": "bench/loop"}},
+                        {"tool": "read_file", "args": {"path": "README.md", "start": 1, "end": 250}},
+                        {"tool": "grep", "args": {"pattern": "crawdad-v10-noise", "path": "README.md"}},
+                        {"tool": "grep", "args": {"pattern": "roadmap\\.md", "path": "README.md"}},
+                    ]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 35}}
+                if shared_context_line in joined:
+                    saw_readme_context[0] = True
+                if "bench/loop/run.py" in joined:
+                    saw_list_files[0] = True
+                calls = [
+                    {"tool": "create_file", "args": {"path": "bench/loop/ctx_ok.txt", "content": "ok\n"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+
+            rows = pilot_pr.run_subcommand(
+                label="pr16-ctx-no-misfire",
+                tasks_arg="item6_pr16",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=read_target_files_model,
+                token_counter=lambda m: 2000,
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(turn_calls), 2, "Turn 1 must execute without misfiring on README.md context lines")
+            self.assertTrue(saw_readme_context[0], "README.md context lines shared with hidden_diff must be in turn 1 prompt")
+            self.assertTrue(saw_list_files[0], "list_files output must be in turn 1 prompt")
+            self.assertNotEqual(rows[0]["stop_reason"], "prompt_leak")
+
+            # Injecting the full reference hidden_diff of item6_pr16 MUST still trip check_prompt_leak and fail closed
+            guard_task16 = dict(task16, hidden_diff=full_hidden_diff)
+            with self.assertRaises(pilot_pr.PromptLeakError) as cm:
+                pilot_pr.check_prompt_leak(f"leaked:\n{full_hidden_diff}\n", guard_task16)
+            self.assertEqual(cm.exception.branch, "hidden_diff")
+
+            leaked_task16 = dict(task16)
+            leaked_task16["hidden_diff"] = full_hidden_diff
+            leaked_task16["prompt"] = leaked_task16["prompt"] + "\n" + full_hidden_diff
+            called_on_leak = []
+            def must_not_run(messages, seed):
+                called_on_leak.append(True)
+                return {"content": "", "usage": {}}
+
+            rows_leak = pilot_pr.run_subcommand(
+                label="pr16-full-hidden-leak",
+                tasks_arg="item6_pr16",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=must_not_run,
+                tasks_override=[leaked_task16],
+            )
+            self.assertEqual(len(called_on_leak), 0, "Model must never be called when full hidden_diff leaks")
+            self.assertEqual(rows_leak[0]["stop_reason"], "prompt_leak")
+            self.assertEqual(rows_leak[0]["leak_branch"], "hidden_diff")
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_hidden_diff_and_merged_sha_only_in_host_memory_not_in_sandbox_or_logs(self):
+        """Verify hidden_diff and merged_commit never enter scratch tree, sandbox TMPDIR/env/argv, stdout/run.log, or turn_events.jsonl; leak histories default under /tmp/lab-seats/."""
+        import contextlib
+        import io
+
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        results_dir = tempfile.mkdtemp(prefix="pilot_memonly_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_memonly_run_")
+        orig_build_bwrap = pilot_pr.build_outer_bwrap_cmd
+        captured_bwrap = []
+        try:
+            # Verify default_run_dir resolves strictly under /tmp/lab-seats/
+            self.assertEqual(pilot_pr.default_run_dir("item6-pilot-v2"), "/tmp/lab-seats/item6-pilot-v2")
+
+            task16 = tasks_item6.get_task("item6_pr16")
+            merged_sha = task16["merged_commit"]
+            full_hidden_diff = tasks_item6.get_hidden_diff(task16, repo_root=repo_root)
+            # Pick a distinctive added line from PR #16's hidden diff that does not exist at base 6c56cc0
+            added_marker = "docs/crawdad-ground-v1.md"
+            self.assertIn(added_marker, full_hidden_diff)
+
+            # Spy on build_outer_bwrap_cmd while still running the real sandbox
+            def spy_build_bwrap(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict, ro_binds=None):
+                cmd = orig_build_bwrap(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict, ro_binds=ro_binds)
+                # Inspect scratch tree and sandbox TMPDIR on host at execution time
+                scratch_entries = []
+                for dp, dns, fns in os.walk(task_dir):
+                    dns[:] = [d for d in dns if d != ".git"]
+                    for fn in fns:
+                        scratch_entries.append(os.path.join(dp, fn))
+                tmp_entries = os.listdir(tmp_dir)
+                captured_bwrap.append({
+                    "cmd": list(cmd),
+                    "env": dict(env_dict),
+                    "tmp_entries": tmp_entries,
+                    "scratch_has_ground": any(p.endswith("bench/loop/ground.py") for p in scratch_entries),
+                })
+                return cmd
+
+            pilot_pr.build_outer_bwrap_cmd = spy_build_bwrap
+
+            # Use a sandboxed test_cmd that dumps env, argv, /tmp, and /work/bench/loop inside the child
+            probe_task = dict(task16)
+            probe_task["test_cmd"] = (
+                "python3 -c \"import os, sys; "
+                "print('CHILD_ENV=' + repr(dict(os.environ))); "
+                "print('CHILD_ARGV=' + repr(sys.argv)); "
+                "print('CHILD_TMP=' + repr(os.listdir('/tmp'))); "
+                "print('CHILD_WORK=' + repr(sorted(os.listdir('/work/bench/loop'))))\""
+            )
+
+            turn_n = [0]
+            def sandbox_probe_model(messages, seed):
+                t = turn_n[0]
+                turn_n[0] += 1
+                if t == 0:
+                    calls = [
+                        {"tool": "read_file", "args": {"path": "README.md", "start": 1, "end": 40}},
+                        {"tool": "run_tests", "args": {}},
+                    ]
+                else:
+                    calls = [
+                        {"tool": "create_file", "args": {"path": "bench/loop/memonly_probe.txt", "content": "ok\n"}},
+                        {"tool": "finish", "args": {"summary": "probed"}},
+                    ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 25}}
+
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+                rows = pilot_pr.run_subcommand(
+                    label="memonly-check",
+                    tasks_arg="item6_pr16",
+                    max_turns=2,
+                    results_dir=results_dir,
+                    run_dir=run_dir,
+                    ask_fn=sandbox_probe_model,
+                    token_counter=lambda m: 1500,
+                    tasks_override=[probe_task],
+                )
+
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["passed"])
+            self.assertGreaterEqual(len(captured_bwrap), 1, "run_tests must have invoked outer bwrap sandbox")
+
+            # 1. Verify sandbox env, argv, scratch tree, and TMPDIR contain neither hidden_diff nor merged_commit
+            for rec in captured_bwrap:
+                cmd_str = " ".join(str(x) for x in rec["cmd"])
+                env_str = json.dumps(rec["env"], sort_keys=True)
+                self.assertNotIn(merged_sha, cmd_str)
+                self.assertNotIn(full_hidden_diff, cmd_str)
+                self.assertNotIn(added_marker, cmd_str)
+                self.assertNotIn(merged_sha, env_str)
+                self.assertNotIn(full_hidden_diff, env_str)
+                self.assertNotIn(added_marker, env_str)
+                self.assertEqual(rec["tmp_entries"], [], "Sandbox TMPDIR must be empty before child starts")
+                self.assertFalse(rec["scratch_has_ground"], "Scratch tree must not contain merged-only files")
+
+            # 2. Verify run.log-equivalent stdout/stderr does not contain hidden_diff or merged_commit
+            run_log_out = stdout_buf.getvalue() + stderr_buf.getvalue()
+            self.assertNotIn(merged_sha, run_log_out)
+            self.assertNotIn(full_hidden_diff, run_log_out)
+
+            # 3. Verify turn_events.jsonl does not contain hidden_diff or merged_commit
+            events_path = os.path.join(run_dir, "turn_events.jsonl")
+            self.assertTrue(os.path.exists(events_path))
+            with open(events_path, "r", encoding="utf-8") as f:
+                events_text = f.read()
+            self.assertNotIn(merged_sha, events_text)
+            self.assertNotIn(full_hidden_diff, events_text)
+            self.assertNotIn(added_marker, events_text)
+
+            # 4. Even when a prompt_leak trips on merged_commit or hidden_diff, turn_events.jsonl and stdout/run.log
+            #    must still NEVER contain the hidden_diff or merged_commit SHA (only leak_history_*.json in run_dir does)
+            leak_task = dict(task16)
+            leak_task["prompt"] = leak_task["prompt"] + f"\n{merged_sha}"
+            stdout_leak = io.StringIO()
+            stderr_leak = io.StringIO()
+            with contextlib.redirect_stdout(stdout_leak), contextlib.redirect_stderr(stderr_leak):
+                rows_l = pilot_pr.run_subcommand(
+                    label="memonly-leak-check",
+                    tasks_arg="item6_pr16",
+                    max_turns=1,
+                    results_dir=results_dir,
+                    run_dir=run_dir,
+                    ask_fn=lambda m, s: {"content": "", "usage": {}},
+                    tasks_override=[leak_task],
+                )
+            self.assertEqual(rows_l[0]["stop_reason"], "prompt_leak")
+            self.assertEqual(rows_l[0]["leak_branch"], "merged_commit")
+            with open(events_path, "r", encoding="utf-8") as f:
+                events_after = f.read()
+            self.assertNotIn(merged_sha, events_after)
+            self.assertNotIn(full_hidden_diff, events_after)
+            self.assertNotIn(merged_sha, stdout_leak.getvalue() + stderr_leak.getvalue())
+            with open(os.path.join(results_dir, "memonly-leak-check.jsonl"), "r", encoding="utf-8") as f:
+                self.assertNotIn(merged_sha, f.read())
+        finally:
+            pilot_pr.build_outer_bwrap_cmd = orig_build_bwrap
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

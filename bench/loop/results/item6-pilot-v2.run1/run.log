@@ -1,0 +1,112 @@
+=== start 2026-11-20T16:35:18-06:00 pwd=/tmp/wt-item6-v2 head=54cca4854134d077fe5108e913f315ccad1cd5cf ceiling_seconds=4320 resume=0 ===
+prereg guard OK: commit 54cca4854134d077fe5108e913f315ccad1cd5cf is reachable from origin/main
+  commit:     54cca4854134d077fe5108e913f315ccad1cd5cf
+  remote_ref: origin/main
+  file:       docs/item6-pilot.md
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+=== Inviting qwen with --ctx 65536 --np 1 ===
+llmctl: session 82: INVITE qwen
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: f4590de87dd04184bdb5005884ac09da
+up: qwen3.6-35b-a3b on vk, ctx 65536, parallel 1, http://127.0.0.1:8081/v1
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+llmctl: session 82: ACTIVE qwen on :8081, GTT 23.5 GiB
+props: total_slots 1 n_ctx 65536 build b11669-620d2225c
+=== Starting task item6_pr06 2026-11-20T16:35:22-06:00 (remaining_ceiling=4320s) ===
+STEP_START item6-pilot-v2 item6_pr06 2026-11-20T22:35:22Z 1795214122.881738937
+item6_pr06     pr=#6  has_tests=True  passed=False stop=max_turns        turns=12 tok=18438 diff_lines=56
+llmctl: run python3 rc=0 memory.peak=110 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr06 2026-11-20T22:42:15Z 1795214535.593611281
+STEP_WALL item6-pilot-v2 item6_pr06 412.7 s
+=== Completed task item6_pr06 2026-11-20T16:42:15-06:00 ===
+=== Starting task item6_pr08 2026-11-20T16:42:15-06:00 (remaining_ceiling=3907s) ===
+STEP_START item6-pilot-v2 item6_pr08 2026-11-20T22:42:15Z 1795214535.610581129
+item6_pr08     pr=#8  has_tests=True  passed=False stop=repeat_error     turns=5 tok=9354 diff_lines=60
+llmctl: run python3 rc=0 memory.peak=60 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr08 2026-11-20T22:45:25Z 1795214725.986250350
+STEP_WALL item6-pilot-v2 item6_pr08 190.4 s
+=== Completed task item6_pr08 2026-11-20T16:45:25-06:00 ===
+=== Starting task item6_pr13 2026-11-20T16:45:25-06:00 (remaining_ceiling=3717s) ===
+STEP_START item6-pilot-v2 item6_pr13 2026-11-20T22:45:26Z 1795214726.002764028
+item6_pr13     pr=#13 has_tests=True  passed=False stop=context_overflow turns=8 tok=9227 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=61 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr13 2026-11-20T22:49:43Z 1795214983.263231045
+STEP_WALL item6-pilot-v2 item6_pr13 257.3 s
+=== Completed task item6_pr13 2026-11-20T16:49:43-06:00 ===
+=== Starting task item6_pr14 2026-11-20T16:49:43-06:00 (remaining_ceiling=3459s) ===
+STEP_START item6-pilot-v2 item6_pr14 2026-11-20T22:49:43Z 1795214983.280848707
+item6_pr14     pr=#14 has_tests=True  passed=False stop=context_overflow turns=7 tok=7155 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=63 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr14 2026-11-20T22:52:58Z 1795215178.603673180
+STEP_WALL item6-pilot-v2 item6_pr14 195.3 s
+=== Completed task item6_pr14 2026-11-20T16:52:58-06:00 ===
+=== Starting task item6_pr15 2026-11-20T16:52:58-06:00 (remaining_ceiling=3264s) ===
+STEP_START item6-pilot-v2 item6_pr15 2026-11-20T22:52:58Z 1795215178.620311042
+item6_pr15     pr=#15 has_tests=False passed=False stop=max_turns        turns=12 tok=12398 diff_lines=114
+llmctl: run python3 rc=0 memory.peak=61 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr15 2026-11-20T22:57:56Z 1795215476.576245783
+STEP_WALL item6-pilot-v2 item6_pr15 298.0 s
+=== Completed task item6_pr15 2026-11-20T16:57:56-06:00 ===
+=== Starting task item6_pr16 2026-11-20T16:57:56-06:00 (remaining_ceiling=2966s) ===
+STEP_START item6-pilot-v2 item6_pr16 2026-11-20T22:57:56Z 1795215476.593394187
+Traceback (most recent call last):
+  File "/tmp/wt-item6-v2/bench/loop/pilot_pr.py", line 2766, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/tmp/wt-item6-v2/bench/loop/pilot_pr.py", line 2740, in main
+    run_subcommand(
+    ~~~~~~~~~~~~~~^
+        label=args.label,
+        ^^^^^^^^^^^^^^^^^
+    ...<8 lines>...
+        resume=getattr(args, "resume", False),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/wt-item6-v2/bench/loop/pilot_pr.py", line 2246, in run_subcommand
+    res = run_task_loop(
+        clean_task,
+    ...<8 lines>...
+        clock_fn=clock_fn,
+    )
+  File "/tmp/wt-item6-v2/bench/loop/pilot_pr.py", line 1542, in run_task_loop
+    check_prompt_leak(messages, task)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/tmp/wt-item6-v2/bench/loop/pilot_pr.py", line 394, in check_prompt_leak
+    raise AssertionError("LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!")
+AssertionError: LEAK TRIPWIRE TRIGGERED: sentinel string leaked into prompt!
+llmctl: run python3 rc=1 memory.peak=61 MiB cap=8192 MiB as=16384 MiB
+ERROR: task item6_pr16 exited with rc=1 (continuing to next task)
+STEP_END item6-pilot-v2 item6_pr16 2026-11-20T22:59:08Z 1795215548.848081197
+STEP_WALL item6-pilot-v2 item6_pr16 72.3 s
+=== Completed task item6_pr16 2026-11-20T16:59:08-06:00 ===
+=== Starting task item6_pr20 2026-11-20T16:59:08-06:00 (remaining_ceiling=2894s) ===
+STEP_START item6-pilot-v2 item6_pr20 2026-11-20T22:59:08Z 1795215548.863463141
+item6_pr20     pr=#20 has_tests=True  passed=False stop=repeat_code      turns=3 tok=4522 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=72 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr20 2026-11-20T23:00:36Z 1795215636.795883386
+STEP_WALL item6-pilot-v2 item6_pr20 87.9 s
+=== Completed task item6_pr20 2026-11-20T17:00:36-06:00 ===
+llmctl: session 82: ENDED qwen; GTT after stop 1.2 GiB
+=== Offline grading and report 2026-11-20T17:00:37-06:00 ===
+{
+  "label": "item6-pilot-v2",
+  "tasks_evaluated": 6,
+  "testable_tasks": 5,
+  "testable_passed": 0,
+  "test_pass_rate": 0.0,
+  "reviews_complete": false,
+  "approved_first_pass": null,
+  "approved_final": null,
+  "final_approve_rate": null,
+  "avg_hand_fix_lines_per_approved": null,
+  "decision": "DROP"
+}
+=== Item 6 pilot (item6-pilot-v2) completed 2026-11-20T17:00:41-06:00 ===
+=== end 2026-11-20T17:00:41-06:00 rc=0 wall_s=1523 ===
