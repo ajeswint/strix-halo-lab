@@ -334,7 +334,7 @@ Recorded 2026-11-21 CT after PR #26 decision review. **Applies strictly to futur
 
 ## 15. Amendment, Nov 21 2026: Item 6 Pilot v3 (Compaction + Unseen External-Repo PRs, Pre-Run)
 
-Stated before any practice or v3 GPU session (2026-11-21 CT). **No GPU session starts in this commit; both Step 1 (practice run) and Step 2 (unseen v3 pilot) wait on AJ's separate yes.**
+Stated before any practice or v3 GPU session (2026-11-21 CT). **No GPU session starts in this commit.** AJ authorized the Step 1 practice run on Nov 21 2026 11:28 AM CT ("address all nits and then follow claude rec"), so only the PR merge gates Step 1; Step 2 (unseen v3 pilot) waits for Step 1 to pass, any compaction freeze note, and AJ's separate yes.
 
 ### 15.1 Freeze Status & Scope
 
@@ -435,7 +435,7 @@ Targeting the mid-conversation `context_overflow` confound observed on `item6_pr
 - **Own Result Note & Post-Practice Freeze Rule**:
   - After Step 1 finishes, record its outcome in its own dated practice result note (Section 15.7 below or `docs/item6-v3-practice-result.md`).
   - Compaction parameters may be adjusted after inspecting the practice run, **but any adjusted settings must be committed and frozen in a dated v3 pre-run note in `docs/item6-pilot.md` (and verified pushed via `scripts/prereg-guard.sh --head`) before launching Step 2 (the unseen v3 run).**
-- **Launcher**: `bench/loop/runs/item6-v3-practice/run.sh` (launched after merging this PR to `main`, on AJ's separate yes):
+- **Launcher**: `bench/loop/runs/item6-v3-practice/run.sh` (authorized by AJ on Nov 21 2026 11:28 AM CT with "address all nits and then follow claude rec", so only the PR merge to `main` gates launch):
 
 ```bash
 WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-v3-practice/run.sh >/dev/null 2>&1 &
@@ -458,4 +458,5 @@ mkdir -p /data/datasets/item6-v3-repos && git clone --bare https://github.com/mo
 
 ### 15.7 Step 1 Practice Run Result Note (Pending Practice Run)
 
-- *Status (2026-11-21 CT)*: Not yet run; waiting for PR merge and AJ's separate yes for the Step 1 practice run. After Step 1 completes, record the practice run head SHA, per-task stop reasons (`item6_pr13`, `item6_pr14`, `item6_pr16`), compaction event counts, whether all 3 practice criteria passed, and the final frozen compaction settings before launching Step 2.
+- *Status (2026-11-21 CT)*: Not yet run. AJ authorized the Step 1 practice run on Nov 21 2026 11:28 AM CT ("address all nits and then follow claude rec"), so only the PR merge gates it.
+- *Step 1 Gate & Required Record*: The Step 1 gate uses all three practice criteria — (1) no `context_overflow`, (2) no harness errors (`harness_failure` / `task_error`), and (3) compaction events visible (`COMPACTION` lines in `run.log` and `compaction_events_total > 0`). After Step 1 completes, record the practice run head SHA, per-task stop reasons (`item6_pr13`, `item6_pr14`, `item6_pr16`), the largest prompt token count per task alongside the `57,344` limit (`65,536 - 8,192`), compaction event counts (`COMPACTION` lines and `compaction_events_total`), whether all three practice criteria passed, and the final frozen compaction settings before launching Step 2.
