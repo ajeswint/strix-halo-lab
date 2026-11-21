@@ -53,6 +53,15 @@ STUB_GUARD_MIN_REMOVED_RATIO = 0.50
 STUB_GUARD_MOVE_MATCH_MIN_RATIO = 0.50
 TOOL_RESULT_MAX_CHARS = 12000
 
+RECORD_SCHEMA_VERSION = 2
+ABORT_STOP_REASONS = frozenset({
+    "task_error",
+    "context_overflow",
+    "request_error",
+    "prompt_leak",
+    "task_wall_budget",
+})
+
 FIXED_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
 SAFE_ENV_KEYS = ("LANG", "LC_ALL", "LC_CTYPE", "TERM")
 
@@ -1598,79 +1607,29 @@ def _truncate_tool_output(text, max_chars=TOOL_RESULT_MAX_CHARS):
     return s
 
 
-def run_task_loop(
+def _run_task_loop_turns(
     task,
+    clean_task,
+    has_tests,
+    messages,
     ask_fn,
     worktree_dir,
-    max_turns=MAX_TURNS_DEFAULT,
-    task_budget=TASK_BUDGET_TOKENS,
-    slot_ctx=SLOT_CTX_DEFAULT,
-    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
-    token_counter=None,
-    task_wall_budget=TASK_WALL_BUDGET_DEFAULT,
-    clock_fn=time.monotonic,
-    run_sentinel=None,
-    run_dir=None,
-    label=None,
-    repo_root=None,
+    max_turns,
+    task_budget,
+    slot_ctx,
+    reserved_output_tokens,
+    token_counter,
+    task_wall_budget,
+    clock_fn,
+    run_sentinel,
+    run_dir,
+    label,
+    repo_root,
+    history,
+    loop_state,
 ):
-    """Execute the v2 structured-edit tool loop with prompt-size preflight, per-task wall budget, and instrumentation."""
-    clean_task = tasks_item6.strip_hidden(task)
-    has_tests = bool(clean_task.get("has_tests"))
-    leak_branch = None
-    try:
-        messages = format_tool_messages(task, worktree_dir=worktree_dir, run_sentinel=run_sentinel)
-    except PromptLeakError as exc:
-        leak_branch = exc.branch
-        if run_dir:
-            hist_file = _save_leak_history(
-                run_dir, clean_task["id"], 0, leak_branch, exc.leaked_prompt, label=label, repo_root=repo_root
-            )
-            _append_turn_log(
-                run_dir,
-                {
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "task_id": clean_task["id"],
-                    "turn": 0,
-                    "event": "prompt_leak",
-                    "leak_branch": leak_branch,
-                    "message": str(exc),
-                    "history_file": hist_file,
-                },
-                label=label,
-                repo_root=repo_root,
-            )
-        final_diff = (
-            capture_worktree_diff(worktree_dir, clean_task["base_commit"])
-            if os.path.isdir(os.path.join(worktree_dir, ".git"))
-            else ""
-        )
-        return {
-            "task_id": clean_task["id"],
-            "pr_number": clean_task["pr_number"],
-            "has_tests": has_tests,
-            "passed": False,
-            "stop_reason": "prompt_leak",
-            "stop": "prompt_leak",
-            "leak_branch": leak_branch,
-            "turns_executed": 1,
-            "history": [{
-                "turn": 0,
-                "seed": 6000 + clean_task["pr_number"] * 100,
-                "passed": False,
-                "err": str(exc),
-                "stop": "prompt_leak",
-                "leak_branch": leak_branch,
-                "gen_s": 0.0,
-                "tokens": 0,
-                "prompt_tokens": 0,
-            }],
-            "total_completion_tokens": 0,
-            "final_diff": final_diff,
-        }
-
+    """Run the turn loop body while updating `history` and `loop_state` in place for fault isolation."""
     tool_session = ToolSession(worktree_dir)
-    history = []
     seen_code_hashes = set()
     last_test_err = None
     last_turn_err = None
@@ -1678,6 +1637,7 @@ def run_task_loop(
     accumulated_completion_tokens = 0
     stop_reason = "max_turns"
     final_passed = False
+    leak_branch = None
     loop_start = clock_fn()
     final_turn_note = "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
 
@@ -1689,6 +1649,8 @@ def run_task_loop(
 
     for turn in range(max_turns):
         t0 = time.time()
+        loop_state["turn"] = turn
+        loop_state["t0"] = t0
         seed = 6000 + clean_task["pr_number"] * 100 + turn
 
         # Per-task wall budget check before sending request
@@ -1855,6 +1817,7 @@ def run_task_loop(
         comp_tokens = reply.get("usage", {}).get("completion_tokens", 0) or 0
         prompt_tokens = reply.get("usage", {}).get("prompt_tokens", 0) or est_prompt_tokens
         accumulated_completion_tokens += comp_tokens
+        loop_state["tokens"] = accumulated_completion_tokens
 
         content = reply.get("content", "") or ""
         raw_tool_calls = reply.get("tool_calls")
@@ -2146,18 +2109,208 @@ def run_task_loop(
             if history:
                 history[-1]["passed"] = True
 
+    return stop_reason, final_passed, leak_branch, accumulated_completion_tokens
+
+
+def _capture_diff_safe(worktree_dir, base_commit):
+    """Capture worktree diff if worktree_dir is a git repo, returning (diff_str, error_or_None)."""
+    if not os.path.isdir(os.path.join(worktree_dir, ".git")):
+        return "", None
+    try:
+        return capture_worktree_diff(worktree_dir, base_commit), None
+    except Exception as exc:
+        return "", f"{type(exc).__name__}: {exc}"
+
+
+def _derive_abort_reason(stop_reason, history, explicit=None):
+    """Return a non-empty abort reason string for abort/error stop reasons, else None."""
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    if stop_reason not in ABORT_STOP_REASONS:
+        return None
+    if history and isinstance(history[-1], dict):
+        last_err = history[-1].get("err")
+        if last_err and str(last_err).strip():
+            return str(last_err).strip()
+    return stop_reason
+
+
+def run_task_loop(
+    task,
+    ask_fn,
+    worktree_dir,
+    max_turns=MAX_TURNS_DEFAULT,
+    task_budget=TASK_BUDGET_TOKENS,
+    slot_ctx=SLOT_CTX_DEFAULT,
+    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
+    token_counter=None,
+    task_wall_budget=TASK_WALL_BUDGET_DEFAULT,
+    clock_fn=time.monotonic,
+    run_sentinel=None,
+    run_dir=None,
+    label=None,
+    repo_root=None,
+):
+    """Execute the v2 structured-edit tool loop with prompt-size preflight, per-task wall budget, and instrumentation."""
+    clean_task = tasks_item6.strip_hidden(task)
+    has_tests = bool(clean_task.get("has_tests"))
+    leak_branch = None
+    abort_reason = None
+    history = []
+    loop_state = {"turn": 0, "t0": time.time(), "tokens": 0}
+    try:
+        messages = format_tool_messages(task, worktree_dir=worktree_dir, run_sentinel=run_sentinel)
+    except PromptLeakError as exc:
+        leak_branch = exc.branch
+        if run_dir:
+            hist_file = _save_leak_history(
+                run_dir, clean_task["id"], 0, leak_branch, exc.leaked_prompt, label=label, repo_root=repo_root
+            )
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": 0,
+                    "event": "prompt_leak",
+                    "leak_branch": leak_branch,
+                    "message": str(exc),
+                    "history_file": hist_file,
+                },
+                label=label,
+                repo_root=repo_root,
+            )
+        final_diff, _ = _capture_diff_safe(worktree_dir, clean_task["base_commit"])
+        return {
+            "schema_version": RECORD_SCHEMA_VERSION,
+            "task_id": clean_task["id"],
+            "pr_number": clean_task["pr_number"],
+            "has_tests": has_tests,
+            "passed": False,
+            "stop_reason": "prompt_leak",
+            "stop": "prompt_leak",
+            "harness_failure": False,
+            "abort_reason": str(exc),
+            "diff_empty": not bool(final_diff.strip()),
+            "leak_branch": leak_branch,
+            "turns_executed": 1,
+            "history": [{
+                "turn": 0,
+                "seed": 6000 + clean_task["pr_number"] * 100,
+                "passed": False,
+                "err": str(exc),
+                "stop": "prompt_leak",
+                "leak_branch": leak_branch,
+                "gen_s": 0.0,
+                "tokens": 0,
+                "prompt_tokens": 0,
+            }],
+            "total_completion_tokens": 0,
+            "final_diff": final_diff,
+        }
+    except Exception as exc:
+        err_text = f"{type(exc).__name__}: {exc}"
+        final_diff, _ = _capture_diff_safe(worktree_dir, clean_task["base_commit"])
+        return {
+            "schema_version": RECORD_SCHEMA_VERSION,
+            "task_id": clean_task["id"],
+            "pr_number": clean_task["pr_number"],
+            "has_tests": has_tests,
+            "passed": False,
+            "stop_reason": "task_error",
+            "stop": "task_error",
+            "harness_failure": True,
+            "abort_reason": err_text,
+            "diff_empty": not bool(final_diff.strip()),
+            "turns_executed": 0,
+            "history": [{
+                "turn": 0,
+                "seed": 6000 + clean_task["pr_number"] * 100,
+                "passed": False,
+                "err": err_text,
+                "stop": "task_error",
+                "gen_s": 0.0,
+                "tokens": 0,
+                "prompt_tokens": 0,
+            }],
+            "total_completion_tokens": 0,
+            "final_diff": final_diff,
+        }
+
+    try:
+        stop_reason, final_passed, leak_branch, accumulated_completion_tokens = _run_task_loop_turns(
+            task=task,
+            clean_task=clean_task,
+            has_tests=has_tests,
+            messages=messages,
+            ask_fn=ask_fn,
+            worktree_dir=worktree_dir,
+            max_turns=max_turns,
+            task_budget=task_budget,
+            slot_ctx=slot_ctx,
+            reserved_output_tokens=reserved_output_tokens,
+            token_counter=token_counter,
+            task_wall_budget=task_wall_budget,
+            clock_fn=clock_fn,
+            run_sentinel=run_sentinel,
+            run_dir=run_dir,
+            label=label,
+            repo_root=repo_root,
+            history=history,
+            loop_state=loop_state,
+        )
+    except Exception as exc:
+        err_text = f"{type(exc).__name__}: {exc}"
+        stop_reason = "task_error"
+        final_passed = False
+        abort_reason = err_text
+        accumulated_completion_tokens = loop_state["tokens"]
+        err_turn = loop_state["turn"]
+        history.append({
+            "turn": err_turn,
+            "seed": 6000 + clean_task["pr_number"] * 100 + err_turn,
+            "passed": False,
+            "err": err_text,
+            "stop": "task_error",
+            "gen_s": round(time.time() - loop_state["t0"], 2),
+            "tokens": 0,
+            "prompt_tokens": 0,
+        })
+        if run_dir:
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": err_turn,
+                    "event": "task_error",
+                    "abort_reason": err_text,
+                },
+                label=label,
+                repo_root=repo_root,
+            )
+
     if stop_reason in ("context_overflow", "request_error"):
         final_diff = ""
     else:
-        final_diff = capture_worktree_diff(worktree_dir, clean_task["base_commit"])
+        final_diff, diff_err = _capture_diff_safe(worktree_dir, clean_task["base_commit"])
+        if diff_err is not None and stop_reason != "task_error":
+            stop_reason = "task_error"
+            final_passed = False
+            abort_reason = diff_err
 
+    abort_reason = _derive_abort_reason(stop_reason, history, explicit=abort_reason)
     out_res = {
+        "schema_version": RECORD_SCHEMA_VERSION,
         "task_id": clean_task["id"],
         "pr_number": clean_task["pr_number"],
         "has_tests": has_tests,
-        "passed": False if stop_reason in ("context_overflow", "request_error", "task_wall_budget", "prompt_leak") else final_passed,
+        "passed": False if stop_reason in ABORT_STOP_REASONS else final_passed,
         "stop_reason": stop_reason,
         "stop": stop_reason,
+        "harness_failure": stop_reason == "task_error",
+        "abort_reason": abort_reason,
+        "diff_empty": not bool(final_diff.strip()),
         "turns_executed": len(history),
         "history": history,
         "total_completion_tokens": accumulated_completion_tokens,
@@ -2313,8 +2466,12 @@ def selftest():
             token_counter=lambda m: 999,
         )
         assert not called_overflow, "ask_fn must not be called when preflight detects overflow"
+        assert res_ovf["schema_version"] == RECORD_SCHEMA_VERSION
         assert res_ovf["stop_reason"] == "context_overflow"
         assert res_ovf["final_diff"] == ""
+        assert res_ovf["diff_empty"] is True
+        assert res_ovf["abort_reason"] and "overflow" in res_ovf["abort_reason"]
+        assert res_ovf["harness_failure"] is False
         print("[OK] Context preflight overflow verified")
 
     finally:
@@ -2529,11 +2686,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                 repo_root=repo_root,
             )
         except PromptLeakError as exc:
-            partial_diff = (
-                capture_worktree_diff(wt_dir, base_sha)
-                if os.path.isdir(os.path.join(wt_dir, ".git"))
-                else ""
-            )
+            partial_diff, _ = _capture_diff_safe(wt_dir, base_sha)
             if run_dir:
                 hist_file = _save_leak_history(
                     run_dir, task_id, 0, exc.branch, exc.leaked_prompt, label=label, repo_root=repo_root
@@ -2553,12 +2706,16 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
                     repo_root=repo_root,
                 )
             res = {
+                "schema_version": RECORD_SCHEMA_VERSION,
                 "task_id": task_id,
                 "pr_number": clean_task["pr_number"],
                 "has_tests": bool(clean_task.get("has_tests")),
                 "passed": False,
                 "stop_reason": "prompt_leak",
                 "stop": "prompt_leak",
+                "harness_failure": False,
+                "abort_reason": str(exc),
+                "diff_empty": not bool(partial_diff.strip()),
                 "leak_branch": exc.branch,
                 "turns_executed": 1,
                 "history": [{"turn": 0, "passed": False, "err": str(exc), "stop": "prompt_leak", "leak_branch": exc.branch}],
@@ -2567,20 +2724,21 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
             }
         except Exception as exc:
             # Isolate per-task failures (including AssertionError) so one task never aborts the remaining tasks
-            partial_diff = (
-                capture_worktree_diff(wt_dir, base_sha)
-                if os.path.isdir(os.path.join(wt_dir, ".git"))
-                else ""
-            )
+            partial_diff, _ = _capture_diff_safe(wt_dir, base_sha)
+            err_text = f"{type(exc).__name__}: {exc}"
             res = {
+                "schema_version": RECORD_SCHEMA_VERSION,
                 "task_id": task_id,
                 "pr_number": clean_task["pr_number"],
                 "has_tests": bool(clean_task.get("has_tests")),
                 "passed": False,
                 "stop_reason": "task_error",
                 "stop": "task_error",
+                "harness_failure": True,
+                "abort_reason": err_text,
+                "diff_empty": not bool(partial_diff.strip()),
                 "turns_executed": 0,
-                "history": [{"turn": 0, "passed": False, "err": f"{type(exc).__name__}: {exc}", "stop": "task_error"}],
+                "history": [{"turn": 0, "passed": False, "err": err_text, "stop": "task_error"}],
                 "total_completion_tokens": 0,
                 "final_diff": partial_diff,
             }
@@ -2879,18 +3037,24 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
     approved_final = 0
     has_all_reviews = True
     hand_fix_lines_approved = []
+    max_schema_version = 1
 
     for task in all_tasks:
         tid = task["id"]
         if tid not in rows_by_id:
             continue
         row = rows_by_id[tid]
+        row_schema_version = int(row.get("schema_version") or 1)
+        if row_schema_version > max_schema_version:
+            max_schema_version = row_schema_version
         has_tests = bool(task.get("has_tests"))
         local_diff = row.get("final_diff", "")
+        diff_empty = not bool(local_diff.strip())
+        stop_reason = row.get("stop_reason")
         in_loop_passed = bool(row.get("passed")) if has_tests else None
         if has_tests:
             testable_total += 1
-            if not local_diff.strip():
+            if diff_empty:
                 passed = False
                 grade_test_out = "empty diff"
             else:
@@ -2903,16 +3067,18 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
-        if not local_diff.strip() and rev is None:
+        if diff_empty and rev is None:
             # Amendment, Nov 18 2026: a task with an empty diff (including context_overflow,
             # and pr13's empty diff) is an automatic non-approval with no Grok review,
             # hand_fix_lines n/a and excluded from the hand-fix average.
+            # Amendment, Nov 21 2026 (schema v2+): unreviewed tasks record tamper=None (null)
+            # instead of False, while legacy v1/v2 frozen rows preserve tamper=False.
             is_app1 = False
             is_app_final = False
             v1 = "NON-APPROVAL"
             v_final = "NON-APPROVAL"
             hf_lines = None
-            tamper = False
+            tamper = None if row_schema_version >= 2 else False
             fresh_session = True
         elif rev is not None:
             if not isinstance(rev, dict):
@@ -2958,7 +3124,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         if has_tests and passed:
             testable_passed += 1
 
-        per_task.append({
+        entry = {
             "task_id": tid,
             "pr_number": task["pr_number"],
             "has_tests": has_tests,
@@ -2966,7 +3132,7 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             "test_passed": passed,
             "tamper": tamper,
             "fresh_session": fresh_session,
-            "stop_reason": row.get("stop_reason"),
+            "stop_reason": stop_reason,
             "turns_executed": row.get("turns_executed"),
             "total_completion_tokens": row.get("total_completion_tokens"),
             "wall_s": row.get("wall_s"),
@@ -2975,7 +3141,16 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             "first_verdict": v1,
             "final_verdict": v_final,
             "hand_fix_lines": hf_lines,
-        })
+        }
+        if row_schema_version >= 2:
+            entry["diff_empty"] = diff_empty
+            entry["abort_reason"] = _derive_abort_reason(
+                stop_reason, row.get("history"), explicit=row.get("abort_reason")
+            )
+            entry["harness_failure"] = (
+                bool(row["harness_failure"]) if "harness_failure" in row else (stop_reason == "task_error")
+            )
+        per_task.append(entry)
 
     total_evaluated = len(per_task)
     final_app_count = approved_final if (has_all_reviews and total_evaluated > 0) else None
@@ -3003,6 +3178,8 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         "decision": decision,
         "per_task": per_task,
     }
+    if max_schema_version >= 2:
+        grade_summary = {"schema_version": max_schema_version, **grade_summary}
 
     grade_path = os.path.join(results_dir, f"{label}.grade.json")
     with open(grade_path, "w", encoding="utf-8") as gf:

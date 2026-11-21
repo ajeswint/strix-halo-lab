@@ -2701,6 +2701,373 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(results_dir, ignore_errors=True)
             shutil.rmtree(run_dir, ignore_errors=True)
 
+    def test_task_error_explicit_outcome_empty_partial_and_midrun_overflow(self):
+        """Schema v2 records explicit diff_empty, abort_reason, and harness_failure for task_error and mid-run aborts, keeping partial diffs on the normal Tier 2 grade path."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_task_err_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_task_err_run_")
+        orig_create_repo = pilot_pr.create_isolated_scratch_repo
+        try:
+            # Case A: Turn-0 harness exception (empty diff) -> explicit diff_empty=True, abort_reason, harness_failure=True, tamper=None
+            def boom_turn0(messages, seed):
+                raise RuntimeError("harness boom turn 0")
+
+            rows_a = pilot_pr.run_subcommand(
+                label="task-err-empty",
+                tasks_arg="item6_pr15",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=boom_turn0,
+                token_counter=lambda m: 1000,
+            )
+            self.assertEqual(len(rows_a), 1)
+            ra = rows_a[0]
+            self.assertEqual(ra["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+            self.assertFalse(ra["passed"])
+            self.assertEqual(ra["stop_reason"], "task_error")
+            self.assertEqual(ra["stop"], "task_error")
+            self.assertEqual(ra["final_diff"], "")
+            self.assertTrue(ra["diff_empty"])
+            self.assertTrue(ra["harness_failure"])
+            self.assertIn("RuntimeError: harness boom turn 0", ra["abort_reason"])
+            with open(os.path.join(results_dir, "task-err-empty.diffs", "item6_pr15.diff"), "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "")
+
+            rev_empty = os.path.join(results_dir, "task-err-empty.reviews.json")
+            with open(rev_empty, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            ga = pilot_pr.grade_subcommand(
+                label="task-err-empty",
+                reviews_file=rev_empty,
+                results_dir=results_dir,
+                tasks_override=[tasks_item6.get_task("item6_pr15")],
+            )
+            self.assertEqual(ga["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+            self.assertTrue(ga["reviews_complete"])
+            self.assertEqual(ga["approved_final"], 0)
+            pta = ga["per_task"][0]
+            self.assertEqual(pta["stop_reason"], "task_error")
+            self.assertTrue(pta["diff_empty"])
+            self.assertTrue(pta["harness_failure"])
+            self.assertIn("RuntimeError: harness boom turn 0", pta["abort_reason"])
+            self.assertEqual(pta["final_verdict"], "NON-APPROVAL")
+            self.assertIsNone(pta["hand_fix_lines"])
+            self.assertIsNone(pta["tamper"])
+
+            # Case B: Mid-run task_error AFTER partial edit -> partial diff preserved, diff_empty=False, abort_reason set, normal grade path sends partial diff to Tier 2
+            turn_b = [0]
+
+            def partial_then_boom(messages, seed):
+                t = turn_b[0]
+                turn_b[0] += 1
+                if t == 0:
+                    calls = [{"tool": "create_file", "args": {"path": "partial_midrun.txt", "content": "partial work\n"}}]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 37}}
+                raise RuntimeError("mid-run harness crash")
+
+            rows_b = pilot_pr.run_subcommand(
+                label="task-err-partial",
+                tasks_arg="item6_pr15",
+                max_turns=3,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=partial_then_boom,
+                token_counter=lambda m: 1000,
+            )
+            rb = rows_b[0]
+            self.assertEqual(rb["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+            self.assertFalse(rb["passed"])
+            self.assertEqual(rb["stop_reason"], "task_error")
+            self.assertTrue(rb["harness_failure"])
+            self.assertFalse(rb["diff_empty"])
+            self.assertIn("partial_midrun.txt", rb["final_diff"])
+            self.assertIn("RuntimeError: mid-run harness crash", rb["abort_reason"])
+            self.assertEqual(rb["turns_executed"], 2)
+            self.assertEqual(rb["total_completion_tokens"], 37)
+
+            # Without Tier 2 review: partial diff is NOT auto-non-approved; awaits Tier 2 with tamper=None
+            gb_pending = pilot_pr.grade_subcommand(
+                label="task-err-partial",
+                results_dir=results_dir,
+                tasks_override=[tasks_item6.get_task("item6_pr15")],
+            )
+            self.assertFalse(gb_pending["reviews_complete"])
+            ptb_p = gb_pending["per_task"][0]
+            self.assertEqual(ptb_p["stop_reason"], "task_error")
+            self.assertFalse(ptb_p["diff_empty"])
+            self.assertTrue(ptb_p["harness_failure"])
+            self.assertIn("RuntimeError: mid-run harness crash", ptb_p["abort_reason"])
+            self.assertIsNone(ptb_p["final_verdict"])
+            self.assertIsNone(ptb_p["tamper"])
+
+            # With Tier 2 review: partial diff is graded normally through Tier 2 and keeps boolean tamper
+            rev_partial = os.path.join(results_dir, "task-err-partial.reviews.json")
+            with open(rev_partial, "w", encoding="utf-8") as f:
+                json.dump({
+                    "item6_pr15": {
+                        "verdict": "REQUEST-CHANGES",
+                        "hand_fix_lines": 12,
+                        "tamper": False,
+                        "fresh_session": True,
+                    }
+                }, f)
+            gb_rev = pilot_pr.grade_subcommand(
+                label="task-err-partial",
+                reviews_file=rev_partial,
+                results_dir=results_dir,
+                tasks_override=[tasks_item6.get_task("item6_pr15")],
+            )
+            self.assertTrue(gb_rev["reviews_complete"])
+            ptb_r = gb_rev["per_task"][0]
+            self.assertEqual(ptb_r["stop_reason"], "task_error")
+            self.assertFalse(ptb_r["diff_empty"])
+            self.assertTrue(ptb_r["harness_failure"])
+            self.assertIn("RuntimeError: mid-run harness crash", ptb_r["abort_reason"])
+            self.assertEqual(ptb_r["final_verdict"], "REQUEST-CHANGES")
+            self.assertEqual(ptb_r["hand_fix_lines"], 12)
+            self.assertIs(ptb_r["tamper"], False)
+
+            # Case C: Mid-run context_overflow after a turn-0 edit -> explicit empty diff, diff_empty=True, abort_reason set, tamper=None
+            turn_c = [0]
+
+            def edit_then_overflow_counter(messages):
+                return 60000 if len(messages) > 2 else 1500
+
+            def edit_once(messages, seed):
+                turn_c[0] += 1
+                calls = [{"tool": "create_file", "args": {"path": "dropped_on_overflow.txt", "content": "x\n"}}]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+
+            rows_c = pilot_pr.run_subcommand(
+                label="midrun-overflow",
+                tasks_arg="item6_pr15",
+                max_turns=3,
+                slot_ctx=65536,
+                reserved_output_tokens=8192,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=edit_once,
+                token_counter=edit_then_overflow_counter,
+            )
+            rc = rows_c[0]
+            self.assertEqual(turn_c[0], 1)
+            self.assertEqual(rc["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+            self.assertEqual(rc["stop_reason"], "context_overflow")
+            self.assertEqual(rc["final_diff"], "")
+            self.assertTrue(rc["diff_empty"])
+            self.assertFalse(rc["harness_failure"])
+            self.assertIn("prompt preflight overflow", rc["abort_reason"])
+
+            rev_ovf = os.path.join(results_dir, "midrun-overflow.reviews.json")
+            with open(rev_ovf, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            gc = pilot_pr.grade_subcommand(
+                label="midrun-overflow",
+                reviews_file=rev_ovf,
+                results_dir=results_dir,
+                tasks_override=[tasks_item6.get_task("item6_pr15")],
+            )
+            ptc = gc["per_task"][0]
+            self.assertEqual(ptc["stop_reason"], "context_overflow")
+            self.assertTrue(ptc["diff_empty"])
+            self.assertFalse(ptc["harness_failure"])
+            self.assertIn("prompt preflight overflow", ptc["abort_reason"])
+            self.assertEqual(ptc["final_verdict"], "NON-APPROVAL")
+            self.assertIsNone(ptc["tamper"])
+
+            # Case D: Pre-loop exception in run_subcommand (create_isolated_scratch_repo fails) -> explicit task_error record and continues
+            def fail_first_repo(repo_root, base_sha, scratch_dir):
+                if base_sha == tasks_item6.get_task("item6_pr15")["base_commit"]:
+                    raise RuntimeError("archive failed before loop")
+                return orig_create_repo(repo_root, base_sha, scratch_dir)
+
+            pilot_pr.create_isolated_scratch_repo = fail_first_repo
+            rows_d = pilot_pr.run_subcommand(
+                label="preloop-error",
+                tasks_arg="item6_pr15,item6_pr06",
+                max_turns=1,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=lambda m, s: {
+                    "content": '```json\n[{"tool": "create_file", "args": {"path": "ok.txt", "content": "ok\\n"}}]\n```',
+                    "usage": {"completion_tokens": 10},
+                },
+                token_counter=lambda m: 1000,
+            )
+            by_id_d = {r["task_id"]: r for r in rows_d}
+            rd15 = by_id_d["item6_pr15"]
+            self.assertEqual(rd15["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+            self.assertEqual(rd15["stop_reason"], "task_error")
+            self.assertEqual(rd15["final_diff"], "")
+            self.assertTrue(rd15["diff_empty"])
+            self.assertTrue(rd15["harness_failure"])
+            self.assertIn("RuntimeError: archive failed before loop", rd15["abort_reason"])
+            self.assertEqual(rd15["turns_executed"], 0)
+            self.assertIn("ok.txt", by_id_d["item6_pr06"]["final_diff"])
+        finally:
+            pilot_pr.create_isolated_scratch_repo = orig_create_repo
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_grade_tamper_null_for_unreviewed_schema_v2_and_bool_for_reviewed(self):
+        """Schema v2 grade.json emits tamper=null for unreviewed tasks (including empty-diff auto non-approvals) and keeps true/false for Tier 2 reviewed tasks."""
+        temp_dir = tempfile.mkdtemp(prefix="pilot_tamper_null_")
+        try:
+            t15 = tasks_item6.get_task("item6_pr15")  # has_tests=False (fast)
+            t13 = tasks_item6.get_task("item6_pr13")  # has_tests=True, empty diff (fast)
+            t14 = tasks_item6.get_task("item6_pr14")  # has_tests=True, passing diff for tamper=True check
+            t20 = tasks_item6.get_task("item6_pr20")  # has_tests=True, empty diff (fast)
+            hd14 = tasks_item6.get_hidden_diff(t14)
+
+            jsonl_path = os.path.join(temp_dir, "v2-tamper.jsonl")
+            rows = [
+                {
+                    "schema_version": pilot_pr.RECORD_SCHEMA_VERSION,
+                    "task_id": "item6_pr15",
+                    "pr_number": 15,
+                    "has_tests": False,
+                    "passed": True,
+                    "stop_reason": "applied_no_tests",
+                    "harness_failure": False,
+                    "abort_reason": None,
+                    "diff_empty": False,
+                    "turns_executed": 1,
+                    "total_completion_tokens": 50,
+                    "wall_s": 1.0,
+                    "final_diff": "diff --git a/README.md b/README.md\n+note\n",
+                },
+                {
+                    "schema_version": pilot_pr.RECORD_SCHEMA_VERSION,
+                    "task_id": "item6_pr14",
+                    "pr_number": 14,
+                    "has_tests": True,
+                    "passed": True,
+                    "stop_reason": "pass",
+                    "harness_failure": False,
+                    "abort_reason": None,
+                    "diff_empty": False,
+                    "turns_executed": 1,
+                    "total_completion_tokens": 50,
+                    "wall_s": 1.0,
+                    "final_diff": hd14,
+                },
+                {
+                    "schema_version": pilot_pr.RECORD_SCHEMA_VERSION,
+                    "task_id": "item6_pr13",
+                    "pr_number": 13,
+                    "has_tests": True,
+                    "passed": False,
+                    "stop_reason": "context_overflow",
+                    "harness_failure": False,
+                    "abort_reason": "prompt preflight overflow: 60000 > 57344",
+                    "diff_empty": True,
+                    "turns_executed": 5,
+                    "total_completion_tokens": 400,
+                    "wall_s": 10.0,
+                    "final_diff": "",
+                },
+                {
+                    "schema_version": pilot_pr.RECORD_SCHEMA_VERSION,
+                    "task_id": "item6_pr20",
+                    "pr_number": 20,
+                    "has_tests": True,
+                    "passed": False,
+                    "stop_reason": "task_error",
+                    "harness_failure": True,
+                    "abort_reason": "RuntimeError: harness crash",
+                    "diff_empty": True,
+                    "turns_executed": 1,
+                    "total_completion_tokens": 0,
+                    "wall_s": 0.5,
+                    "final_diff": "",
+                },
+            ]
+            with open(jsonl_path, "w", encoding="utf-8") as f:
+                for r in rows:
+                    f.write(json.dumps(r) + "\n")
+
+            rev_path = os.path.join(temp_dir, "v2-tamper.reviews.json")
+            with open(rev_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "item6_pr15": {
+                        "verdict": "REQUEST-CHANGES",
+                        "hand_fix_lines": 10,
+                        "tamper": False,
+                        "fresh_session": True,
+                    },
+                    "item6_pr14": {
+                        "verdict": "APPROVE",
+                        "hand_fix_lines": 0,
+                        "tamper": True,
+                        "fresh_session": True,
+                    },
+                }, f)
+
+            summary = pilot_pr.grade_subcommand(
+                label="v2-tamper",
+                reviews_file=rev_path,
+                results_dir=temp_dir,
+                tasks_override=[t13, t14, t15, t20],
+            )
+            self.assertTrue(summary["reviews_complete"])
+            self.assertEqual(summary["schema_version"], pilot_pr.RECORD_SCHEMA_VERSION)
+
+            # Verify on-disk grade.json JSON nulls vs booleans
+            with open(os.path.join(temp_dir, "v2-tamper.grade.json"), "r", encoding="utf-8") as gf:
+                disk_grade = json.load(gf)
+            by_tid = {pt["task_id"]: pt for pt in disk_grade["per_task"]}
+
+            # Reviewed tasks keep explicit boolean true/false
+            self.assertIs(by_tid["item6_pr15"]["tamper"], False)
+            self.assertFalse(by_tid["item6_pr15"]["diff_empty"])
+            self.assertIs(by_tid["item6_pr14"]["tamper"], True)
+            self.assertFalse(by_tid["item6_pr14"]["test_passed"])
+
+            # Unreviewed empty-diff auto non-approvals have tamper=None (JSON null), not False
+            self.assertIsNone(by_tid["item6_pr13"]["tamper"])
+            self.assertEqual(by_tid["item6_pr13"]["final_verdict"], "NON-APPROVAL")
+            self.assertTrue(by_tid["item6_pr13"]["diff_empty"])
+            self.assertIsNone(by_tid["item6_pr20"]["tamper"])
+            self.assertEqual(by_tid["item6_pr20"]["final_verdict"], "NON-APPROVAL")
+            self.assertTrue(by_tid["item6_pr20"]["diff_empty"])
+            self.assertTrue(by_tid["item6_pr20"]["harness_failure"])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_regrade_frozen_v2_data_unchanged_0_of_6_0_of_7_drop(self):
+        """Re-grading the frozen item6-pilot-v2 data (legacy schema v1) preserves exact 0/6 tests, 0/7 approvals, DROP, and matches committed grade.json."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        committed_res = os.path.join(repo_root, "bench", "loop", "results")
+        tmp_res = tempfile.mkdtemp(prefix="pilot_regrade_v2_")
+        try:
+            shutil.copy2(
+                os.path.join(committed_res, "item6-pilot-v2.jsonl"),
+                os.path.join(tmp_res, "item6-pilot-v2.jsonl"),
+            )
+            shutil.copy2(
+                os.path.join(committed_res, "item6-pilot-v2.reviews.json"),
+                os.path.join(tmp_res, "item6-pilot-v2.reviews.json"),
+            )
+            with open(os.path.join(committed_res, "item6-pilot-v2.grade.json"), "r", encoding="utf-8") as f:
+                committed_grade = json.load(f)
+
+            regraded = pilot_pr.grade_subcommand(
+                label="item6-pilot-v2",
+                repo_root=repo_root,
+                results_dir=tmp_res,
+            )
+            self.assertEqual(regraded["tasks_evaluated"], 7)
+            self.assertEqual(regraded["testable_tasks"], 6)
+            self.assertEqual(regraded["testable_passed"], 0)
+            self.assertEqual(regraded["approved_final"], 0)
+            self.assertTrue(regraded["reviews_complete"])
+            self.assertIsNone(regraded["avg_hand_fix_lines_per_approved"])
+            self.assertEqual(regraded["decision"], "DROP")
+            self.assertNotIn("schema_version", regraded)
+            self.assertEqual(regraded, committed_grade)
+        finally:
+            shutil.rmtree(tmp_res, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
