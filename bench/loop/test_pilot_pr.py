@@ -3068,6 +3068,97 @@ class TestPilotPr(unittest.TestCase):
         finally:
             shutil.rmtree(tmp_res, ignore_errors=True)
 
+    def test_post_turn_task_wall_budget_with_tool_or_parse_error_reports_wall_budget_abort_reason(self):
+        """Post-turn task_wall_budget on a turn with tool/test or parse err reports wall-budget abort_reason, not the old err text."""
+        results_dir = tempfile.mkdtemp(prefix="pilot_postturn_wall_")
+        try:
+            t15 = tasks_item6.get_task("item6_pr15")
+
+            # Case 1: Normal tool turn with a tool error + wall budget exceeded post-turn
+            now1 = [0.0]
+
+            def tool_err_and_slow(messages, seed):
+                now1[0] += 700.0
+                calls = [{"tool": "search_replace", "args": {"path": "README.md", "old": "NONEXISTENT_SENTINEL_TEXT", "new": "x"}}]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 15}}
+
+            rows1 = pilot_pr.run_subcommand(
+                label="wall-after-tool-err",
+                tasks_arg="item6_pr15",
+                max_turns=3,
+                task_wall_budget=617,
+                clock_fn=lambda: now1[0],
+                results_dir=results_dir,
+                ask_fn=tool_err_and_slow,
+                token_counter=lambda m: 1000,
+            )
+            r1 = rows1[0]
+            self.assertEqual(r1["stop_reason"], "task_wall_budget")
+            self.assertEqual(r1["history"][-1]["stop"], "task_wall_budget")
+            self.assertIn("0 matches", r1["history"][-1]["err"])
+            self.assertEqual(r1["abort_reason"], "task wall budget exceeded (700.0s >= 617s)")
+            self.assertEqual(r1["history"][-1]["abort_reason"], r1["abort_reason"])
+            self.assertNotIn("0 matches", r1["abort_reason"])
+            self.assertTrue(r1["diff_empty"])
+
+            # Verify grade_subcommand preserves the wall-budget abort_reason (and sets tamper=None on empty diff)
+            rev1 = os.path.join(results_dir, "wall-after-tool-err.reviews.json")
+            with open(rev1, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            g1 = pilot_pr.grade_subcommand(
+                label="wall-after-tool-err",
+                reviews_file=rev1,
+                results_dir=results_dir,
+                tasks_override=[t15],
+            )
+            pt1 = g1["per_task"][0]
+            self.assertEqual(pt1["stop_reason"], "task_wall_budget")
+            self.assertEqual(pt1["abort_reason"], "task wall budget exceeded (700.0s >= 617s)")
+            self.assertNotIn("0 matches", pt1["abort_reason"])
+            self.assertIsNone(pt1["tamper"])
+
+            # Case 2: Parse-error turn + wall budget exceeded post-turn
+            now2 = [0.0]
+
+            def parse_err_and_slow(messages, seed):
+                now2[0] += 650.0
+                return {"content": "prose without any tool call block", "usage": {"completion_tokens": 12}}
+
+            rows2 = pilot_pr.run_subcommand(
+                label="wall-after-parse-err",
+                tasks_arg="item6_pr15",
+                max_turns=3,
+                task_wall_budget=617,
+                clock_fn=lambda: now2[0],
+                results_dir=results_dir,
+                ask_fn=parse_err_and_slow,
+                token_counter=lambda m: 1000,
+            )
+            r2 = rows2[0]
+            self.assertEqual(r2["stop_reason"], "task_wall_budget")
+            self.assertEqual(r2["history"][-1]["stop"], "task_wall_budget")
+            self.assertIn("No valid tool calls found", r2["history"][-1]["err"])
+            self.assertEqual(r2["abort_reason"], "task wall budget exceeded (650.0s >= 617s)")
+            self.assertNotIn("No valid tool calls found", r2["abort_reason"])
+
+            # Case 3: Direct _derive_abort_reason fallback when history[-1] has stop=task_wall_budget and only an old tool err
+            self.assertEqual(
+                pilot_pr._derive_abort_reason(
+                    "task_wall_budget",
+                    [{"turn": 0, "err": "search_replace error: 0 matches", "stop": "task_wall_budget"}],
+                ),
+                "task_wall_budget",
+            )
+            self.assertEqual(
+                pilot_pr._derive_abort_reason(
+                    "task_wall_budget",
+                    [{"turn": 0, "err": "task wall budget timeout (620.0s / 617s): timed out", "stop": "task_wall_budget"}],
+                ),
+                "task wall budget timeout (620.0s / 617s): timed out",
+            )
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

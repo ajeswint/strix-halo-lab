@@ -1896,8 +1896,12 @@ def _run_task_loop_turns(
                 stop_reason = "budget"
                 break
             if _wall_exceeded():
+                elapsed_w = _wall_elapsed()
+                wall_reason = f"task wall budget exceeded ({elapsed_w:.1f}s >= {task_wall_budget}s)"
                 stop_reason = "task_wall_budget"
                 history[-1]["stop"] = stop_reason
+                history[-1]["abort_reason"] = wall_reason
+                loop_state["abort_reason"] = wall_reason
                 break
             if turn < max_turns - 1:
                 messages.append({"role": "user", "content": f"Tool error: {err_msg}"})
@@ -2092,8 +2096,12 @@ def _run_task_loop_turns(
             break
 
         if _wall_exceeded():
+            elapsed_w = _wall_elapsed()
+            wall_reason = f"task wall budget exceeded ({elapsed_w:.1f}s >= {task_wall_budget}s)"
             stop_reason = "task_wall_budget"
             history[-1]["stop"] = stop_reason
+            history[-1]["abort_reason"] = wall_reason
+            loop_state["abort_reason"] = wall_reason
             break
 
         if turn < max_turns - 1:
@@ -2129,9 +2137,15 @@ def _derive_abort_reason(stop_reason, history, explicit=None):
     if stop_reason not in ABORT_STOP_REASONS:
         return None
     if history and isinstance(history[-1], dict):
+        last_abort = history[-1].get("abort_reason")
+        if last_abort and str(last_abort).strip():
+            return str(last_abort).strip()
         last_err = history[-1].get("err")
         if last_err and str(last_err).strip():
-            return str(last_err).strip()
+            last_err_s = str(last_err).strip()
+            if stop_reason == "task_wall_budget" and "wall budget" not in last_err_s.lower():
+                return stop_reason
+            return last_err_s
     return stop_reason
 
 
@@ -2259,6 +2273,7 @@ def run_task_loop(
             history=history,
             loop_state=loop_state,
         )
+        abort_reason = loop_state.get("abort_reason")
     except Exception as exc:
         err_text = f"{type(exc).__name__}: {exc}"
         stop_reason = "task_error"

@@ -249,7 +249,7 @@ Recorded 2026-11-20 CT after Item 6 pilot v2 run 1 finished at commit `54cca4854
     1. It is reported in the post-run write-up as a harness failure.
     2. It still goes through the normal `pilot_pr.py grade` path unchanged, so the official `item6-pilot-v2.grade.json` needs no hand edits.
     3. Any non-empty partial diff captured on a `task_error` row is still sent to blind Tier 2 review as usual (while an empty diff remains an automatic non-approval with `hand_fix_lines` excluded).
-    4. *Known gap (to fix in a later PR, not this one)*: non-leak exceptions caught as `task_error` in `run_subcommand` currently capture and retain any partial worktree diff instead of forcing an empty diff / clean abort.
+    4. *Resolved in Section 14 (2026-11-21)*: `task_error` keeps any non-empty partial diff for Tier 2 review (per item 3 above), and schema v2 records explicit `diff_empty`, `abort_reason`, and `harness_failure` fields in both JSONL and `grade.json` so missing or partial diffs cannot be mistaken for "not yet run".
 - **Unchanged Protocol Elements**: No change to KEEP/DROP/INCONCLUSIVE bars (Section 9), mechanical PR selection (Section 4), isolation / outer `/usr/bin/bwrap` + read-only test file grading rules (Section 6), or the empty-diff automatic non-approval rule (Section 10).
 - **Recorded Observation (Not Fixed Now) & Development-Set Caveat**:
   - v2 stopped first-request context overflow, but `item6_pr13` and `item6_pr14` still ended `context_overflow` at turns 8 and 7 as tool output accumulated in the conversation history. Those records stand unchanged and are not re-run or fixed for v2.
