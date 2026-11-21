@@ -331,3 +331,132 @@ Recorded 2026-11-21 CT after PR #26 decision review. **Applies strictly to futur
 1. **Explicit `task_error` and Abort Outcome Fields (`schema_version = 2`)**: New `pilot_pr.py` JSONL rows stamp `"schema_version": 2`, `"diff_empty": true/false`, `"abort_reason": "<reason>" | null`, and `"harness_failure": true/false` (`true` for `task_error`). When a task ends in `task_error` (pre-loop or mid-run harness exception) or another abort (`context_overflow`, `request_error`, `prompt_leak`, `task_wall_budget`), both the JSONL row and `grade.json` explicitly record `diff_empty` and a non-empty `abort_reason` (with `final_diff = ""` and `diff_empty = true` when no diff is emitted), so a missing or partial diff cannot be mistaken for "not yet run". The Section 12 `task_error` rule stays unchanged: `task_error` is reported as a harness failure on the normal `pilot_pr.py grade` path, and any non-empty partial diff captured before the failure still goes to Tier 2 blind review.
 2. **Unreviewed `tamper: null` in `grade.json` (`schema_version >= 2`)**: For schema v2+ rows that never received a Tier 2 review (including empty-diff automatic non-approvals), `pilot_pr.py grade` records `"tamper": null` instead of `false`. Tier 2 reviewed tasks retain required boolean `"tamper": true/false`.
 3. **Frozen Legacy Compatibility (`schema_version < 2`)**: Rows without `schema_version` (frozen v1 `item6-pilot` and v2 `item6-pilot-v2`) retain legacy grading semantics and re-grade identically (`0/6` tests, `0/7` approvals, `DROP` for frozen v2). No KEEP/DROP bars, selection rules, or sandbox isolation rules change.
+
+## 15. Amendment, Nov 21 2026: Item 6 Pilot v3 (Compaction + Unseen External-Repo PRs, Pre-Run)
+
+Stated before any practice or v3 GPU session (2026-11-21 CT). **No GPU session starts in this commit.** AJ authorized the Step 1 practice run on Nov 21 2026 11:28 AM CT ("address all nits and then follow claude rec"), so only the PR merge gates Step 1; Step 2 (unseen v3 pilot) waits for Step 1 to pass, any compaction freeze note, and AJ's separate yes.
+
+### 15.1 Freeze Status & Scope
+
+- **v1 and v2 Frozen (`DROP`)**: Both v1 (`item6-pilot`, `0/6` tests, `0/7` approvals, `DROP`) and v2 (`item6-pilot-v2`, `0/6` tests, `0/7` approvals, `DROP`; verified 12/12 via `bench/loop/results/item6-pilot-v2.final.SHA256SUMS`) are permanently frozen and untouched. All launchers refuse `LABEL=item6-pilot` and `LABEL=item6-pilot-v2`.
+- **First Test on Unseen PRs**: v1 and v2 evaluated the 7 dev PRs from `ajeswint/strix-halo-lab`. **v3 (`item6-pilot-v3`) is the first evaluation on genuinely unseen PRs** from an external repository the local model has never been tested on (`more-itertools/more-itertools`).
+- **Unchanged Model, Serving, and Budget Parameters**:
+  - Model: `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (no DeepSeek arm).
+  - Serving: `scripts/llmctl.py invite qwen --ctx 65536 --np 1` (`total_slots 1 n_ctx 65536`, `slot_ctx = 65,536`, `RESERVED_OUTPUT_TOKENS = 8,192`, `max_prompt_tokens = 57,344`).
+  - Sampling & Budgets: `temperature = 0.6`, `top_p = 0.95`, `top_k = 20`, `REASONING_BUDGET = 4,096`, `MAX_TOKENS = 8,192`, `MAX_TURNS_DEFAULT = 12`, `TASK_BUDGET_TOKENS = 32,768`, `TASK_WALL_BUDGET = 617` s, `CEILING_SECONDS = 4,320` s (1.2 GPU-hours).
+
+### 15.2 Context Compaction Parameters (Frozen for Practice Run & Baseline v3)
+
+Targeting the mid-conversation `context_overflow` confound observed on `item6_pr13`, `item6_pr14`, and `item6_pr16` in v2 (Section 13), `bench/loop/pilot_pr.py` adds deterministic per-turn truncation and multi-turn history compaction with the following frozen parameters:
+
+| Parameter | Value | Role |
+| :--- | :--- | :--- |
+| `TOOL_RESULT_MAX_LINES` | `120` (`HEAD=80`, `TAIL=40`) | Per-tool line cap; elides middle with `... [elided N lines] ...` |
+| `TOOL_RESULT_MAX_CHARS` | `6,000` | Per-tool char cap (head+tail with elided-lines/chars marker) |
+| `TEST_OUTPUT_MAX_LINES` | `80` (`HEAD=30`, `TAIL=50`) | Per-test output line cap (head+tail with elided-lines marker) |
+| `TEST_OUTPUT_MAX_CHARS` | `3,500` | Per-test output char cap (head+tail with elided-lines/chars marker) |
+| `TURN_FEEDBACK_MAX_CHARS` | `12,000` | Combined per-turn `Tool results:` message cap across all calls in a turn |
+| `COMPACT_KEEP_RECENT_TURNS` | `2` | Most recent tool-result turns kept verbatim in Stage 1 |
+| `COMPACT_MIN_RECENT_TURNS` | `1` | Minimum recent tool-result turns kept verbatim in Stage 2b |
+| `COMPACT_TARGET_CTX_RATIO` | `0.75` (`43,008` tok at `57,344` max) | Target prompt-token ratio triggering Stage 2 budget compaction |
+| `STALE_ASSISTANT_MAX_CHARS` | `1,200` | Threshold above which stale assistant turns are summarized in Stage 2a |
+
+- **Compaction Stages** (`compact_conversation_messages`, preserving `messages[0]` system prompt and `messages[1]` initial task prompt intact on every turn):
+  1. `stale_tool_summary` (Stage 1): summarizes user tool-result messages older than the last `COMPACT_KEEP_RECENT_TURNS` (2) turns into compact per-tool digests (tool name, key args, ok/error status, char count).
+  2. `stale_assistant_summary` (Stage 2a, when prompt tokens $> 0.75 \times \text{max\_prompt\_tokens}$): summarizes stale assistant messages $> 1,200$ chars (e.g., large `create_file` JSON blobs already applied to disk).
+  3. `recent_tool_summary` (Stage 2b, if still above target): summarizes older kept user tool outputs down to `COMPACT_MIN_RECENT_TURNS = 1`.
+  4. `drop_stale_turns` (Stage 2c, if still above `max_prompt_tokens = 57,344`): drops the oldest stale `(assistant, user)` turn pairs after `[0, 1]` while keeping the final active user turn.
+  5. `truncate_latest_tool_result` (Stage 2d, if still above `max_prompt_tokens`): head+tail truncates the latest tool-result message to fit inside `max_prompt_tokens`.
+- **Visible Compaction Logging**: Every truncation or history compaction emits:
+  - a visible `COMPACTION task=<id> turn=<t> stage=<stage> ...` stdout line (captured in `run.log`),
+  - a structured `"event": "compaction"` record in `<run_dir>/turn_events.jsonl`, and
+  - per-turn `history[turn]["compaction"]` plus top-level `compaction_events_total` and `compaction_chars_saved` in the JSONL task record.
+
+### 15.3 Unseen External-Repo Task Set & Anti-Contamination Selection Rule
+
+- **Chosen External Repository**: `more-itertools/more-itertools` (`https://github.com/more-itertools/more-itertools.git`, MIT license, pure Python 3.11–3.15, zero runtime dependencies, zero test dependencies — stdlib `python3 -m unittest` runs offline in `/usr/bin/bwrap`).
+- **Local Bare Mirror**: Pinned at commit `e3f79f4fde5f7c107f70a20730b17240a05ba99b` (fetched 2026-11-21) under `/data/datasets/item6-v3-repos/more-itertools.git` (outside `strix-halo-lab`; `/data` is mounted over with `--tmpfs` inside `/usr/bin/bwrap` so the sandbox cannot access it).
+- **Contamination Cutoff & Primary Source**:
+  - `Qwen/Qwen3.6-35B-A3B` Hugging Face release timestamp: **`2026-04-15T05:59:19Z`** (source: `https://huggingface.co/Qwen/Qwen3.6-35B-A3B`, API field `createdAt: "2026-04-15T05:59:19.000Z"`; quantized GGUF `https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF` `createdAt: "2026-04-16T04:31:31.000Z"`, `lastModified: "2026-04-20T12:42:25.000Z"`).
+  - Selection window starts **`2026-05-01T00:00:00Z`** through **`2026-11-21T00:00:00Z`** (strictly post-release with $> 10$-day buffer). All 7 selected PRs were merged between **2026-09-18** and **2026-11-17** (5–7 months after Qwen3.6-35B-A3B release).
+- **Mechanical Selection Rule (`bench/loop/select_v3.py`, written before inspecting any candidate diff)**:
+  1. First-parent merge commits on `master` up to `e3f79f4fde5f7c107f70a20730b17240a05ba99b` matching `^Merge pull request #(\d+)\b` (`base_commit = parents[0]`, `merged_commit = sha`).
+  2. Merge commit UTC timestamp in `[2026-05-01T00:00:00Z, 2026-11-21T00:00:00Z]`.
+  3. Purely from `git diff --numstat` (never inspecting diff content):
+     - No binary files.
+     - No build/CI/dependency files (`.github/`, `requirements/`, `pyproject.toml`, `setup.cfg`, `tox.ini`).
+     - At least 1 runtime implementation file (`more_itertools/*.py`) and at least 1 test file (`tests/test_*.py`).
+     - Changed file count in `[2, 8]`; total changed lines (`added + deleted`) in `[15, 250]`.
+  4. Offline CPU verification in outer `/usr/bin/bwrap` (`python3 -I -B`, `--unshare-net`, stdlib only, no `pip install`): merged-commit test files mounted read-only **PASS** (`rc == 0`, exact test count) at `merged_commit` and **FAIL** (`rc != 0`) at `base_commit`. (Replaces v2's reachability check.)
+  5. Sort verified candidates chronologically ascending by `(merged_at_utc, pr_number)` and freeze the **7 most recent** (`verified[-7:]`).
+  - Verified by CPU tests `test_v3_mechanical_selection_matches_frozen_list` and `test_v3_all_seven_tasks_fail_at_base_and_pass_at_merged_in_bwrap` in `bench/loop/test_pilot_pr_v3.py`.
+- **Rule-Built Task Prompts (`tasks_item6_v3.build_v3_task_prompt`)**:
+  - Built strictly by deterministic rule from verbatim GitHub metadata without viewing any merged diff and without hand-writing task prose:
+    - If the PR references a non-PR GitHub issue, use the linked issue's exact title and body as written (PRs #1269 $\to$ Issue #1268, #1305 $\to$ Issue #1304, #1345 $\to$ Issue #1344).
+    - Otherwise, use the PR's exact title and body as written (PRs #1260, #1322, #1342, #1311).
+  - Mechanically strip HTML comments, replace every fenced code block (```` ``` ```` / `~~~`) with `[code block removed]`, and redact `104729`.
+  - Hidden tests (`merged_commit` test files), reference diffs (`hidden_diff`), `merged_commit` SHAs, and literal seed `104729` never enter the model loop.
+
+### 15.4 Frozen v3 Unseen Task List (`bench/loop/tasks_item6_v3.py`)
+
+| Task ID | PR # | Merged (UTC) | Lines | Base Commit | Prompt Source | Test Command (`test_cmd`) | Expected Tests | Target Files |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1260` | #1260 | `2026-09-18T19:49:04Z` | 54 | `d634820be7a23b6a85441ee67051530fb0a8a960` | PR #1260 | `python3 -m unittest tests.test_recipes` | 200 | `docs/versions.rst`, `more_itertools/recipes.py`, `tests/test_recipes.py` |
+| `item6v3_pr1269` | #1269 | `2026-09-21T16:16:22Z` | 19 | `1da45ae4b61a832ed080f08a8833784aad0a9534` | Issue #1268 | `python3 -m unittest tests.test_more` | 731 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1305` | #1305 | `2026-09-29T20:28:23Z` | 20 | `790bb0bb2c03e7a07282e5f16f4b1fde35b8fcf5` | Issue #1304 | `python3 -m unittest tests.test_more` | 733 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1322` | #1322 | `2026-10-30T14:45:20Z` | 53 | `4aeb4338ae1407d8da9723e86da99efeb446f719` | PR #1322 | `python3 -m unittest tests.test_more` | 736 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1342` | #1342 | `2026-10-30T14:50:27Z` | 18 | `20c4ee5c63f8f8c35a37aee3b69d95cd2450c09a` | PR #1342 | `python3 -m unittest tests.test_more` | 738 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1345` | #1345 | `2026-11-04T00:20:44Z` | 34 | `08dca284ba5446a026afdc34067b658f9da989eb` | Issue #1344 | `python3 -m unittest tests.test_more` | 740 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1311` | #1311 | `2026-11-17T22:49:38Z` | 18 | `0fcdde9cce8bfdc3ba5e84711a990a32b74564a4` | PR #1311 | `python3 -m unittest tests.test_more` | 741 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
+
+- All **7 of 7** tasks are testable (`has_tests = true`, `testable_total = 7`), verified offline inside `/usr/bin/bwrap` (pass at `merged_commit`, fail at `base_commit`).
+
+### 15.5 Absolute KEEP / DROP Bars (No Cloud-Seat Baseline)
+
+- **No Cloud-Seat Baseline**: Unlike `ajeswint/strix-halo-lab` (Section 2), no Antigravity/Grok cloud-seat baseline exists on `more-itertools/more-itertools`. **The KEEP/DROP bars for v3 are therefore absolute.**
+- **Unchanged Rate Bars (from Section 9 / v2, `compute_keep_drop`)**:
+  - **KEEP**: Authoritative test pass rate $\ge 50.0\%$ ($\ge 4/7 = 57.1\%$ on $N_{\text{test}} = 7$ testable PRs, matching v2's $\ge 3/6 = 50.0\%$ rate threshold) **AND** blind Tier 2 Grok 4.7 high approval $\ge 3/7$ ($42.9\%$) **AND** average `hand_fix_lines` $\le 20$ per approved PR (`tamper = true` fails both test and review bars).
+  - **DROP**: Authoritative test pass rate $< 33.3\%$ ($\le 2/7 = 28.6\%$ on $N_{\text{test}} = 7$, matching v2's $< 2/6$) **OR** blind Tier 2 reviewer approval $< 2/7$ ($< 28.6\%$).
+  - **INCONCLUSIVE**: Intermediate outcome (e.g., $3/7 = 42.9\%$ test pass rate with $\ge 2/7$ approvals, or average `hand_fix_lines > 20`); defaults to **DROP** unless AJ approves a bounded extension.
+
+### 15.6 Two-Step Execution Protocol & Launchers
+
+#### Step 1: Practice Run on Dev PRs `item6_pr13`, `item6_pr14`, `item6_pr16` (Pre-Declared as NOT Counting)
+
+- **Declared in Advance as NOT Counting**:
+  - Runs FIRST on the 3 dev PRs that overflowed mid-conversation in v2 (`item6_pr13`, `item6_pr14`, `item6_pr16`).
+  - **No KEEP/DROP decision is computed, no Tier 2 Grok review is run, and the practice run is NEVER reported as a pilot result.**
+  - Outputs stay in uncommitted `/tmp/lab-seats/item6-v3-practice/` (never written to `bench/loop/results/`).
+- **Pass Criteria**:
+  1. Zero `context_overflow` across all 3 tasks (`item6_pr13`, `item6_pr14`, `item6_pr16`),
+  2. Zero `harness_failure` (`task_error`),
+  3. Compaction events visible in `run.log` (`COMPACTION ...` lines) and `turn_events.jsonl` / `item6-v3-practice.jsonl` (`compaction_events_total > 0`).
+- **Budget & Ceiling**: `TASK_WALL_BUDGET = 617` s per task; total ceiling `CEILING_SECONDS = 1851` s ($617\text{ s} \times 3$, ~0.51 GPU-hours).
+- **Own Result Note & Post-Practice Freeze Rule**:
+  - After Step 1 finishes, record its outcome in its own dated practice result note (Section 15.7 below or `docs/item6-v3-practice-result.md`).
+  - Compaction parameters may be adjusted after inspecting the practice run, **but any adjusted settings must be committed and frozen in a dated v3 pre-run note in `docs/item6-pilot.md` (and verified pushed via `scripts/prereg-guard.sh --head`) before launching Step 2 (the unseen v3 run).**
+- **Launcher**: `bench/loop/runs/item6-v3-practice/run.sh` (authorized by AJ on Nov 21 2026 11:28 AM CT with "address all nits and then follow claude rec", so only the PR merge to `main` gates launch):
+
+```bash
+WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-v3-practice/run.sh >/dev/null 2>&1 &
+```
+
+#### Step 2: Unseen v3 Pilot Run (`item6-pilot-v3`)
+
+- Runs **only** after Step 1 passes, the practice result note is recorded, final compaction settings are frozen and pushed on `origin/main`, and AJ gives a separate yes.
+- **Launcher**: `bench/loop/runs/item6-pilot-v3/run.sh`:
+
+```bash
+WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-pilot-v3/run.sh >/dev/null 2>&1 &
+```
+
+- If the external bare mirror does not yet exist on disk, populate it read-only before launching:
+
+```bash
+mkdir -p /data/datasets/item6-v3-repos && git clone --bare https://github.com/more-itertools/more-itertools.git /data/datasets/item6-v3-repos/more-itertools.git
+```
+
+### 15.7 Step 1 Practice Run Result Note (Pending Practice Run)
+
+- *Status (2026-11-21 CT)*: Not yet run. AJ authorized the Step 1 practice run on Nov 21 2026 11:28 AM CT ("address all nits and then follow claude rec"), so only the PR merge gates it.
+- *Step 1 Gate & Required Record*: The Step 1 gate uses all three practice criteria — (1) no `context_overflow`, (2) no harness errors (`harness_failure` / `task_error`), and (3) compaction events visible (`COMPACTION` lines in `run.log` and `compaction_events_total > 0`). After Step 1 completes, record the practice run head SHA, per-task stop reasons (`item6_pr13`, `item6_pr14`, `item6_pr16`), the largest prompt token count per task alongside the `57,344` limit (`65,536 - 8,192`), compaction event counts (`COMPACTION` lines and `compaction_events_total`), whether all three practice criteria passed, and the final frozen compaction settings before launching Step 2.

@@ -1755,18 +1755,26 @@ class TestPilotPr(unittest.TestCase):
         self.assertEqual(pilot_pr.RESERVED_OUTPUT_TOKENS, 8192)
         self.assertEqual(pilot_pr.SLOT_CTX_DEFAULT - pilot_pr.RESERVED_OUTPUT_TOKENS, 57344)
 
-        # 2. run.sh uses --ctx 65536 --np 1, checks total_slots 1 n_ctx 65536, defaults to item6-pilot-v2, refuses item6-pilot
+        # 2. run.sh uses --ctx 65536 --np 1, checks total_slots 1 n_ctx 65536, has no frozen default label, and refuses both item6-pilot and item6-pilot-v2
         run_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
         with open(run_sh, "r", encoding="utf-8") as f:
             run_sh_text = f.read()
         self.assertIn("INVITE_OPTS=(--ctx 65536 --np 1)", run_sh_text)
         self.assertIn("total_slots 1 n_ctx 65536 ", run_sh_text)
-        self.assertIn('LABEL="${LABEL:-item6-pilot-v2}"', run_sh_text)
+        self.assertNotIn('LABEL="${LABEL:-item6-pilot-v2}"', run_sh_text)
+        self.assertNotIn('LABEL="${LABEL:-item6-pilot}"', run_sh_text)
 
-        env_v1 = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40, LABEL="item6-pilot")
-        res_v1 = subprocess.run(["bash", run_sh], cwd=repo_root, env=env_v1, capture_output=True, text=True)
-        self.assertNotEqual(res_v1.returncode, 0)
-        self.assertIn("frozen", res_v1.stderr)
+        for frozen_lbl in ("item6-pilot", "item6-pilot-v2"):
+            env_frz = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40, LABEL=frozen_lbl)
+            res_frz = subprocess.run(["bash", run_sh], cwd=repo_root, env=env_frz, capture_output=True, text=True)
+            self.assertNotEqual(res_frz.returncode, 0, f"run.sh must refuse frozen label {frozen_lbl}")
+            self.assertIn("frozen", res_frz.stderr)
+
+        env_empty_lbl = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40)
+        env_empty_lbl.pop("LABEL", None)
+        res_empty = subprocess.run(["bash", run_sh], cwd=repo_root, env=env_empty_lbl, capture_output=True, text=True)
+        self.assertNotEqual(res_empty.returncode, 0, "run.sh must refuse empty/unset LABEL")
+        self.assertIn("LABEL must be set", res_empty.stderr)
 
         # 3. scripts/llmctl.py qwen defaults to ctx=65536 and carries measured np2 GTT deltas
         scripts_dir = os.path.join(repo_root, "scripts")

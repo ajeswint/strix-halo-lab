@@ -51,7 +51,20 @@ SEARCH_REPLACE_REWRITE_MAX_RATIO = 0.80
 STUB_GUARD_MIN_REMOVED_LINES = 40
 STUB_GUARD_MIN_REMOVED_RATIO = 0.50
 STUB_GUARD_MOVE_MATCH_MIN_RATIO = 0.50
-TOOL_RESULT_MAX_CHARS = 12000
+TOOL_RESULT_MAX_LINES = 120
+TOOL_RESULT_HEAD_LINES = 80
+TOOL_RESULT_TAIL_LINES = 40
+TOOL_RESULT_MAX_CHARS = 6000
+TEST_OUTPUT_MAX_LINES = 80
+TEST_OUTPUT_HEAD_LINES = 30
+TEST_OUTPUT_TAIL_LINES = 50
+TEST_OUTPUT_MAX_CHARS = 3500
+TURN_FEEDBACK_MAX_CHARS = 12000
+
+COMPACT_KEEP_RECENT_TURNS = 2
+COMPACT_MIN_RECENT_TURNS = 1
+COMPACT_TARGET_CTX_RATIO = 0.75
+STALE_ASSISTANT_MAX_CHARS = 1200
 
 RECORD_SCHEMA_VERSION = 2
 ABORT_STOP_REASONS = frozenset({
@@ -1599,12 +1612,378 @@ def _is_context_overflow_error(err_text: str) -> bool:
     return "context" in low and any(w in low for w in ("size", "overflow", "exceed", "window", "limit", "length"))
 
 
-def _truncate_tool_output(text, max_chars=TOOL_RESULT_MAX_CHARS):
-    """Bound individual tool result payloads so context does not blow up unexpectedly."""
+def compact_text_head_tail(text, max_lines, head_lines, tail_lines, max_chars):
+    """Truncate text keeping head and tail with an explicit elided-lines marker.
+
+    Applies grading-seed redaction first, then bounds by line count and char count.
+    Returns (compacted_text: str, info: dict).
+    """
     s = redact_grading_seed(text or "")
-    if len(s) > max_chars:
-        return s[:max_chars] + f"\n... [truncated {len(s) - max_chars} chars] ..."
-    return s
+    orig_chars = len(s)
+    lines = s.splitlines()
+    orig_lines = len(lines)
+    elided_lines = 0
+    truncated = False
+    out = s
+
+    if max_lines is not None and orig_lines > max_lines and (head_lines + tail_lines) < orig_lines:
+        elided_lines = orig_lines - head_lines - tail_lines
+        head_part = "\n".join(lines[:head_lines]) if head_lines > 0 else ""
+        tail_part = "\n".join(lines[-tail_lines:]) if tail_lines > 0 else ""
+        marker = f"... [elided {elided_lines} lines] ..."
+        parts = [p for p in (head_part, marker, tail_part) if p]
+        out = "\n".join(parts)
+        truncated = True
+
+    if max_chars is not None and len(out) > max_chars:
+        truncated = True
+        marker_reserve = 72
+        usable = max(40, max_chars - marker_reserve)
+        head_budget = max(20, int(usable * 0.60))
+        tail_budget = max(0, usable - head_budget)
+        if head_budget + tail_budget >= len(out):
+            head_budget = max(1, len(out) // 2)
+            tail_budget = max(0, len(out) - head_budget - 1)
+        head_slice = out[:head_budget].rstrip("\n")
+        tail_slice = out[-tail_budget:].lstrip("\n") if tail_budget > 0 else ""
+        mid_start = len(head_slice)
+        mid_end = len(out) - len(tail_slice) if tail_slice else len(out)
+        elided_mid = out[mid_start:mid_end]
+        extra_elided_lines = elided_mid.count("\n") + (1 if elided_mid.strip() else 0)
+        total_elided_lines = elided_lines + extra_elided_lines
+        elided_lines = total_elided_lines
+        marker = f"... [elided {total_elided_lines} lines, {len(elided_mid)} chars] ..."
+        parts = [p for p in (head_slice, marker, tail_slice) if p]
+        out = "\n".join(parts)
+
+    new_chars = len(out)
+    new_lines = len(out.splitlines())
+    return out, {
+        "truncated": truncated,
+        "orig_chars": orig_chars,
+        "new_chars": new_chars,
+        "chars_saved": max(0, orig_chars - new_chars),
+        "orig_lines": orig_lines,
+        "new_lines": new_lines,
+        "elided_lines": elided_lines,
+    }
+
+
+def compact_tool_output(
+    text,
+    max_lines=TOOL_RESULT_MAX_LINES,
+    head_lines=TOOL_RESULT_HEAD_LINES,
+    tail_lines=TOOL_RESULT_TAIL_LINES,
+    max_chars=TOOL_RESULT_MAX_CHARS,
+):
+    """Bound an individual tool output using head+tail truncation with an elided-lines marker."""
+    return compact_text_head_tail(
+        text,
+        max_lines=max_lines,
+        head_lines=head_lines,
+        tail_lines=tail_lines,
+        max_chars=max_chars,
+    )
+
+
+def compact_test_output(
+    text,
+    max_lines=TEST_OUTPUT_MAX_LINES,
+    head_lines=TEST_OUTPUT_HEAD_LINES,
+    tail_lines=TEST_OUTPUT_TAIL_LINES,
+    max_chars=TEST_OUTPUT_MAX_CHARS,
+):
+    """Bound test execution output using head+tail truncation with an elided-lines marker."""
+    return compact_text_head_tail(
+        (text or "").strip(),
+        max_lines=max_lines,
+        head_lines=head_lines,
+        tail_lines=tail_lines,
+        max_chars=max_chars,
+    )
+
+
+def compact_turn_feedback(result_lines, max_chars=TURN_FEEDBACK_MAX_CHARS):
+    """Assemble and bound a turn's combined tool-results user message."""
+    raw = "Tool results:\n" + "\n\n".join(result_lines)
+    return compact_text_head_tail(
+        raw,
+        max_lines=240,
+        head_lines=140,
+        tail_lines=80,
+        max_chars=max_chars,
+    )
+
+
+def _truncate_tool_output(text, max_chars=TOOL_RESULT_MAX_CHARS):
+    """Bound individual tool result payloads with head+tail elided-lines truncation."""
+    out, _ = compact_tool_output(text, max_chars=max_chars)
+    return out
+
+
+def _format_tool_event_digest(ev):
+    """Format a compact one-line summary of one recorded tool execution event."""
+    name = ev.get("tool", "tool")
+    status = "OK" if ev.get("ok") else "ERROR"
+    args = ev.get("args") or {}
+    arg_parts = []
+    for k in ("path", "pattern", "glob", "start", "end"):
+        if k in args and args[k] is not None:
+            arg_parts.append(f"{k}={args[k]!r}")
+    arg_str = f"({', '.join(arg_parts)})" if arg_parts else "()"
+    rchars = ev.get("result_chars")
+    size_str = f", {rchars} chars" if isinstance(rchars, int) else ""
+    return f"- {name}{arg_str} {status}{size_str}"
+
+
+def summarize_stale_tool_message(content, turn_idx=None, tool_events=None):
+    """Summarize an older tool-results user message into a compact digest.
+
+    Returns (new_content: str, changed: bool). Never expands a short message.
+    """
+    text = content or ""
+    if text.startswith("[compacted stale tool output"):
+        return text, False
+    orig_chars = len(text)
+    orig_lines = len(text.splitlines())
+    bullets = []
+    if tool_events:
+        for ev in tool_events:
+            bullets.append(_format_tool_event_digest(ev))
+    else:
+        for line in text.splitlines():
+            m = re.match(r"^\[\d+\]\s+([A-Za-z0-9_]+)\s+(OK|ERROR|PASSED|FAILED)\b", line.strip())
+            if m:
+                bullets.append(f"- {m.group(1)} {m.group(2)}")
+            elif line.strip().startswith(("finish ERROR:", "finish verification FAILED:", "Tool error:")):
+                bullets.append(f"- {line.strip()[:120]}")
+    if not bullets:
+        first_line = next((ln.strip()[:120] for ln in text.splitlines() if ln.strip()), "")
+        bullets.append(f"- {first_line}" if first_line else "- (tool feedback)")
+    turn_label = f"turn {turn_idx}" if turn_idx is not None else "earlier turn"
+    body = "\n".join(bullets[:12])
+    if len(bullets) > 12:
+        body += f"\n- ... (+{len(bullets) - 12} more tool calls)"
+    summary = (
+        f"[compacted stale tool output from {turn_label}: "
+        f"{orig_lines} lines / {orig_chars} chars elided]\n"
+        f"{body}\n"
+        f"[Use read_file/grep to re-inspect if needed.]"
+    )
+    if len(summary) >= orig_chars:
+        return text, False
+    return summary, True
+
+
+def summarize_stale_assistant_message(
+    content,
+    turn_idx=None,
+    tool_events=None,
+    max_chars=STALE_ASSISTANT_MAX_CHARS,
+):
+    """Summarize a large stale assistant turn (e.g., big create_file payload already applied to disk)."""
+    text = content or ""
+    if text.startswith("[compacted stale assistant") or len(text) <= max_chars:
+        return text, False
+    orig_chars = len(text)
+    orig_lines = len(text.splitlines())
+    if tool_events:
+        desc = ", ".join(
+            f"{ev.get('tool', 'tool')}({(ev.get('args') or {}).get('path', '')})".replace("()", "")
+            for ev in tool_events[:10]
+        )
+    else:
+        desc = "tool calls applied"
+    turn_label = f"turn {turn_idx}" if turn_idx is not None else "earlier turn"
+    summary = (
+        f"[compacted stale assistant {turn_label}: "
+        f"{orig_lines} lines / {orig_chars} chars elided; {desc}]"
+    )
+    if len(summary) >= orig_chars:
+        return text, False
+    return summary, True
+
+
+def compact_conversation_messages(
+    messages,
+    slot_ctx=SLOT_CTX_DEFAULT,
+    reserved_output=RESERVED_OUTPUT_TOKENS,
+    token_counter=None,
+    msg_meta=None,
+    keep_recent_turns=COMPACT_KEEP_RECENT_TURNS,
+    min_recent_turns=COMPACT_MIN_RECENT_TURNS,
+    target_ctx_ratio=COMPACT_TARGET_CTX_RATIO,
+    stale_assistant_max_chars=STALE_ASSISTANT_MAX_CHARS,
+):
+    """Compact stale earlier tool outputs and trim history so conversation stays under slot_ctx.
+
+    Always preserves messages[0] (system prompt) and messages[1] (initial task prompt).
+    Stages:
+      1. `stale_tool_summary`: summarize user tool-result messages older than the last
+         `keep_recent_turns` user tool-result turns.
+      2a. `stale_assistant_summary`: if prompt tokens > target_tokens, summarize stale
+          assistant messages > stale_assistant_max_chars.
+      2b. `recent_tool_summary`: if still > target_tokens, summarize older kept user
+          tool-result messages down to `min_recent_turns` (default 1).
+      2c. `drop_stale_turns`: if still > max_prompt_tokens, drop the oldest stale
+          (assistant, user) turn pairs while keeping messages[0], messages[1], and the
+          final active user message.
+      2d. `truncate_latest_tool_result`: if still > max_prompt_tokens and len > 2,
+          head+tail truncate the latest user tool-result message to fit.
+
+    Returns (new_messages: list[dict], new_msg_meta: list[dict], event: dict).
+    """
+    new_messages = [dict(m) for m in messages]
+    if msg_meta is not None and len(msg_meta) == len(messages):
+        new_meta = [dict(md) if isinstance(md, dict) else {} for md in msg_meta]
+    else:
+        new_meta = [{} for _ in messages]
+
+    max_prompt_tokens = max(0, int(slot_ctx) - int(reserved_output))
+    target_tokens = int(max_prompt_tokens * float(target_ctx_ratio))
+    chars_before = sum(len(m.get("content") or "") for m in new_messages)
+    tokens_before = count_prompt_tokens(new_messages, token_counter=token_counter)
+
+    stages = []
+    msgs_compacted = 0
+    msgs_dropped = 0
+
+    if len(new_messages) <= 2:
+        return new_messages, new_meta, {
+            "compacted": False,
+            "stages": stages,
+            "msgs_compacted": 0,
+            "msgs_dropped": 0,
+            "chars_before": chars_before,
+            "chars_after": chars_before,
+            "chars_saved": 0,
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_before,
+            "tokens_saved": 0,
+            "max_prompt_tokens": max_prompt_tokens,
+            "target_tokens": target_tokens,
+        }
+
+    # Stage 1: Age-based summarization of stale tool-result user messages (index >= 2)
+    user_indices = [i for i in range(2, len(new_messages)) if new_messages[i].get("role") == "user"]
+    stale_user_cutoff = max(0, len(user_indices) - max(0, int(keep_recent_turns)))
+    stage1_hits = 0
+    for idx in user_indices[:stale_user_cutoff]:
+        md = new_meta[idx]
+        summarized, changed = summarize_stale_tool_message(
+            new_messages[idx].get("content") or "",
+            turn_idx=md.get("turn"),
+            tool_events=md.get("tools"),
+        )
+        if changed:
+            new_messages[idx]["content"] = summarized
+            stage1_hits += 1
+            msgs_compacted += 1
+    if stage1_hits > 0:
+        stages.append("stale_tool_summary")
+
+    curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+
+    # Stage 2a: If above target_tokens, summarize large stale assistant turns
+    if curr_tokens > target_tokens:
+        asst_indices = [i for i in range(2, len(new_messages)) if new_messages[i].get("role") == "assistant"]
+        stale_asst_cutoff = max(0, len(asst_indices) - max(0, int(keep_recent_turns)))
+        stage2a_hits = 0
+        for idx in asst_indices[:stale_asst_cutoff]:
+            md = new_meta[idx]
+            summarized, changed = summarize_stale_assistant_message(
+                new_messages[idx].get("content") or "",
+                turn_idx=md.get("turn"),
+                tool_events=md.get("tools"),
+                max_chars=stale_assistant_max_chars,
+            )
+            if changed:
+                new_messages[idx]["content"] = summarized
+                stage2a_hits += 1
+                msgs_compacted += 1
+        if stage2a_hits > 0:
+            stages.append("stale_assistant_summary")
+            curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+
+    # Stage 2b: If still above target_tokens, summarize older kept user messages down to min_recent_turns
+    if curr_tokens > target_tokens:
+        user_indices = [i for i in range(2, len(new_messages)) if new_messages[i].get("role") == "user"]
+        min_keep = max(1, int(min_recent_turns))
+        if len(user_indices) > min_keep:
+            stage2b_hits = 0
+            for idx in user_indices[:-min_keep]:
+                md = new_meta[idx]
+                summarized, changed = summarize_stale_tool_message(
+                    new_messages[idx].get("content") or "",
+                    turn_idx=md.get("turn"),
+                    tool_events=md.get("tools"),
+                )
+                if changed:
+                    new_messages[idx]["content"] = summarized
+                    stage2b_hits += 1
+                    msgs_compacted += 1
+            if stage2b_hits > 0:
+                stages.append("recent_tool_summary")
+                curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+
+    # Stage 2c: If still above max_prompt_tokens, drop oldest stale turn pairs (keeping [0], [1], and final active pair/message)
+    if curr_tokens > max_prompt_tokens:
+        dropped_here = 0
+        while curr_tokens > max_prompt_tokens and len(new_messages) > 4:
+            # Drop oldest (assistant, user) pair right after [0, 1]
+            if new_messages[2].get("role") == "assistant" and new_messages[3].get("role") == "user":
+                del new_messages[2:4]
+                del new_meta[2:4]
+                dropped_here += 2
+            else:
+                del new_messages[2]
+                del new_meta[2]
+                dropped_here += 1
+            curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+        if dropped_here > 0:
+            msgs_dropped += dropped_here
+            stages.append("drop_stale_turns")
+
+    # Stage 2d: If still above max_prompt_tokens and we have a recent tool-result user message, head+tail trim it
+    if curr_tokens > max_prompt_tokens and len(new_messages) > 2:
+        last_idx = len(new_messages) - 1
+        if new_messages[last_idx].get("role") == "user":
+            last_content = new_messages[last_idx].get("content") or ""
+            if len(last_content) > 600:
+                excess_tokens = curr_tokens - max_prompt_tokens
+                # Estimate char reduction needed (~3 chars/token + safety margin)
+                target_chars = max(500, len(last_content) - (excess_tokens * 3 + 256))
+                if target_chars < len(last_content):
+                    trimmed, t_info = compact_text_head_tail(
+                        last_content,
+                        max_lines=60,
+                        head_lines=30,
+                        tail_lines=20,
+                        max_chars=target_chars,
+                    )
+                    if t_info["truncated"] and len(trimmed) < len(last_content):
+                        new_messages[last_idx]["content"] = trimmed
+                        msgs_compacted += 1
+                        stages.append("truncate_latest_tool_result")
+                        curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+
+    chars_after = sum(len(m.get("content") or "") for m in new_messages)
+    tokens_after = curr_tokens
+    compacted = (msgs_compacted > 0) or (msgs_dropped > 0)
+    return new_messages, new_meta, {
+        "compacted": compacted,
+        "stages": stages,
+        "msgs_compacted": msgs_compacted,
+        "msgs_dropped": msgs_dropped,
+        "chars_before": chars_before,
+        "chars_after": chars_after,
+        "chars_saved": max(0, chars_before - chars_after),
+        "tokens_before": tokens_before,
+        "tokens_after": tokens_after,
+        "tokens_saved": max(0, tokens_before - tokens_after),
+        "max_prompt_tokens": max_prompt_tokens,
+        "target_tokens": target_tokens,
+    }
 
 
 def _run_task_loop_turns(
@@ -1640,6 +2019,48 @@ def _run_task_loop_turns(
     leak_branch = None
     loop_start = clock_fn()
     final_turn_note = "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
+    msg_meta = [{} for _ in messages]
+    loop_state.setdefault("compaction_events_total", 0)
+    loop_state.setdefault("compaction_chars_saved", 0)
+
+    def _record_compaction_event(turn_idx, stage, details, turn_comp_list):
+        saved = int(details.get("chars_saved") or 0)
+        loop_state["compaction_events_total"] = int(loop_state.get("compaction_events_total", 0)) + 1
+        loop_state["compaction_chars_saved"] = int(loop_state.get("compaction_chars_saved", 0)) + saved
+        entry = {"stage": stage, **details}
+        turn_comp_list.append(entry)
+        if stage == "history_compact":
+            stages_s = ",".join(details.get("stages") or []) or "history"
+            print(
+                f"COMPACTION task={clean_task['id']} turn={turn_idx} stage={stages_s} "
+                f"msgs_compacted={details.get('msgs_compacted', 0)} msgs_dropped={details.get('msgs_dropped', 0)} "
+                f"chars={details.get('chars_before', 0)}->{details.get('chars_after', 0)} "
+                f"tokens={details.get('tokens_before', 0)}->{details.get('tokens_after', 0)}",
+                flush=True,
+            )
+        else:
+            tool_part = f" tool={details['tool']}" if details.get("tool") else ""
+            print(
+                f"COMPACTION task={clean_task['id']} turn={turn_idx} stage={stage}{tool_part} "
+                f"lines={details.get('orig_lines', 0)}->{details.get('new_lines', 0)} "
+                f"elided_lines={details.get('elided_lines', 0)} "
+                f"chars={details.get('orig_chars', 0)}->{details.get('new_chars', 0)}",
+                flush=True,
+            )
+        if run_dir:
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": turn_idx,
+                    "event": "compaction",
+                    "stage": stage,
+                    **details,
+                },
+                label=label,
+                repo_root=repo_root,
+            )
 
     def _wall_elapsed():
         return clock_fn() - loop_start
@@ -1652,6 +2073,7 @@ def _run_task_loop_turns(
         loop_state["turn"] = turn
         loop_state["t0"] = t0
         seed = 6000 + clean_task["pr_number"] * 100 + turn
+        turn_compactions = []
 
         # Per-task wall budget check before sending request
         if _wall_exceeded():
@@ -1666,8 +2088,20 @@ def _run_task_loop_turns(
                 "gen_s": 0.0,
                 "tokens": 0,
                 "prompt_tokens": 0,
+                "compaction": turn_compactions,
             })
             break
+
+        # Compact stale earlier tool outputs / long history before leak check and preflight
+        messages, msg_meta, comp_ev = compact_conversation_messages(
+            messages,
+            slot_ctx=slot_ctx,
+            reserved_output=reserved_output_tokens,
+            token_counter=token_counter,
+            msg_meta=msg_meta,
+        )
+        if comp_ev["compacted"]:
+            _record_compaction_event(turn, "history_compact", comp_ev, turn_compactions)
 
         # Attach final-turn notice directly to the active user prompt ONLY on the actual final turn (turn == max_turns - 1)
         if max_turns > 1 and turn == max_turns - 1 and messages and messages[-1].get("role") == "user":
@@ -1842,6 +2276,7 @@ def _run_task_loop_turns(
         seen_code_hashes.add(code_hash)
 
         messages.append({"role": "assistant", "content": content})
+        msg_meta.append({"turn": turn, "tools": []})
 
         calls, parse_errors = extract_tool_calls(content, raw_tool_calls=raw_tool_calls)
         if not calls:
@@ -1877,6 +2312,7 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
                 break
@@ -1890,6 +2326,7 @@ def _run_task_loop_turns(
                 "tokens": comp_tokens,
                 "prompt_tokens": prompt_tokens,
                 "preflight_prompt_tokens": est_prompt_tokens,
+                "compaction": turn_compactions,
             })
             last_turn_err = err_msg
             if accumulated_completion_tokens >= task_budget:
@@ -1905,6 +2342,7 @@ def _run_task_loop_turns(
                 break
             if turn < max_turns - 1:
                 messages.append({"role": "user", "content": f"Tool error: {err_msg}"})
+                msg_meta.append({"turn": turn, "tools": []})
             continue
 
         result_lines = []
@@ -1938,9 +2376,9 @@ def _run_task_loop_turns(
                     any_tool_ok = True
                     continue
                 t_ok, t_out = run_tests(clean_task, worktree_dir)
-                t_out_clean = redact_grading_seed((t_out or "").strip())
-                if len(t_out_clean) > 2500:
-                    t_out_clean = "... [truncated] ...\n" + t_out_clean[-2500:]
+                t_out_clean, t_trunc = compact_test_output(t_out or "")
+                if t_trunc["truncated"]:
+                    _record_compaction_event(turn, "test_truncate", {"tool": "run_tests", **t_trunc}, turn_compactions)
                 ran_tests_this_turn = True
                 test_passed_this_turn = t_ok
                 test_out_this_turn = t_out_clean
@@ -1956,17 +2394,22 @@ def _run_task_loop_turns(
                 continue
 
             ok, out, is_edit = tool_session.execute(call)
+            comp_out, tool_trunc = compact_tool_output(out)
+            if tool_trunc["truncated"]:
+                _record_compaction_event(turn, "tool_truncate", {"tool": tname, **tool_trunc}, turn_compactions)
             call_summaries.append({"tool": tname, "ok": ok})
-            turn_tool_events.append({"tool": tname, "args": targs_summary, "ok": ok, "result_chars": len(out or "")})
+            turn_tool_events.append({"tool": tname, "args": targs_summary, "ok": ok, "result_chars": len(comp_out)})
             if ok:
                 any_tool_ok = True
                 if is_edit:
                     any_edit_ok = True
                     dirty_since_last_test = True
-                result_lines.append(f"[{idx}] {tname} OK:\n{_truncate_tool_output(out)}")
+                result_lines.append(f"[{idx}] {tname} OK:\n{comp_out}")
             else:
-                turn_errors.append(out)
-                result_lines.append(f"[{idx}] {tname} ERROR:\n{_truncate_tool_output(out)}")
+                turn_errors.append(comp_out)
+                result_lines.append(f"[{idx}] {tname} ERROR:\n{comp_out}")
+
+        msg_meta[-1]["tools"] = list(turn_tool_events)
 
         if run_dir:
             _append_turn_log(
@@ -1979,6 +2422,7 @@ def _run_task_loop_turns(
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": comp_tokens,
                     "tools": turn_tool_events,
+                    "compaction_count": len(turn_compactions),
                 },
                 label=label,
                 repo_root=repo_root,
@@ -2008,14 +2452,15 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "compaction": turn_compactions,
                 })
                 break
             else:
                 if not ran_tests_this_turn or dirty_since_last_test:
                     t_ok, t_out = run_tests(clean_task, worktree_dir)
-                    t_out_clean = redact_grading_seed((t_out or "").strip())
-                    if len(t_out_clean) > 2500:
-                        t_out_clean = "... [truncated] ...\n" + t_out_clean[-2500:]
+                    t_out_clean, t_trunc = compact_test_output(t_out or "")
+                    if t_trunc["truncated"]:
+                        _record_compaction_event(turn, "test_truncate", {"tool": "finish_tests", **t_trunc}, turn_compactions)
                     ran_tests_this_turn = True
                     test_passed_this_turn = t_ok
                     test_out_this_turn = t_out_clean
@@ -2033,6 +2478,7 @@ def _run_task_loop_turns(
                         "tokens": comp_tokens,
                         "prompt_tokens": prompt_tokens,
                         "preflight_prompt_tokens": est_prompt_tokens,
+                        "compaction": turn_compactions,
                     })
                     break
                 turn_errors.append(test_out_this_turn)
@@ -2052,6 +2498,7 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
                 break
@@ -2072,6 +2519,7 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
                 break
@@ -2089,6 +2537,7 @@ def _run_task_loop_turns(
             "tokens": comp_tokens,
             "prompt_tokens": prompt_tokens,
             "preflight_prompt_tokens": est_prompt_tokens,
+            "compaction": turn_compactions,
         })
 
         if accumulated_completion_tokens >= task_budget:
@@ -2105,8 +2554,11 @@ def _run_task_loop_turns(
             break
 
         if turn < max_turns - 1:
-            feedback = "Tool results:\n" + "\n\n".join(result_lines)
+            feedback, fb_trunc = compact_turn_feedback(result_lines)
+            if fb_trunc["truncated"]:
+                _record_compaction_event(turn, "turn_feedback_truncate", fb_trunc, turn_compactions)
             messages.append({"role": "user", "content": feedback})
+            msg_meta.append({"turn": turn, "tools": list(turn_tool_events)})
 
     # If the loop stopped on max_turns/budget after edits without a final test check, evaluate final state once
     if stop_reason in ("max_turns", "budget") and has_tests and dirty_since_last_test:
@@ -2220,6 +2672,8 @@ def run_task_loop(
                 "prompt_tokens": 0,
             }],
             "total_completion_tokens": 0,
+            "compaction_events_total": 0,
+            "compaction_chars_saved": 0,
             "final_diff": final_diff,
         }
     except Exception as exc:
@@ -2248,6 +2702,8 @@ def run_task_loop(
                 "prompt_tokens": 0,
             }],
             "total_completion_tokens": 0,
+            "compaction_events_total": 0,
+            "compaction_chars_saved": 0,
             "final_diff": final_diff,
         }
 
@@ -2329,6 +2785,8 @@ def run_task_loop(
         "turns_executed": len(history),
         "history": history,
         "total_completion_tokens": accumulated_completion_tokens,
+        "compaction_events_total": int(loop_state.get("compaction_events_total", 0)),
+        "compaction_chars_saved": int(loop_state.get("compaction_chars_saved", 0)),
         "final_diff": final_diff,
     }
     if leak_branch is not None:
@@ -2489,6 +2947,26 @@ def selftest():
         assert res_ovf["harness_failure"] is False
         print("[OK] Context preflight overflow verified")
 
+        # Case D: Head+tail tool/test truncation and stale conversation compaction
+        big_lines = "\n".join(f"line_{i:04d}: payload" for i in range(250))
+        comp_tool, info_tool = compact_tool_output(big_lines)
+        assert info_tool["truncated"] is True and info_tool["elided_lines"] > 0
+        assert "line_0000:" in comp_tool and "line_0249:" in comp_tool and "elided" in comp_tool
+        comp_msgs, _, comp_ev = compact_conversation_messages([
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "a0"},
+            {"role": "user", "content": "Tool results:\n[1] read_file OK:\n" + ("x\n" * 400)},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "Tool results:\n[1] read_file OK:\nrecent1"},
+            {"role": "assistant", "content": "a2"},
+            {"role": "user", "content": "Tool results:\n[1] read_file OK:\nrecent2"},
+        ])
+        assert comp_ev["compacted"] is True and comp_ev["msgs_compacted"] >= 1
+        assert comp_msgs[3]["content"].startswith("[compacted stale tool output")
+        assert "recent2" in comp_msgs[7]["content"]
+        print("[OK] Tool output truncation and stale history compaction verified")
+
     finally:
         shutil.rmtree(temp_dir)
 
@@ -2590,12 +3068,24 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 
 
 
+def load_task_suite(task_suite="v2"):
+    """Load tasks and default target git repository path for the requested suite ('v2' or 'v3')."""
+    suite = (task_suite or "v2").strip().lower()
+    if suite in ("v2", "v1", "dev"):
+        return tasks_item6.load_tasks(), None
+    if suite == "v3":
+        import tasks_item6_v3  # noqa: E402
+        return tasks_item6_v3.load_tasks(), tasks_item6_v3.DEFAULT_V3_REPO_DIR
+    raise ValueError(f"Unknown task suite: {task_suite!r} (expected 'v2' or 'v3')")
+
+
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
                    task_budget=TASK_BUDGET_TOKENS, slot_ctx=None,
                    reserved_output_tokens=RESERVED_OUTPUT_TOKENS,
                    task_wall_budget=TASK_WALL_BUDGET_DEFAULT, clock_fn=time.monotonic,
                    repo_root=None, results_dir=None, ask_fn=None, token_counter=None, resume=False,
-                   run_dir=None, run_sentinel=None, tasks_override=None):
+                   run_dir=None, run_sentinel=None, tasks_override=None,
+                   task_suite="v2", target_repo=None):
     """Execute the `run` subcommand: per PR, create scratch git worktree at base_commit, run loop, save diff & JSONL."""
     resume = resume or (os.environ.get("RESUME") == "1")
     if repo_root is None:
@@ -2612,7 +3102,12 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
     if run_dir is None and ask_fn is None:
         run_dir = default_run_dir(label)
 
-    all_tasks = tasks_override if tasks_override is not None else tasks_item6.load_tasks()
+    if tasks_override is not None:
+        all_tasks = tasks_override
+        suite_default_repo = None
+    else:
+        all_tasks, suite_default_repo = load_task_suite(task_suite)
+    effective_target_repo = target_repo or suite_default_repo or repo_root
     if tasks_arg:
         want = [x.strip() for x in tasks_arg.split(",") if x.strip()]
         by_id = {t["id"]: t for t in all_tasks}
@@ -2677,13 +3172,13 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         if dict.__contains__(task, "hidden_diff"):
             guard_task["hidden_diff"] = dict.__getitem__(task, "hidden_diff")
         elif "merged_commit" in guard_task:
-            guard_task["hidden_diff"] = tasks_item6.get_hidden_diff(task, repo_root=repo_root)
+            guard_task["hidden_diff"] = tasks_item6.get_hidden_diff(task, repo_root=effective_target_repo)
         guard_task["hidden_sentinel"] = run_sentinel
 
         wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
         t_start = time.time()
         try:
-            create_isolated_scratch_repo(repo_root, base_sha, wt_dir)
+            create_isolated_scratch_repo(effective_target_repo, base_sha, wt_dir)
             res = run_task_loop(
                 guard_task,
                 ask_fn,
@@ -3012,7 +3507,8 @@ def regrade_task_diff(task, final_diff, repo_root=None, timeout=180):
 
 
 
-def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None, tasks_override=None):
+def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None, tasks_override=None,
+                     task_suite="v2", target_repo=None):
     """Execute the `grade` subcommand: score recorded diffs against hidden diffs, merge review verdicts, compute KEEP/DROP."""
     if repo_root is None:
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -3044,7 +3540,12 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
             elif isinstance(rev_data, list):
                 reviews_by_id = {item["task_id"]: item for item in rev_data}
 
-    all_tasks = tasks_override if tasks_override is not None else tasks_item6.load_tasks()
+    if tasks_override is not None:
+        all_tasks = tasks_override
+        suite_default_repo = None
+    else:
+        all_tasks, suite_default_repo = load_task_suite(task_suite)
+    effective_target_repo = target_repo or suite_default_repo or repo_root
     per_task = []
     testable_total = 0
     testable_passed = 0
@@ -3073,12 +3574,12 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
                 passed = False
                 grade_test_out = "empty diff"
             else:
-                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=repo_root)
+                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=effective_target_repo)
         else:
             passed = None
             grade_test_out = ""
 
-        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=repo_root)
+        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=effective_target_repo)
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
@@ -3218,6 +3719,9 @@ def main(argv=None):
     parser.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
     parser.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
+    parser.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/diff/grade outputs (default bench/loop/results)")
+    parser.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    parser.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits (defaults to repo_root for v2 or DEFAULT_V3_REPO_DIR for v3)")
 
     subparsers = parser.add_subparsers(dest="subcommand")
 
@@ -3233,10 +3737,16 @@ def main(argv=None):
     p_run.add_argument("--task-wall-budget", type=float, default=TASK_WALL_BUDGET_DEFAULT, help="Per-task wall time budget in seconds (default floor(4320/7)=617)")
     p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
     p_run.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
+    p_run.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/diff outputs (default bench/loop/results)")
+    p_run.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    p_run.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
     p_grade.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
     p_grade.add_argument("--reviews-file", type=str, default=None, help="Path to adversarial-reviewer verdicts JSON")
+    p_grade.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/grade outputs (default bench/loop/results)")
+    p_grade.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    p_grade.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits")
 
     args = parser.parse_args(argv)
 
@@ -3256,6 +3766,9 @@ def main(argv=None):
             task_wall_budget=args.task_wall_budget,
             resume=getattr(args, "resume", False),
             run_dir=getattr(args, "run_dir", None),
+            results_dir=getattr(args, "results_dir", None),
+            task_suite=getattr(args, "task_suite", "v2"),
+            target_repo=getattr(args, "target_repo", None),
         )
         return 0
 
@@ -3263,6 +3776,9 @@ def main(argv=None):
         grade_subcommand(
             label=args.label,
             reviews_file=args.reviews_file,
+            results_dir=getattr(args, "results_dir", None),
+            task_suite=getattr(args, "task_suite", "v2"),
+            target_repo=getattr(args, "target_repo", None),
         )
         return 0
 
