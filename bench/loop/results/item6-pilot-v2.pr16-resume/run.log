@@ -1,0 +1,53 @@
+=== start 2026-11-20T18:55:20-06:00 pwd=/tmp/wt-item6-v2-pr16 head=e524779bf854dd01b6bb7b129916b5047f3ee246 ceiling_seconds=2797 resume=1 ===
+prereg guard OK: commit e524779bf854dd01b6bb7b129916b5047f3ee246 is reachable from origin/main
+  commit:     e524779bf854dd01b6bb7b129916b5047f3ee246
+  remote_ref: origin/main
+  file:       docs/item6-pilot.md
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+=== Inviting qwen with --ctx 65536 --np 1 ===
+llmctl: session 83: INVITE qwen
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: df40a252d5e04d4f8d7093268a957185
+up: qwen3.6-35b-a3b on vk, ctx 65536, parallel 1, http://127.0.0.1:8081/v1
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=100.9GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+llmctl: session 83: ACTIVE qwen on :8081, GTT 23.5 GiB
+props: total_slots 1 n_ctx 65536 build b11669-620d2225c
+=== Resume mode active (RESUME=1): inspecting bench/loop/results/item6-pilot-v2.jsonl ===
+RESUME: skipping already completed task item6_pr06
+RESUME: skipping already completed task item6_pr08
+RESUME: skipping already completed task item6_pr13
+RESUME: skipping already completed task item6_pr14
+RESUME: skipping already completed task item6_pr15
+RESUME: queuing missing task item6_pr16
+RESUME: skipping already completed task item6_pr20
+=== Tasks to execute: item6_pr16 ===
+=== Starting task item6_pr16 2026-11-20T18:55:25-06:00 (remaining_ceiling=2797s) ===
+STEP_START item6-pilot-v2 item6_pr16 2026-11-21T00:55:25Z 1795222525.230248057
+item6_pr16     pr=#16 has_tests=True  passed=False stop=context_overflow turns=9 tok=3189 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=63 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v2 item6_pr16 2026-11-21T00:57:36Z 1795222656.310558454
+STEP_WALL item6-pilot-v2 item6_pr16 131.1 s
+=== Completed task item6_pr16 2026-11-20T18:57:36-06:00 ===
+llmctl: session 83: ENDED qwen; GTT after stop 1.2 GiB
+=== Offline grading and report 2026-11-20T18:57:36-06:00 ===
+{
+  "label": "item6-pilot-v2",
+  "tasks_evaluated": 7,
+  "testable_tasks": 6,
+  "testable_passed": 0,
+  "test_pass_rate": 0.0,
+  "reviews_complete": false,
+  "approved_first_pass": null,
+  "approved_final": null,
+  "final_approve_rate": null,
+  "avg_hand_fix_lines_per_approved": null,
+  "decision": "DROP"
+}
+=== Item 6 pilot (item6-pilot-v2) completed 2026-11-20T18:57:40-06:00 ===
+=== end 2026-11-20T18:57:40-06:00 rc=0 wall_s=140 ===
