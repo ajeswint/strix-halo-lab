@@ -478,11 +478,17 @@ def _save_leak_history(run_dir, task_id, turn, leak_branch, messages, label=None
 
 
 def check_prompt_leak(prompt, task, run_sentinel=None):
-    """Tripwire: assert no hidden fields, per-run sentinel, or unredacted grading seed 104729 appear in a prompt or message list."""
+    """Tripwire: assert no hidden fields, per-run sentinel, or unredacted grading seed 104729 appear in a prompt or message list.
+
+    For `hidden_diff` and `merged_commit`, matches strictly against the whole hidden string value
+    (never individual context lines or hunks), so reading base-commit target files touched by the
+    reference diff cannot misfire. Error messages name only the branch, never the hidden value.
+    """
     text = messages_to_text(prompt)
     for hidden_key in ("hidden_diff", "merged_commit"):
         if dict.__contains__(task, hidden_key):
             val = dict.__getitem__(task, hidden_key)
+            # Match whole hidden value only (never split into context lines/hunks)
             if val and isinstance(val, str) and len(val) >= 7 and val in text:
                 raise PromptLeakError(
                     f"LEAK TRIPWIRE TRIGGERED: '{hidden_key}' content leaked into prompt!",
@@ -2490,7 +2496,9 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         clean_task = tasks_item6.strip_hidden(task)
         task_id = clean_task["id"]
         base_sha = clean_task["base_commit"]
-        # Hidden fields are attached solely for check_prompt_leak; run_task_loop immediately strips them for model prompts
+        # Host-memory-only guard task: hidden_diff, merged_commit, and hidden_sentinel live strictly
+        # in host-side process memory for check_prompt_leak and are NEVER written to wt_dir, sandbox
+        # TMPDIR/env/argv, run.log, or turn_events.jsonl (run_task_loop strips them via strip_hidden).
         guard_task = dict(clean_task)
         if dict.__contains__(task, "merged_commit"):
             guard_task["merged_commit"] = dict.__getitem__(task, "merged_commit")

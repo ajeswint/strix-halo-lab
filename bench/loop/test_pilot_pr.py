@@ -2401,6 +2401,234 @@ class TestPilotPr(unittest.TestCase):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def test_pr16_reading_own_target_files_at_base_does_not_trip_but_full_hidden_diff_trips(self):
+        """Reading/grepping/listing item6_pr16's own target files at base 6c56cc0 (context lines shared with reference diff) must not trip; injecting full hidden_diff still trips."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        results_dir = tempfile.mkdtemp(prefix="pilot_pr16_ctx_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_pr16_ctx_run_")
+        try:
+            task16 = tasks_item6.get_task("item6_pr16")
+            self.assertEqual(task16["base_commit"], "6c56cc09eaafb2376422e73515b39f8193893740")
+            full_hidden_diff = tasks_item6.get_hidden_diff(task16, repo_root=repo_root)
+            self.assertIn("diff --git a/README.md b/README.md", full_hidden_diff)
+            # Context line shared verbatim between README.md at base 6c56cc0 and item6_pr16's hidden_diff
+            shared_context_line = "docs/crawdad-v10-noise.md"
+            self.assertIn(shared_context_line, full_hidden_diff)
+
+            turn_calls = []
+            saw_readme_context = [False]
+            saw_list_files = [False]
+
+            def read_target_files_model(messages, seed):
+                turn_idx = len(turn_calls)
+                turn_calls.append(turn_idx)
+                joined = pilot_pr.messages_to_text(messages)
+                if turn_idx == 0:
+                    # Read, grep, and list item6_pr16's own target files at base 6c56cc0
+                    calls = [
+                        {"tool": "list_files", "args": {"path": "."}},
+                        {"tool": "list_files", "args": {"path": "bench/loop"}},
+                        {"tool": "read_file", "args": {"path": "README.md", "start": 1, "end": 250}},
+                        {"tool": "grep", "args": {"pattern": "crawdad-v10-noise", "path": "README.md"}},
+                        {"tool": "grep", "args": {"pattern": "roadmap\\.md", "path": "README.md"}},
+                    ]
+                    return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 35}}
+                if shared_context_line in joined:
+                    saw_readme_context[0] = True
+                if "bench/loop/run.py" in joined:
+                    saw_list_files[0] = True
+                calls = [
+                    {"tool": "create_file", "args": {"path": "bench/loop/ctx_ok.txt", "content": "ok\n"}},
+                ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 20}}
+
+            rows = pilot_pr.run_subcommand(
+                label="pr16-ctx-no-misfire",
+                tasks_arg="item6_pr16",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=read_target_files_model,
+                token_counter=lambda m: 2000,
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(turn_calls), 2, "Turn 1 must execute without misfiring on README.md context lines")
+            self.assertTrue(saw_readme_context[0], "README.md context lines shared with hidden_diff must be in turn 1 prompt")
+            self.assertTrue(saw_list_files[0], "list_files output must be in turn 1 prompt")
+            self.assertNotEqual(rows[0]["stop_reason"], "prompt_leak")
+
+            # Injecting the full reference hidden_diff of item6_pr16 MUST still trip check_prompt_leak and fail closed
+            guard_task16 = dict(task16, hidden_diff=full_hidden_diff)
+            with self.assertRaises(pilot_pr.PromptLeakError) as cm:
+                pilot_pr.check_prompt_leak(f"leaked:\n{full_hidden_diff}\n", guard_task16)
+            self.assertEqual(cm.exception.branch, "hidden_diff")
+
+            leaked_task16 = dict(task16)
+            leaked_task16["hidden_diff"] = full_hidden_diff
+            leaked_task16["prompt"] = leaked_task16["prompt"] + "\n" + full_hidden_diff
+            called_on_leak = []
+            def must_not_run(messages, seed):
+                called_on_leak.append(True)
+                return {"content": "", "usage": {}}
+
+            rows_leak = pilot_pr.run_subcommand(
+                label="pr16-full-hidden-leak",
+                tasks_arg="item6_pr16",
+                max_turns=2,
+                results_dir=results_dir,
+                run_dir=run_dir,
+                ask_fn=must_not_run,
+                tasks_override=[leaked_task16],
+            )
+            self.assertEqual(len(called_on_leak), 0, "Model must never be called when full hidden_diff leaks")
+            self.assertEqual(rows_leak[0]["stop_reason"], "prompt_leak")
+            self.assertEqual(rows_leak[0]["leak_branch"], "hidden_diff")
+        finally:
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_hidden_diff_and_merged_sha_only_in_host_memory_not_in_sandbox_or_logs(self):
+        """Verify hidden_diff and merged_commit never enter scratch tree, sandbox TMPDIR/env/argv, stdout/run.log, or turn_events.jsonl; leak histories default under /tmp/lab-seats/."""
+        import contextlib
+        import io
+
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        results_dir = tempfile.mkdtemp(prefix="pilot_memonly_res_")
+        run_dir = tempfile.mkdtemp(prefix="pilot_memonly_run_")
+        orig_build_bwrap = pilot_pr.build_outer_bwrap_cmd
+        captured_bwrap = []
+        try:
+            # Verify default_run_dir resolves strictly under /tmp/lab-seats/
+            self.assertEqual(pilot_pr.default_run_dir("item6-pilot-v2"), "/tmp/lab-seats/item6-pilot-v2")
+
+            task16 = tasks_item6.get_task("item6_pr16")
+            merged_sha = task16["merged_commit"]
+            full_hidden_diff = tasks_item6.get_hidden_diff(task16, repo_root=repo_root)
+            # Pick a distinctive added line from PR #16's hidden diff that does not exist at base 6c56cc0
+            added_marker = "docs/crawdad-ground-v1.md"
+            self.assertIn(added_marker, full_hidden_diff)
+
+            # Spy on build_outer_bwrap_cmd while still running the real sandbox
+            def spy_build_bwrap(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict, ro_binds=None):
+                cmd = orig_build_bwrap(task_dir, home_dir, tmp_dir, shim_dir, inner_argv, env_dict, ro_binds=ro_binds)
+                # Inspect scratch tree and sandbox TMPDIR on host at execution time
+                scratch_entries = []
+                for dp, dns, fns in os.walk(task_dir):
+                    dns[:] = [d for d in dns if d != ".git"]
+                    for fn in fns:
+                        scratch_entries.append(os.path.join(dp, fn))
+                tmp_entries = os.listdir(tmp_dir)
+                captured_bwrap.append({
+                    "cmd": list(cmd),
+                    "env": dict(env_dict),
+                    "tmp_entries": tmp_entries,
+                    "scratch_has_ground": any(p.endswith("bench/loop/ground.py") for p in scratch_entries),
+                })
+                return cmd
+
+            pilot_pr.build_outer_bwrap_cmd = spy_build_bwrap
+
+            # Use a sandboxed test_cmd that dumps env, argv, /tmp, and /work/bench/loop inside the child
+            probe_task = dict(task16)
+            probe_task["test_cmd"] = (
+                "python3 -c \"import os, sys; "
+                "print('CHILD_ENV=' + repr(dict(os.environ))); "
+                "print('CHILD_ARGV=' + repr(sys.argv)); "
+                "print('CHILD_TMP=' + repr(os.listdir('/tmp'))); "
+                "print('CHILD_WORK=' + repr(sorted(os.listdir('/work/bench/loop'))))\""
+            )
+
+            turn_n = [0]
+            def sandbox_probe_model(messages, seed):
+                t = turn_n[0]
+                turn_n[0] += 1
+                if t == 0:
+                    calls = [
+                        {"tool": "read_file", "args": {"path": "README.md", "start": 1, "end": 40}},
+                        {"tool": "run_tests", "args": {}},
+                    ]
+                else:
+                    calls = [
+                        {"tool": "create_file", "args": {"path": "bench/loop/memonly_probe.txt", "content": "ok\n"}},
+                        {"tool": "finish", "args": {"summary": "probed"}},
+                    ]
+                return {"content": "```json\n" + json.dumps(calls) + "\n```", "usage": {"completion_tokens": 25}}
+
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+                rows = pilot_pr.run_subcommand(
+                    label="memonly-check",
+                    tasks_arg="item6_pr16",
+                    max_turns=2,
+                    results_dir=results_dir,
+                    run_dir=run_dir,
+                    ask_fn=sandbox_probe_model,
+                    token_counter=lambda m: 1500,
+                    tasks_override=[probe_task],
+                )
+
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["passed"])
+            self.assertGreaterEqual(len(captured_bwrap), 1, "run_tests must have invoked outer bwrap sandbox")
+
+            # 1. Verify sandbox env, argv, scratch tree, and TMPDIR contain neither hidden_diff nor merged_commit
+            for rec in captured_bwrap:
+                cmd_str = " ".join(str(x) for x in rec["cmd"])
+                env_str = json.dumps(rec["env"], sort_keys=True)
+                self.assertNotIn(merged_sha, cmd_str)
+                self.assertNotIn(full_hidden_diff, cmd_str)
+                self.assertNotIn(added_marker, cmd_str)
+                self.assertNotIn(merged_sha, env_str)
+                self.assertNotIn(full_hidden_diff, env_str)
+                self.assertNotIn(added_marker, env_str)
+                self.assertEqual(rec["tmp_entries"], [], "Sandbox TMPDIR must be empty before child starts")
+                self.assertFalse(rec["scratch_has_ground"], "Scratch tree must not contain merged-only files")
+
+            # 2. Verify run.log-equivalent stdout/stderr does not contain hidden_diff or merged_commit
+            run_log_out = stdout_buf.getvalue() + stderr_buf.getvalue()
+            self.assertNotIn(merged_sha, run_log_out)
+            self.assertNotIn(full_hidden_diff, run_log_out)
+
+            # 3. Verify turn_events.jsonl does not contain hidden_diff or merged_commit
+            events_path = os.path.join(run_dir, "turn_events.jsonl")
+            self.assertTrue(os.path.exists(events_path))
+            with open(events_path, "r", encoding="utf-8") as f:
+                events_text = f.read()
+            self.assertNotIn(merged_sha, events_text)
+            self.assertNotIn(full_hidden_diff, events_text)
+            self.assertNotIn(added_marker, events_text)
+
+            # 4. Even when a prompt_leak trips on merged_commit or hidden_diff, turn_events.jsonl and stdout/run.log
+            #    must still NEVER contain the hidden_diff or merged_commit SHA (only leak_history_*.json in run_dir does)
+            leak_task = dict(task16)
+            leak_task["prompt"] = leak_task["prompt"] + f"\n{merged_sha}"
+            stdout_leak = io.StringIO()
+            stderr_leak = io.StringIO()
+            with contextlib.redirect_stdout(stdout_leak), contextlib.redirect_stderr(stderr_leak):
+                rows_l = pilot_pr.run_subcommand(
+                    label="memonly-leak-check",
+                    tasks_arg="item6_pr16",
+                    max_turns=1,
+                    results_dir=results_dir,
+                    run_dir=run_dir,
+                    ask_fn=lambda m, s: {"content": "", "usage": {}},
+                    tasks_override=[leak_task],
+                )
+            self.assertEqual(rows_l[0]["stop_reason"], "prompt_leak")
+            self.assertEqual(rows_l[0]["leak_branch"], "merged_commit")
+            with open(events_path, "r", encoding="utf-8") as f:
+                events_after = f.read()
+            self.assertNotIn(merged_sha, events_after)
+            self.assertNotIn(full_hidden_diff, events_after)
+            self.assertNotIn(merged_sha, stdout_leak.getvalue() + stderr_leak.getvalue())
+            with open(os.path.join(results_dir, "memonly-leak-check.jsonl"), "r", encoding="utf-8") as f:
+                self.assertNotIn(merged_sha, f.read())
+        finally:
+            pilot_pr.build_outer_bwrap_cmd = orig_build_bwrap
+            shutil.rmtree(results_dir, ignore_errors=True)
+            shutil.rmtree(run_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
