@@ -401,12 +401,12 @@ Targeting the mid-conversation `context_overflow` confound observed on `item6_pr
 
 | Task ID | PR # | Merged (UTC) | Lines | Base Commit | Prompt Source | Test Command (`test_cmd`) | Expected Tests | Target Files |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `item6v3_pr1260` | #1260 | `2026-09-18T19:49:04Z` | 54 | `d634820be76a325bc3229e68155d6647c7e256fa` | PR #1260 | `python3 -m unittest tests.test_recipes` | 200 | `docs/versions.rst`, `more_itertools/recipes.py`, `tests/test_recipes.py` |
-| `item6v3_pr1269` | #1269 | `2026-09-21T16:16:22Z` | 19 | `1da45ae4b60b70fd70f9c92a46f987440b99043a` | Issue #1268 | `python3 -m unittest tests.test_more` | 731 | `more_itertools/more.py`, `tests/test_more.py` |
-| `item6v3_pr1305` | #1305 | `2026-09-29T20:28:23Z` | 20 | `790bb0bb2c6e180d3337cf051a72a765915b6540` | Issue #1304 | `python3 -m unittest tests.test_more` | 733 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
-| `item6v3_pr1322` | #1322 | `2026-10-30T14:45:20Z` | 53 | `4aeb4338ae10644a064587118d54ccdf5155da21` | PR #1322 | `python3 -m unittest tests.test_more` | 736 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
-| `item6v3_pr1342` | #1342 | `2026-10-30T14:50:27Z` | 18 | `20c4ee5c6361202960f0bf4d30aa8588f4c1317a` | PR #1342 | `python3 -m unittest tests.test_more` | 738 | `more_itertools/more.py`, `tests/test_more.py` |
-| `item6v3_pr1345` | #1345 | `2026-11-04T00:20:44Z` | 34 | `08dca284ba03503aa75c74919e9643d5563ec775` | Issue #1344 | `python3 -m unittest tests.test_more` | 740 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1260` | #1260 | `2026-09-18T19:49:04Z` | 54 | `d634820be7a23b6a85441ee67051530fb0a8a960` | PR #1260 | `python3 -m unittest tests.test_recipes` | 200 | `docs/versions.rst`, `more_itertools/recipes.py`, `tests/test_recipes.py` |
+| `item6v3_pr1269` | #1269 | `2026-09-21T16:16:22Z` | 19 | `1da45ae4b61a832ed080f08a8833784aad0a9534` | Issue #1268 | `python3 -m unittest tests.test_more` | 731 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1305` | #1305 | `2026-09-29T20:28:23Z` | 20 | `790bb0bb2c03e7a07282e5f16f4b1fde35b8fcf5` | Issue #1304 | `python3 -m unittest tests.test_more` | 733 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1322` | #1322 | `2026-10-30T14:45:20Z` | 53 | `4aeb4338ae1407d8da9723e86da99efeb446f719` | PR #1322 | `python3 -m unittest tests.test_more` | 736 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1342` | #1342 | `2026-10-30T14:50:27Z` | 18 | `20c4ee5c63f8f8c35a37aee3b69d95cd2450c09a` | PR #1342 | `python3 -m unittest tests.test_more` | 738 | `more_itertools/more.py`, `tests/test_more.py` |
+| `item6v3_pr1345` | #1345 | `2026-11-04T00:20:44Z` | 34 | `08dca284ba5446a026afdc34067b658f9da989eb` | Issue #1344 | `python3 -m unittest tests.test_more` | 740 | `more_itertools/more.py`, `tests/test_more.py` |
 | `item6v3_pr1311` | #1311 | `2026-11-17T22:49:38Z` | 18 | `0fcdde9cce8bfdc3ba5e84711a990a32b74564a4` | PR #1311 | `python3 -m unittest tests.test_more` | 741 | `docs/versions.rst`, `more_itertools/more.py`, `tests/test_more.py` |
 
 - All **7 of 7** tasks are testable (`has_tests = true`, `testable_total = 7`), verified offline inside `/usr/bin/bwrap` (pass at `merged_commit`, fail at `base_commit`).

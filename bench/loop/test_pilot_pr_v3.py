@@ -369,30 +369,103 @@ class TestPilotPrV3(unittest.TestCase):
                 f"Expected {t['id']} to PASS at merged_commit in bwrap, got FAIL:\n{merged_out[:600]}",
             )
 
-    def test_v3_launchers_guards_freeze_and_practice_config(self):
-        """Verify syntax, freeze guards, placeholder refusal, and pre-registered settings for practice and v3 launchers."""
+    def test_v3_prereg_doc_section_15_4_shas_match_tasks_and_mirror(self):
+        """Section 15.4 table in docs/item6-pilot.md matches tasks_item6_v3.py and mirror first-parent base SHAs verbatim."""
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        doc_path = os.path.join(repo_root, "docs", "item6-pilot.md")
+        with open(doc_path, "r", encoding="utf-8") as f:
+            doc_text = f.read()
+
+        m = re.search(r"### 15\.4 Frozen v3 Unseen Task List.*?\n(.*?)\n### 15\.5 ", doc_text, re.DOTALL)
+        self.assertIsNotNone(m, "Section 15.4 table not found in docs/item6-pilot.md")
+        sec = m.group(1)
+
+        table_rows = {}
+        for line in sec.splitlines():
+            line = line.strip()
+            if not line.startswith("| `item6v3_pr"):
+                continue
+            cols = [c.strip() for c in line.strip("|").split("|")]
+            self.assertGreaterEqual(len(cols), 9, f"Unexpected Section 15.4 table row: {line}")
+            tid = cols[0].strip("`")
+            pr_num = int(cols[1].lstrip("#"))
+            merged_utc = cols[2].strip("`")
+            lines_cnt = int(cols[3])
+            base_sha = cols[4].strip("`")
+            test_cmd = cols[6].strip("`")
+            exp_tests = int(cols[7])
+            table_rows[tid] = {
+                "pr_number": pr_num,
+                "merged_at_utc": merged_utc,
+                "total_changed_lines": lines_cnt,
+                "base_commit": base_sha,
+                "test_cmd": test_cmd,
+                "expected_test_count": exp_tests,
+            }
+
+        frozen = tasks_item6_v3.load_tasks()
+        self.assertEqual(len(table_rows), len(frozen), f"Expected {len(frozen)} rows in Section 15.4, found {len(table_rows)}")
+        mirror = tasks_item6_v3.DEFAULT_V3_REPO_DIR
+        self.assertTrue(os.path.isdir(mirror), f"External bare mirror missing: {mirror}")
+
+        for t in frozen:
+            tid = t["id"]
+            self.assertIn(tid, table_rows, f"Missing {tid} in docs/item6-pilot.md Section 15.4")
+            row = table_rows[tid]
+            self.assertEqual(row["pr_number"], t["pr_number"])
+            self.assertEqual(row["merged_at_utc"], t["merged_at_utc"])
+            self.assertEqual(row["total_changed_lines"], t["total_changed_lines"])
+            self.assertEqual(len(row["base_commit"]), 40, f"Base SHA for {tid} must be full 40 chars")
+            self.assertEqual(row["base_commit"], t["base_commit"], f"Section 15.4 base SHA mismatch for {tid}")
+            self.assertEqual(row["test_cmd"], t["test_cmd"])
+            self.assertEqual(row["expected_test_count"], t["grade_spec"]["expected_test_count"])
+
+            # Cross-check against pinned external bare mirror first parent of merged_commit
+            mirror_base = subprocess.check_output(
+                ["git", "-C", mirror, "rev-parse", f"{t['merged_commit']}^1"],
+                text=True,
+            ).strip()
+            self.assertEqual(t["base_commit"], mirror_base, f"tasks_item6_v3 base SHA mismatch vs mirror for {tid}")
+
+    def test_v3_launchers_guards_freeze_and_practice_config(self):
+        """Verify syntax, freeze guards (across ALL Item 6 launchers), placeholder refusal, and pre-registered settings."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        legacy_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
         practice_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-v3-practice", "run.sh")
         v3_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot-v3", "run.sh")
 
-        for sh in (practice_sh, v3_sh):
+        for sh in (legacy_sh, practice_sh, v3_sh):
             self.assertTrue(os.path.isfile(sh), f"Missing launcher: {sh}")
             chk = subprocess.run(["bash", "-n", sh], capture_output=True, text=True)
             self.assertEqual(chk.returncode, 0, f"bash -n failed for {sh}: {chk.stderr}")
 
-            # Refuses frozen v1 and v2 labels
+            with open(sh, "r", encoding="utf-8") as f:
+                sh_txt = f.read()
+            # No launcher may default to a frozen label
+            self.assertNotIn('LABEL="${LABEL:-item6-pilot}"', sh_txt, f"{sh} must not default to frozen item6-pilot")
+            self.assertNotIn('LABEL="${LABEL:-item6-pilot-v2}"', sh_txt, f"{sh} must not default to frozen item6-pilot-v2")
+
+            # Every Item 6 launcher refuses both frozen v1 and v2 labels
             for frozen_lbl in ("item6-pilot", "item6-pilot-v2"):
                 env = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40, LABEL=frozen_lbl)
                 res = subprocess.run(["bash", sh], cwd=repo_root, env=env, capture_output=True, text=True)
                 self.assertNotEqual(res.returncode, 0, f"{sh} must refuse frozen label {frozen_lbl}")
-                self.assertIn("refuses", res.stderr)
+                self.assertIn("frozen", res.stderr.lower())
 
             # Refuses placeholder WT
             env_wt = dict(os.environ, EXPECT_HEAD="0" * 40)
             env_wt.pop("WT", None)
+            env_wt.pop("LABEL", None)
             res_wt = subprocess.run(["bash", sh], cwd=repo_root, env=env_wt, capture_output=True, text=True)
             self.assertNotEqual(res_wt.returncode, 0)
             self.assertIn("WT must be set", res_wt.stderr)
+
+        # Legacy item6-pilot launcher must also refuse unset/empty LABEL when WT and EXPECT_HEAD are set
+        env_no_lbl = dict(os.environ, WT=repo_root, EXPECT_HEAD="0" * 40)
+        env_no_lbl.pop("LABEL", None)
+        res_no_lbl = subprocess.run(["bash", legacy_sh], cwd=repo_root, env=env_no_lbl, capture_output=True, text=True)
+        self.assertNotEqual(res_no_lbl.returncode, 0)
+        self.assertIn("LABEL must be set", res_no_lbl.stderr)
 
         with open(practice_sh, "r", encoding="utf-8") as f:
             prac_txt = f.read()

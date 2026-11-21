@@ -15,9 +15,7 @@
 set -euo pipefail
 
 WT="${WT:-<path-to-clean-worktree>}"
-LABEL="${LABEL:-item6-pilot-v2}"
-DIR="${DIR:-/tmp/lab-seats/${LABEL}}"
-LOG="$DIR/run.log"
+LABEL="${LABEL:-}"
 EXPECT_HEAD="${EXPECT_HEAD:-<expected-git-commit-sha>}"
 PREREG_FILE="docs/item6-pilot.md"
 REMOTE_REF="${REMOTE_REF:-origin/main}"
@@ -29,9 +27,9 @@ CEILING_SECONDS="${CEILING_SECONDS:-4320}" # 1.2 GPU-hours (4320 s) hard ceiling
 TASK_WALL_BUDGET="${TASK_WALL_BUDGET:-617}" # floor(4320/7) = 617 s per task (fixed across full and resume runs)
 RESUME="${RESUME:-0}"
 
-# Refuse to overwrite frozen v1 results
-if [[ "$LABEL" == "item6-pilot" ]]; then
-  echo "ERROR: v1 results (label 'item6-pilot') are frozen and must not be overwritten; use LABEL=item6-pilot-v2" >&2
+# Refuse to overwrite frozen v1 or v2 results
+if [[ "$LABEL" == "item6-pilot" || "$LABEL" == "item6-pilot-v2" ]]; then
+  echo "ERROR: launcher refuses frozen label '$LABEL' (both v1 'item6-pilot' and v2 'item6-pilot-v2' are frozen and must not be overwritten)" >&2
   exit 1
 fi
 
@@ -44,6 +42,13 @@ if [[ -z "$EXPECT_HEAD" || "$EXPECT_HEAD" == "<expected-git-commit-sha>" || "$EX
   echo "ERROR: EXPECT_HEAD must be set to the expected git commit SHA (got '$EXPECT_HEAD')" >&2
   exit 1
 fi
+if [[ -z "$LABEL" || "$LABEL" == "<"*">" ]]; then
+  echo "ERROR: LABEL must be set to a non-frozen label ('item6-pilot' and 'item6-pilot-v2' are frozen)" >&2
+  exit 1
+fi
+
+DIR="${DIR:-/tmp/lab-seats/${LABEL}}"
+LOG="$DIR/run.log"
 
 mkdir -p "$DIR"
 cd "$WT"
