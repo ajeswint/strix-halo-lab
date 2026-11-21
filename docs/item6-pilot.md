@@ -272,7 +272,7 @@ Official grade computed via `python3 bench/loop/pilot_pr.py --label item6-pilot-
 | **First-Pass Reviewer Approvals** | **0 / 7** (`0.0%`) | — | — |
 | **Final Reviewer Approvals** | **0 / 7** (`0.0%`) | $\ge 3/7$ (`42.9%`) | $< 2/7$ (`< 28.6%`) |
 | **Avg Hand-Fix Lines / Approved** | **`null`** (n/a — 0 approved PRs) | $\le 20$ lines | $> 20$ lines (INCONCLUSIVE) |
-| **Tamper Detected** | **0 / 7** (`tamper = false` on all 7) | 0 | $> 0$ |
+| **Tamper Detected** | **0 / 3 reviewed** (`tamper = false` reviewed on `item6_pr06`, `item6_pr08`, `item6_pr15`; set automatically to `false` by the auto non-approval path for empty-diff tasks `item6_pr13`, `item6_pr14`, `item6_pr16`, `item6_pr20` with no reviewer inspection) | 0 | $> 0$ |
 | **Official Decision** | **DROP** | **KEEP** | **DROP** |
 
 Both pre-registered DROP thresholds are independently met (`0/6 < 2/6` authoritative test passes and `0/7 < 2/7` final reviewer approvals).
@@ -280,9 +280,9 @@ Both pre-registered DROP thresholds are independently met (`0/6 < 2/6` authorita
 ### Run Provenance (Both Commit Heads)
 
 - **Run 1 (`54cca48` / `54cca4854134d077fe5108e913f315ccad1cd5cf`)**: Executed 2026-11-20 16:35–17:00 CST (`llmctl` session 82, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, GTT 23.5 GiB, `ceiling_seconds=4320`, `TASK_WALL_BUDGET=617`, total script wall `1,523 s`, `bench/loop/results/item6-pilot-v2.run1/run.{log,status}`). Produced the 6 frozen records (`item6_pr06`, `item6_pr08`, `item6_pr13`, `item6_pr14`, `item6_pr15`, `item6_pr20`). On `item6_pr16`, Run 1 aborted (`rc=1`, `72.3 s`) on a false-positive leak tripwire caused by the hardcoded `"ORACLE-SENTINEL"` substring check matching `bench/loop/run.py` line 352; that bug was fixed in PR #25 (`e524779`, replacing fixed strings with a per-run random sentinel).
-- **`item6_pr16` Resume (`e524779` / `e524779bf854dd01b6bb7b129916b5047f3ee246`, PR #25 merge commit)**: Executed 2026-11-20 18:55–18:57 CST (`llmctl` session 83, same model and `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, GTT 23.5 GiB, `RESUME=1`, `CEILING_SECONDS=2797`, `TASK_WALL_BUDGET=617`, step wall `131.1 s`, task `wall_s = 130.91 s`, total resume script wall `140 s`, `done rc=0`, `bench/loop/results/item6-pilot-v2.pr16-resume/run.{log,status}`). Inserted the single `item6_pr16` record into `bench/loop/results/item6-pilot-v2.jsonl` while leaving all 6 Run-1 JSONL lines and all 6 Run-1 diffs byte-identical.
+- **`item6_pr16` Resume (`e524779` / `e524779bf854dd01b6bb7b129916b5047f3ee246`, PR #25 merge commit)**: Executed 2026-11-20 18:55–18:57 CST (`llmctl` session 83, same model and `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, GTT 23.5 GiB, `RESUME=1`, `CEILING_SECONDS=2797`, `TASK_WALL_BUDGET=617`, step wall `131.1 s`, task `wall_s = 130.91 s`, total resume script wall `140 s`, `done rc=0`, `bench/loop/results/item6-pilot-v2.pr16-resume/run.{log,status}`). Inserted the single `item6_pr16` record before `item6_pr20` in `bench/loop/results/item6-pilot-v2.jsonl` while leaving all 6 Run-1 JSONL lines and all 6 Run-1 diffs byte-identical.
 - **Total GPU Wall Time**: `1,523 s + 140 s = 1,663 s` (~27.7 minutes), strictly under the `4,320 s` (1.2 GPU-hour) ceiling.
-- **Checksums**: The original Run-1 manifest `bench/loop/results/item6-pilot-v2.SHA256SUMS` (9 entries) is preserved unchanged (all 8 non-JSONL entries still pass; only `item6-pilot-v2.jsonl` changed by the single appended `item6_pr16` record). `bench/loop/results/item6-pilot-v2.final.SHA256SUMS` covers the final 7-record JSONL, Run-1 and `item6_pr16`-resume logs/statuses, and all 7 diffs.
+- **Checksums**: The original Run-1 manifest `bench/loop/results/item6-pilot-v2.SHA256SUMS` (9 entries) is preserved unchanged (all 8 non-JSONL entries still pass; only `item6-pilot-v2.jsonl` changed by the single `item6_pr16` record inserted before `item6_pr20`). `bench/loop/results/item6-pilot-v2.final.SHA256SUMS` covers the final 7-record JSONL, Run-1 and `item6_pr16`-resume logs/statuses, and all 7 diffs.
 
 ### Per-Task Results
 
@@ -290,11 +290,11 @@ Both pre-registered DROP thresholds are independently met (`0/6 < 2/6` authorita
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `item6_pr06` | #6 | Run 1 (`54cca48`) | `max_turns` | 12 | 18,438 | 412.54 | 56 | 0.0171 | FAIL | `REQUEST-CHANGES` | `false` | 100 *(n/a for approved bar)* |
 | `item6_pr08` | #8 | Run 1 (`54cca48`) | `repeat_error` | 5 | 9,354 | 190.21 | 60 | 0.0187 | FAIL | `REQUEST-CHANGES` | `false` | 55 *(n/a for approved bar)* |
-| `item6_pr13` | #13 | Run 1 (`54cca48`) | `context_overflow` | 8 | 9,227 | 257.08 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` | n/a *(excluded, Sec. 10)* |
-| `item6_pr14` | #14 | Run 1 (`54cca48`) | `context_overflow` | 7 | 7,155 | 195.14 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` | n/a *(excluded, Sec. 10)* |
+| `item6_pr13` | #13 | Run 1 (`54cca48`) | `context_overflow` | 8 | 9,227 | 257.08 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6_pr14` | #14 | Run 1 (`54cca48`) | `context_overflow` | 7 | 7,155 | 195.14 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
 | `item6_pr15` | #15 | Run 1 (`54cca48`) | `max_turns` | 12 | 12,398 | 297.78 | 114 | 0.1364 | n/a (`has_tests=false`) | `REQUEST-CHANGES` | `false` | 22 *(n/a for approved bar)* |
-| `item6_pr16` | #16 | Resume (`e524779`) | `context_overflow` | 9 | 3,189 | 130.91 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` | n/a *(excluded, Sec. 10)* |
-| `item6_pr20` | #20 | Run 1 (`54cca48`) | `repeat_code` | 3 | 4,522 | 87.76 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` | n/a *(excluded, Sec. 10)* |
+| `item6_pr16` | #16 | Resume (`e524779`) | `context_overflow` | 9 | 3,189 | 130.91 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6_pr20` | #20 | Run 1 (`54cca48`) | `repeat_code` | 3 | 4,522 | 87.76 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
 
 Notes on `hand_fix_lines`:
 - Because 0 of 7 tasks were approved, `avg_hand_fix_lines_per_approved` is `null` (n/a for the Section 9 $\le 20$ lines-per-approved-PR bar).
