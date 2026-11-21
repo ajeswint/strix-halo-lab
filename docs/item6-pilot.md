@@ -254,3 +254,72 @@ Recorded 2026-11-20 CT after Item 6 pilot v2 run 1 finished at commit `54cca4854
 - **Recorded Observation (Not Fixed Now) & Development-Set Caveat**:
   - v2 stopped first-request context overflow, but `item6_pr13` and `item6_pr14` still ended `context_overflow` at turns 8 and 7 as tool output accumulated in the conversation history. Those records stand unchanged and are not re-run or fixed for v2.
   - Restated from Section 11: v2 reruns the exact same 7 PRs whose v1 failures shaped these harness fixes (development-set re-test).
+
+## 13. Item 6 Pilot v2 Results (2026-11-20 CT)
+
+Final post-run results for Item 6 pilot v2 (`label = item6-pilot-v2`), graded offline under the unchanged pre-registered protocol (Sections 4, 6, 9, 10, 11, and 12). **No GPU session starts in this commit.**
+
+### Official Decision & Summary Metrics
+
+Official grade computed via `python3 bench/loop/pilot_pr.py --label item6-pilot-v2 grade` and committed to `bench/loop/results/item6-pilot-v2.grade.json`:
+
+| Metric | v2 Result | Target (KEEP) | Threshold (DROP) |
+| :--- | :--- | :--- | :--- |
+| **Tasks Evaluated** | 7 | 7 | 7 |
+| **Testable Tasks** | 6 | — | — |
+| **Authoritative Test Passes** | **0 / 6** (`0.0%`) | $\ge 3/6$ (`50.0%`) | $< 2/6$ (`< 33.3%`) |
+| **Reviews Complete** | `true` (3 Grok reviewed, 4 auto non-approval) | `true` | — |
+| **First-Pass Reviewer Approvals** | **0 / 7** (`0.0%`) | — | — |
+| **Final Reviewer Approvals** | **0 / 7** (`0.0%`) | $\ge 3/7$ (`42.9%`) | $< 2/7$ (`< 28.6%`) |
+| **Avg Hand-Fix Lines / Approved** | **`null`** (n/a — 0 approved PRs) | $\le 20$ lines | $> 20$ lines (INCONCLUSIVE) |
+| **Tamper Detected** | **0 / 3 reviewed** (`tamper = false` reviewed on `item6_pr06`, `item6_pr08`, `item6_pr15`; set automatically to `false` by the auto non-approval path for empty-diff tasks `item6_pr13`, `item6_pr14`, `item6_pr16`, `item6_pr20` with no reviewer inspection) | 0 | $> 0$ |
+| **Official Decision** | **DROP** | **KEEP** | **DROP** |
+
+Both pre-registered DROP thresholds are independently met (`0/6 < 2/6` authoritative test passes and `0/7 < 2/7` final reviewer approvals).
+
+### Run Provenance (Both Commit Heads)
+
+- **Run 1 (`54cca48` / `54cca4854134d077fe5108e913f315ccad1cd5cf`)**: Executed 2026-11-20 16:35–17:00 CST (`llmctl` session 82, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, GTT 23.5 GiB, `ceiling_seconds=4320`, `TASK_WALL_BUDGET=617`, total script wall `1,523 s`, `bench/loop/results/item6-pilot-v2.run1/run.{log,status}`). Produced the 6 frozen records (`item6_pr06`, `item6_pr08`, `item6_pr13`, `item6_pr14`, `item6_pr15`, `item6_pr20`). On `item6_pr16`, Run 1 aborted (`rc=1`, `72.3 s`) on a false-positive leak tripwire caused by the hardcoded `"ORACLE-SENTINEL"` substring check matching `bench/loop/run.py` line 352; that bug was fixed in PR #25 (`e524779`, replacing fixed strings with a per-run random sentinel).
+- **`item6_pr16` Resume (`e524779` / `e524779bf854dd01b6bb7b129916b5047f3ee246`, PR #25 merge commit)**: Executed 2026-11-20 18:55–18:57 CST (`llmctl` session 83, same model and `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, GTT 23.5 GiB, `RESUME=1`, `CEILING_SECONDS=2797`, `TASK_WALL_BUDGET=617`, step wall `131.1 s`, task `wall_s = 130.91 s`, total resume script wall `140 s`, `done rc=0`, `bench/loop/results/item6-pilot-v2.pr16-resume/run.{log,status}`). Inserted the single `item6_pr16` record before `item6_pr20` in `bench/loop/results/item6-pilot-v2.jsonl` while leaving all 6 Run-1 JSONL lines and all 6 Run-1 diffs byte-identical.
+- **Total GPU Wall Time**: `1,523 s + 140 s = 1,663 s` (~27.7 minutes), strictly under the `4,320 s` (1.2 GPU-hour) ceiling.
+- **Checksums**: The original Run-1 manifest `bench/loop/results/item6-pilot-v2.SHA256SUMS` (9 entries) is preserved unchanged (all 8 non-JSONL entries still pass; only `item6-pilot-v2.jsonl` changed by the single `item6_pr16` record inserted before `item6_pr20`). `bench/loop/results/item6-pilot-v2.final.SHA256SUMS` covers the final 7-record JSONL, Run-1 and `item6_pr16`-resume logs/statuses, and all 7 diffs.
+
+### Per-Task Results
+
+| Task ID | PR # | Run / Head | Stop Reason | Turns | Completion Tokens | Wall (s) | Diff Lines | Hidden Jaccard | Test Result (Auth.) | Tier 2 Verdict | Tamper | Hand-Fix Lines |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6_pr06` | #6 | Run 1 (`54cca48`) | `max_turns` | 12 | 18,438 | 412.54 | 56 | 0.0171 | FAIL | `REQUEST-CHANGES` | `false` | 100 *(n/a for approved bar)* |
+| `item6_pr08` | #8 | Run 1 (`54cca48`) | `repeat_error` | 5 | 9,354 | 190.21 | 60 | 0.0187 | FAIL | `REQUEST-CHANGES` | `false` | 55 *(n/a for approved bar)* |
+| `item6_pr13` | #13 | Run 1 (`54cca48`) | `context_overflow` | 8 | 9,227 | 257.08 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6_pr14` | #14 | Run 1 (`54cca48`) | `context_overflow` | 7 | 7,155 | 195.14 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6_pr15` | #15 | Run 1 (`54cca48`) | `max_turns` | 12 | 12,398 | 297.78 | 114 | 0.1364 | n/a (`has_tests=false`) | `REQUEST-CHANGES` | `false` | 22 *(n/a for approved bar)* |
+| `item6_pr16` | #16 | Resume (`e524779`) | `context_overflow` | 9 | 3,189 | 130.91 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6_pr20` | #20 | Run 1 (`54cca48`) | `repeat_code` | 3 | 4,522 | 87.76 | 0 | 0.0000 | FAIL | `NON-APPROVAL` *(auto)* | `false` *(auto, unreviewed)* | n/a *(excluded, Sec. 10)* |
+
+Notes on `hand_fix_lines`:
+- Because 0 of 7 tasks were approved, `avg_hand_fix_lines_per_approved` is `null` (n/a for the Section 9 $\le 20$ lines-per-approved-PR bar).
+- For the 3 non-empty diffs reviewed by Grok 4.7 high (`item6_pr06`, `item6_pr08`, `item6_pr15`), the reviewer's hand-fix estimates (100, 55, and 22 lines) are reported above for completeness, but all three were `REQUEST-CHANGES` (non-approved) and are n/a for the approved-PR hand-fix bar.
+- For the 4 empty-diff tasks (`item6_pr13`, `item6_pr14`, `item6_pr16`, `item6_pr20`), Section 10 applies unchanged: automatic `NON-APPROVAL` with no Grok review and `hand_fix_lines: null` (excluded).
+
+### Tier 2 Blind Review Summary
+
+- Raw artifacts and verbatim outputs are stored in `bench/loop/results/item6-pilot-v2.tier2/` and summarized in `bench/loop/results/item6-pilot-v2.reviews.json`.
+- Blind packets were generated with `bench/loop/results/item6-pilot-v2.tier2/mkpackets.py` (verified byte-exact against all 5 v1 packets in `bench/loop/results/item6-pilot.tier2/success/` via `mkpackets.py check`) and reviewed in fresh `cursor-agent` ask-mode sessions pinned to `grok-4.7-high` (Nov 20, 18:59–19:01 CST; `rc=0`, `is_error=false`, `tamper=false` across all 3 reviewed tasks).
+- Reviewer findings on the 3 non-empty diffs:
+  - `item6_pr06` (`REQUEST-CHANGES`, 100 hand-fix lines): `_pull_from_code` can overwrite a verdict already parsed from prose and delete interior code lines (off-by-one 9-line window), does not add the read-only `reparse` subcommand, and does not extend `--selftest`.
+  - `item6_pr08` (`REQUEST-CHANGES`, 55 hand-fix lines): incorrectly states Ryzen Max Bot launches both seats as `agy -p` (reviewer stays Claude) and leaves `docs/review-roles.md`, `AGENTS.md`, `CLAUDE.md`, `tools/lab-seats/launch.sh`, and `tools/lab-seats/test.sh` unchanged.
+  - `item6_pr15` (`REQUEST-CHANGES`, 22 hand-fix lines): consistently renames the writer seat to Gemini 3.8 Flash (`gemini-3.8-flash-high`) across the 5 main docs, but leaves `tools/lab-seats/launch.sh`, `test.sh`, and `README.md` on the old slug and omits the stale-path audit across `.claude/`, `docs/`, and `scripts/preflight.sh` after exhausting `max_turns=12`.
+
+### Known Confounds, Caveats, and Scope of the DROP Call
+
+1. **Mid-Conversation `context_overflow` Confound (3 of 7 tasks)**: Switching to 1-slot 64k context (`--ctx 65536 --np 1`) and compact Turn-0 target-file manifests eliminated Turn-0 overflow (`item6_pr15` ran all 12 turns instead of overflowing at Turn 0). However, 3 of 7 tasks still terminated with `context_overflow` mid-conversation as verbatim `read_file`/`grep`/`list_files` tool outputs accumulated across turns and pushed the next prompt over the 57,344-token preflight limit (`65,536 - 8,192`):
+   - `item6_pr13` at turn 8 (`59,367 > 57,344` tokens, `final_diff = ""`),
+   - `item6_pr14` at turn 7 (`74,794 > 57,344` tokens, `final_diff = ""`),
+   - `item6_pr16` at turn 9 (`67,199 > 57,344` tokens, `final_diff = ""`).
+   Because the v2 harness did not compact, evict, or bound prior tool outputs in the conversation history, those three tasks remain confounded by context-window management.
+2. **Run-1 Leak Tripwire on `item6_pr16`**: Run 1's abort on `item6_pr16` was most likely a false positive triggered by repo-native text: the fixed `ORACLE-SENTINEL` substring branch fired (not the hidden-field / `hidden_diff` branch), and the clean `item6_pr16` resume at `e524779` with the per-run sentinel (PR #25) did not trip before hitting `context_overflow` at turn 9.
+3. **Development-Set Re-Test Caveat**: As stated in Sections 11 and 12, v2 re-ran the exact same 7 PRs whose v1 failures shaped the v2 harness fixes. It is a development-set re-test, not an unseen evaluation split.
+4. **No Overclaiming Beyond the Bars**:
+   - **What DROP means**: Under the pre-registered Section 9 bars, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` in this single-model v2 structured-tool loop (`0/6` authoritative test passes, `0/7` reviewer approvals) does **not** meet the threshold to scale to a 20–30 PR benchmark.
+   - **What DROP does not mean**: v2 is a small ($n=7$) dev-set test of one model/quantization under one harness, with 3/7 tasks still confounded by mid-conversation tool-output accumulation (`context_overflow`) and `item6_pr20` stopping at turn 3 on `repeat_code` before making edits. On the 3 tasks that did produce diffs, the v2 structured edit tools and stub guard visibly eliminated v1's destructive whole-file rewrites (`item6_pr06`: 718 $\to$ 56 diff lines, hand-fix 800 $\to$ 100; `item6_pr08`: 619 $\to$ 60 diff lines, hand-fix 194 $\to$ 55; `item6_pr15`: Turn-0 overflow $\to$ 114 diff lines, hand-fix 22), though none reached passing tests or mergeable completeness within 12 turns. The DROP decision settles the pre-registered scale/no-scale question for this loop as built and makes no broader claim beyond those bars.
+5. **Known Grader Representation Limitation (Follow-Up)**: `grade.json` records `tamper=false` for the four unreviewed empty-diff tasks; `null` would be more accurate (deferred to the `task_error`/empty-diff follow-up PR; frozen results unchanged).

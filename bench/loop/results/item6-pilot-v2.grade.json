@@ -1,0 +1,169 @@
+{
+  "label": "item6-pilot-v2",
+  "tasks_evaluated": 7,
+  "testable_tasks": 6,
+  "testable_passed": 0,
+  "test_pass_rate": 0.0,
+  "reviews_complete": true,
+  "approved_first_pass": 0,
+  "approved_final": 0,
+  "final_approve_rate": 0.0,
+  "avg_hand_fix_lines_per_approved": null,
+  "decision": "DROP",
+  "per_task": [
+    {
+      "task_id": "item6_pr06",
+      "pr_number": 6,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "max_turns",
+      "turns_executed": 12,
+      "total_completion_tokens": 18438,
+      "wall_s": 412.54,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr06.diff",
+      "diff_metrics": {
+        "local_diff_lines": 56,
+        "hidden_diff_lines": 238,
+        "line_overlap_jaccard": 0.0171
+      },
+      "first_verdict": "REQUEST-CHANGES",
+      "final_verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 100
+    },
+    {
+      "task_id": "item6_pr08",
+      "pr_number": 8,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "repeat_error",
+      "turns_executed": 5,
+      "total_completion_tokens": 9354,
+      "wall_s": 190.21,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr08.diff",
+      "diff_metrics": {
+        "local_diff_lines": 60,
+        "hidden_diff_lines": 643,
+        "line_overlap_jaccard": 0.0187
+      },
+      "first_verdict": "REQUEST-CHANGES",
+      "final_verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 55
+    },
+    {
+      "task_id": "item6_pr13",
+      "pr_number": 13,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "context_overflow",
+      "turns_executed": 8,
+      "total_completion_tokens": 9227,
+      "wall_s": 257.08,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr13.diff",
+      "diff_metrics": {
+        "local_diff_lines": 0,
+        "hidden_diff_lines": 1173,
+        "line_overlap_jaccard": 0.0
+      },
+      "first_verdict": "NON-APPROVAL",
+      "final_verdict": "NON-APPROVAL",
+      "hand_fix_lines": null
+    },
+    {
+      "task_id": "item6_pr14",
+      "pr_number": 14,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "context_overflow",
+      "turns_executed": 7,
+      "total_completion_tokens": 7155,
+      "wall_s": 195.14,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr14.diff",
+      "diff_metrics": {
+        "local_diff_lines": 0,
+        "hidden_diff_lines": 3772,
+        "line_overlap_jaccard": 0.0
+      },
+      "first_verdict": "NON-APPROVAL",
+      "final_verdict": "NON-APPROVAL",
+      "hand_fix_lines": null
+    },
+    {
+      "task_id": "item6_pr15",
+      "pr_number": 15,
+      "has_tests": false,
+      "in_loop_passed": null,
+      "test_passed": null,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "max_turns",
+      "turns_executed": 12,
+      "total_completion_tokens": 12398,
+      "wall_s": 297.78,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr15.diff",
+      "diff_metrics": {
+        "local_diff_lines": 114,
+        "hidden_diff_lines": 426,
+        "line_overlap_jaccard": 0.1364
+      },
+      "first_verdict": "REQUEST-CHANGES",
+      "final_verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 22
+    },
+    {
+      "task_id": "item6_pr16",
+      "pr_number": 16,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "context_overflow",
+      "turns_executed": 9,
+      "total_completion_tokens": 3189,
+      "wall_s": 130.91,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr16.diff",
+      "diff_metrics": {
+        "local_diff_lines": 0,
+        "hidden_diff_lines": 3031,
+        "line_overlap_jaccard": 0.0
+      },
+      "first_verdict": "NON-APPROVAL",
+      "final_verdict": "NON-APPROVAL",
+      "hand_fix_lines": null
+    },
+    {
+      "task_id": "item6_pr20",
+      "pr_number": 20,
+      "has_tests": true,
+      "in_loop_passed": false,
+      "test_passed": false,
+      "tamper": false,
+      "fresh_session": true,
+      "stop_reason": "repeat_code",
+      "turns_executed": 3,
+      "total_completion_tokens": 4522,
+      "wall_s": 87.76,
+      "diff_file": "bench/loop/results/item6-pilot-v2.diffs/item6_pr20.diff",
+      "diff_metrics": {
+        "local_diff_lines": 0,
+        "hidden_diff_lines": 734,
+        "line_overlap_jaccard": 0.0
+      },
+      "first_verdict": "NON-APPROVAL",
+      "final_verdict": "NON-APPROVAL",
+      "hand_fix_lines": null
+    }
+  ]
+}

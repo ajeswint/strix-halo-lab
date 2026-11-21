@@ -1,0 +1,26 @@
+[
+  {
+    "task_id": "item6_pr06",
+    "session_id": "cb97c3ab-d8a8-45fe-9404-6e3aca75cdb8",
+    "request_id": "94cb064b-e86e-4b00-913b-bb9addb1642c",
+    "duration_ms": 150334,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T19:01:42-06:00"
+  },
+  {
+    "task_id": "item6_pr08",
+    "session_id": "d61ddf3d-314f-40c9-9360-5719797987c5",
+    "request_id": "2bd1f10b-6783-48cd-a27a-191b96ca6c14",
+    "duration_ms": 69135,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T19:00:22-06:00"
+  },
+  {
+    "task_id": "item6_pr15",
+    "session_id": "269c849f-efe8-432e-b492-a3baa8cb4925",
+    "request_id": "adf33a05-2b4a-44d9-9c50-0cd01c4c3ba3",
+    "duration_ms": 120080,
+    "is_error": false,
+    "finished": "rc=0 2026-11-20T19:01:12-06:00"
+  }
+]

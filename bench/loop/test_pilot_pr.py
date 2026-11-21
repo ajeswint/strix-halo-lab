@@ -2232,13 +2232,16 @@ class TestPilotPr(unittest.TestCase):
             shutil.rmtree(run_dir, ignore_errors=True)
 
     def test_resume_frozen_v2_queues_only_pr16_and_matches_committed_sha256sums(self):
-        """RESUME=1 on frozen v2 run-1 evidence queues only item6_pr16 and leaves existing 6 records and diffs byte-for-byte identical against committed SHA256SUMS."""
+        """RESUME=1 on the run-1 6-record snapshot queues only item6_pr16 and leaves existing 6 records and diffs byte-for-byte identical against committed SHA256SUMS."""
         import hashlib
 
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
         committed_res = os.path.join(repo_root, "bench", "loop", "results")
         sums_path = os.path.join(committed_res, "item6-pilot-v2.SHA256SUMS")
+        final_sums_path = os.path.join(committed_res, "item6-pilot-v2.final.SHA256SUMS")
+        live_jsonl_path = os.path.join(committed_res, "item6-pilot-v2.jsonl")
         self.assertTrue(os.path.exists(sums_path), f"Committed SHA256SUMS missing: {sums_path}")
+        self.assertTrue(os.path.exists(final_sums_path), f"Committed final SHA256SUMS missing: {final_sums_path}")
 
         def _sha256_bytes(data: bytes) -> str:
             return hashlib.sha256(data).hexdigest()
@@ -2247,34 +2250,61 @@ class TestPilotPr(unittest.TestCase):
             with open(path, "rb") as f:
                 return _sha256_bytes(f.read())
 
-        # 1. Verify all committed entries in item6-pilot-v2.SHA256SUMS match on disk
-        expected_hashes = {}
-        with open(sums_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                digest, rel = line.split(None, 1)
-                expected_hashes[rel] = digest
-                full_p = os.path.join(committed_res, rel)
-                self.assertTrue(os.path.exists(full_p), f"Missing committed frozen file: {rel}")
-                self.assertEqual(_sha256_file(full_p), digest, f"SHA256 mismatch on committed {rel}")
+        def _read_manifest(path: str) -> dict:
+            hashes = {}
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    digest, rel = line.split(None, 1)
+                    hashes[rel] = digest
+            return hashes
 
+        # Build the 6-record run-1 fixture from the live 7-record jsonl (lines whose task_id != item6_pr16, in order)
+        with open(live_jsonl_path, "rb") as f:
+            live_lines = f.readlines()
+        self.assertEqual(len(live_lines), 7)
+        run1_lines = [ln for ln in live_lines if json.loads(ln)["task_id"] != "item6_pr16"]
+        self.assertEqual(len(run1_lines), 6)
+        run1_jsonl_bytes = b"".join(run1_lines)
+
+        # 1a. Verify item6-pilot-v2.SHA256SUMS (run-1 snapshot manifest): 6-record fixture matches jsonl entry,
+        #     and all 8 other committed files match on disk.
+        expected_hashes = _read_manifest(sums_path)
         self.assertEqual(len(expected_hashes), 9)
         self.assertNotIn("item6-pilot-v2.diffs/item6_pr16.diff", expected_hashes)
+        for rel, digest in expected_hashes.items():
+            full_p = os.path.join(committed_res, rel)
+            self.assertTrue(os.path.exists(full_p), f"Missing committed frozen file: {rel}")
+            if rel == "item6-pilot-v2.jsonl":
+                self.assertEqual(
+                    _sha256_bytes(run1_jsonl_bytes),
+                    digest,
+                    "Run-1 6-record fixture must match item6-pilot-v2.jsonl in item6-pilot-v2.SHA256SUMS",
+                )
+            else:
+                self.assertEqual(_sha256_file(full_p), digest, f"SHA256 mismatch on committed {rel}")
 
-        # 2. Copy frozen jsonl and diffs into a temp results dir and run RESUME=1 across all 7 tasks
+        # 1b. Verify item6-pilot-v2.final.SHA256SUMS matches all final committed artifacts including the whole live jsonl.
+        final_hashes = _read_manifest(final_sums_path)
+        self.assertIn("item6-pilot-v2.jsonl", final_hashes)
+        for rel, digest in final_hashes.items():
+            full_p = os.path.join(committed_res, rel)
+            self.assertTrue(os.path.exists(full_p), f"Missing committed final file: {rel}")
+            self.assertEqual(_sha256_file(full_p), digest, f"Final SHA256 mismatch on committed {rel}")
+
+        # 2. Materialize the 6-record run-1 fixture and 6 run-1 diffs into a temp results dir and run RESUME=1 across all 7 tasks
         tmp_res = tempfile.mkdtemp(prefix="pilot_v2_resume_res_")
         tmp_run = tempfile.mkdtemp(prefix="pilot_v2_resume_run_")
         try:
-            shutil.copy2(
-                os.path.join(committed_res, "item6-pilot-v2.jsonl"),
-                os.path.join(tmp_res, "item6-pilot-v2.jsonl"),
-            )
-            shutil.copytree(
-                os.path.join(committed_res, "item6-pilot-v2.diffs"),
-                os.path.join(tmp_res, "item6-pilot-v2.diffs"),
-            )
+            with open(os.path.join(tmp_res, "item6-pilot-v2.jsonl"), "wb") as f:
+                f.write(run1_jsonl_bytes)
+            tmp_diffs = os.path.join(tmp_res, "item6-pilot-v2.diffs")
+            os.makedirs(tmp_diffs, exist_ok=True)
+            for rel in expected_hashes:
+                if rel.startswith("item6-pilot-v2.diffs/"):
+                    shutil.copy2(os.path.join(committed_res, rel), os.path.join(tmp_res, rel))
 
             executed_prompts = []
 
@@ -2311,7 +2341,7 @@ class TestPilotPr(unittest.TestCase):
                     )
             self.assertTrue(os.path.exists(os.path.join(tmp_res, "item6-pilot-v2.diffs", "item6_pr16.diff")))
 
-            # Verify the 6 frozen JSONL lines remain byte-for-byte identical to committed item6-pilot-v2.jsonl
+            # Verify the 6 frozen JSONL lines remain byte-for-byte identical to run-1 SHA256SUMS
             resumed_jsonl = os.path.join(tmp_res, "item6-pilot-v2.jsonl")
             with open(resumed_jsonl, "rb") as f:
                 all_lines = f.readlines()
@@ -2329,9 +2359,14 @@ class TestPilotPr(unittest.TestCase):
 
     def test_launcher_completeness_check_writes_incomplete_missing_and_exits_nonzero(self):
         """Verify run.sh checks all 7 task IDs at the end, writes incomplete missing=<ids> and exits non-zero when any is missing, and defaults TASK_WALL_BUDGET=617."""
+        import hashlib
+
         repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
         run_sh = os.path.join(repo_root, "bench", "loop", "runs", "item6-pilot", "run.sh")
-        frozen_jsonl = os.path.join(repo_root, "bench", "loop", "results", "item6-pilot-v2.jsonl")
+        committed_res = os.path.join(repo_root, "bench", "loop", "results")
+        live_jsonl = os.path.join(committed_res, "item6-pilot-v2.jsonl")
+        run1_sums = os.path.join(committed_res, "item6-pilot-v2.SHA256SUMS")
+        final_sums = os.path.join(committed_res, "item6-pilot-v2.final.SHA256SUMS")
 
         with open(run_sh, "r", encoding="utf-8") as f:
             run_sh_text = f.read()
@@ -2341,9 +2376,38 @@ class TestPilotPr(unittest.TestCase):
         self.assertIn("check_results_complete", run_sh_text)
         self.assertIn("incomplete missing=", run_sh_text)
 
+        def _manifest_digest(manifest_path: str, target_rel: str) -> str:
+            with open(manifest_path, "r", encoding="utf-8") as mf:
+                for line in mf:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    digest, rel = line.split(None, 1)
+                    if rel == target_rel:
+                        return digest
+            raise AssertionError(f"{target_rel} not found in {manifest_path}")
+
+        with open(live_jsonl, "rb") as f:
+            live_lines = f.readlines()
+        run1_6_bytes = b"".join(ln for ln in live_lines if json.loads(ln)["task_id"] != "item6_pr16")
+        self.assertEqual(
+            hashlib.sha256(run1_6_bytes).hexdigest(),
+            _manifest_digest(run1_sums, "item6-pilot-v2.jsonl"),
+            "6-line run-1 fixture must match item6-pilot-v2.SHA256SUMS",
+        )
+        self.assertEqual(
+            hashlib.sha256(b"".join(live_lines)).hexdigest(),
+            _manifest_digest(final_sums, "item6-pilot-v2.jsonl"),
+            "Whole live jsonl must match item6-pilot-v2.final.SHA256SUMS",
+        )
+
         # Extract on_exit and check_results_complete directly from run.sh and exercise both missing & complete cases
         tmp_dir = tempfile.mkdtemp(prefix="pilot_complete_check_")
         try:
+            run1_6_jsonl = os.path.join(tmp_dir, "run1_6.jsonl")
+            with open(run1_6_jsonl, "wb") as f:
+                f.write(run1_6_bytes)
+
             harness_sh = os.path.join(tmp_dir, "test_complete.sh")
             script = (
                 "#!/usr/bin/env bash\n"
@@ -2373,10 +2437,10 @@ class TestPilotPr(unittest.TestCase):
                 f.write(script)
             os.chmod(harness_sh, 0o755)
 
-            # Case 1: Frozen 6-record item6-pilot-v2.jsonl (missing item6_pr16) -> must exit non-zero & write incomplete missing=item6_pr16
+            # Case 1: 6-record run-1 fixture (missing item6_pr16) -> must exit non-zero & write incomplete missing=item6_pr16
             d_miss = os.path.join(tmp_dir, "miss")
             os.makedirs(d_miss, exist_ok=True)
-            r_miss = subprocess.run(["bash", harness_sh, d_miss, frozen_jsonl], capture_output=True, text=True)
+            r_miss = subprocess.run(["bash", harness_sh, d_miss, run1_6_jsonl], capture_output=True, text=True)
             self.assertNotEqual(r_miss.returncode, 0, "Missing item6_pr16 must exit non-zero")
             with open(os.path.join(d_miss, "run.status"), "r", encoding="utf-8") as f:
                 st_miss = f.read().strip()
@@ -2386,11 +2450,11 @@ class TestPilotPr(unittest.TestCase):
             )
             self.assertNotIn("done rc=0", st_miss)
 
-            # Case 2: All 7 records present -> must exit 0 & write done rc=0
+            # Case 2: All 7 records present (temp fixture + live 7-record jsonl) -> must exit 0 & write done rc=0
             d_ok = os.path.join(tmp_dir, "ok")
             os.makedirs(d_ok, exist_ok=True)
             full_jsonl = os.path.join(tmp_dir, "full7.jsonl")
-            shutil.copy2(frozen_jsonl, full_jsonl)
+            shutil.copy2(run1_6_jsonl, full_jsonl)
             with open(full_jsonl, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"task_id": "item6_pr16", "pr_number": 16}) + "\n")
             r_ok = subprocess.run(["bash", harness_sh, d_ok, full_jsonl], capture_output=True, text=True)
@@ -2398,6 +2462,14 @@ class TestPilotPr(unittest.TestCase):
             with open(os.path.join(d_ok, "run.status"), "r", encoding="utf-8") as f:
                 st_ok = f.read().strip()
             self.assertTrue(st_ok.startswith("done rc=0 "), f"Expected 'done rc=0 ...', got: {st_ok!r}")
+
+            d_live = os.path.join(tmp_dir, "live")
+            os.makedirs(d_live, exist_ok=True)
+            r_live = subprocess.run(["bash", harness_sh, d_live, live_jsonl], capture_output=True, text=True)
+            self.assertEqual(r_live.returncode, 0, f"Live 7-record jsonl should exit 0: {r_live.stderr}")
+            with open(os.path.join(d_live, "run.status"), "r", encoding="utf-8") as f:
+                st_live = f.read().strip()
+            self.assertTrue(st_live.startswith("done rc=0 "), f"Expected 'done rc=0 ...', got: {st_live!r}")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
