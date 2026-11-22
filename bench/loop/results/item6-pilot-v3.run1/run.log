@@ -1,0 +1,125 @@
+=== start v3 unseen pilot 2026-11-21T18:11:22-06:00 pwd=/tmp/wt-item6-v3-run head=ddcbbfb94403926c46644eaac978db268f8df848 target_repo=/data/datasets/item6-v3-repos/more-itertools.git ceiling_seconds=4320 resume=0 ===
+prereg guard OK: commit ddcbbfb94403926c46644eaac978db268f8df848 is reachable from origin/main
+  commit:     ddcbbfb94403926c46644eaac978db268f8df848
+  remote_ref: origin/main
+  file:       docs/item6-pilot.md
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=99.8GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+=== Inviting qwen with --ctx 65536 --np 1 ===
+llmctl: session 85: INVITE qwen
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=99.8GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 1a8c2d798ec140528f295345a6670ca3
+up: qwen3.6-35b-a3b on vk, ctx 65536, parallel 1, http://127.0.0.1:8081/v1
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=99.8GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+llmctl: session 85: ACTIVE qwen on :8081, GTT 23.5 GiB
+props: total_slots 1 n_ctx 65536 build b11669-620d2225c
+=== Starting task item6v3_pr1260 2026-11-21T18:11:25-06:00 (remaining_ceiling=4320s) ===
+STEP_START item6-pilot-v3 item6v3_pr1260 2026-11-22T00:11:25Z 1795306285.724944456
+COMPACTION task=item6v3_pr1260 turn=2 stage=tool_truncate tool=read_file lines=233->121 elided_lines=113 chars=8480->4634
+COMPACTION task=item6v3_pr1260 turn=3 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=11091->8568 tokens=4191->3123
+COMPACTION task=item6v3_pr1260 turn=3 stage=tool_truncate tool=read_file lines=147->121 elided_lines=27 chars=5119->4212
+COMPACTION task=item6v3_pr1260 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=12920->12702 tokens=5009->4946
+COMPACTION task=item6v3_pr1260 turn=5 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=14932->10467 tokens=5905->4146
+COMPACTION task=item6v3_pr1260 turn=6 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=12378->8335 tokens=4887->3159
+COMPACTION task=item6v3_pr1260 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=10014->8092 tokens=3887->3083
+COMPACTION task=item6v3_pr1260 turn=8 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=11324->9721 tokens=4409->3824
+COMPACTION task=item6v3_pr1260 turn=9 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=10036->8665 tokens=3959->3387
+COMPACTION task=item6v3_pr1260 turn=10 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=10380->7456 tokens=4022->2852
+item6v3_pr1260 pr=#1260 has_tests=True  passed=False stop=max_turns        turns=12 tok=1156 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=47 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1260 2026-11-22T00:12:05Z 1795306325.676362310
+STEP_WALL item6-pilot-v3 item6v3_pr1260 40.0 s
+=== Completed task item6v3_pr1260 2026-11-21T18:12:05-06:00 ===
+=== Starting task item6v3_pr1269 2026-11-21T18:12:05-06:00 (remaining_ceiling=4280s) ===
+STEP_START item6-pilot-v3 item6v3_pr1269 2026-11-22T00:12:05Z 1795306325.692163829
+COMPACTION task=item6v3_pr1269 turn=2 stage=tool_truncate tool=read_file lines=132->121 elided_lines=12 chars=4519->4174
+COMPACTION task=item6v3_pr1269 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9014->8350 tokens=3264->3052
+COMPACTION task=item6v3_pr1269 turn=5 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9686->5678 tokens=3592->2072
+COMPACTION task=item6v3_pr1269 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9336->8296 tokens=3502->3116
+COMPACTION task=item6v3_pr1269 turn=8 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=10391->8665 tokens=3689->3051
+COMPACTION task=item6v3_pr1269 turn=9 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9484->8451 tokens=3402->3025
+COMPACTION task=item6v3_pr1269 turn=11 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=11290->10773 tokens=3940->3745
+item6v3_pr1269 pr=#1269 has_tests=True  passed=False stop=max_turns        turns=12 tok=14104 diff_lines=36
+llmctl: run python3 rc=0 memory.peak=101 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1269 2026-11-22T00:16:18Z 1795306578.065039873
+STEP_WALL item6-pilot-v3 item6v3_pr1269 252.4 s
+=== Completed task item6v3_pr1269 2026-11-21T18:16:18-06:00 ===
+=== Starting task item6v3_pr1305 2026-11-21T18:16:18-06:00 (remaining_ceiling=4027s) ===
+STEP_START item6-pilot-v3 item6v3_pr1305 2026-11-22T00:16:18Z 1795306578.082333924
+COMPACTION task=item6v3_pr1305 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=6825->4385 tokens=2618->1556
+COMPACTION task=item6v3_pr1305 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8595->6389 tokens=3334->2469
+COMPACTION task=item6v3_pr1305 turn=8 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=7144->5903 tokens=2778->2267
+COMPACTION task=item6v3_pr1305 turn=10 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9413->8933 tokens=3642->3463
+item6v3_pr1305 pr=#1305 has_tests=True  passed=False stop=repeat_code      turns=11 tok=954 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=40 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1305 2026-11-22T00:16:42Z 1795306602.300189167
+STEP_WALL item6-pilot-v3 item6v3_pr1305 24.2 s
+=== Completed task item6v3_pr1305 2026-11-21T18:16:42-06:00 ===
+=== Starting task item6v3_pr1322 2026-11-21T18:16:42-06:00 (remaining_ceiling=4003s) ===
+STEP_START item6-pilot-v3 item6v3_pr1322 2026-11-22T00:16:42Z 1795306602.317296306
+COMPACTION task=item6v3_pr1322 turn=3 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=6665->4287 tokens=2437->1406
+item6v3_pr1322 pr=#1322 has_tests=True  passed=False stop=repeat_code      turns=5 tok=362 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=40 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1322 2026-11-22T00:16:51Z 1795306611.169472811
+STEP_WALL item6-pilot-v3 item6v3_pr1322 8.9 s
+=== Completed task item6v3_pr1322 2026-11-21T18:16:51-06:00 ===
+=== Starting task item6v3_pr1342 2026-11-21T18:16:51-06:00 (remaining_ceiling=3994s) ===
+STEP_START item6-pilot-v3 item6v3_pr1342 2026-11-22T00:16:51Z 1795306611.185828388
+COMPACTION task=item6v3_pr1342 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=7742->6146 tokens=2893->2228
+COMPACTION task=item6v3_pr1342 turn=6 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8726->7196 tokens=3274->2639
+COMPACTION task=item6v3_pr1342 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=7772->6176 tokens=2895->2230
+COMPACTION task=item6v3_pr1342 turn=8 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8541->8512 tokens=3208->3217
+COMPACTION task=item6v3_pr1342 turn=10 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=10673->8691 tokens=4066->3261
+item6v3_pr1342 pr=#1342 has_tests=True  passed=True  stop=pass             turns=12 tok=1807 diff_lines=14
+llmctl: run python3 rc=0 memory.peak=102 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1342 2026-11-22T00:17:32Z 1795306652.234879842
+STEP_WALL item6-pilot-v3 item6v3_pr1342 41.0 s
+=== Completed task item6v3_pr1342 2026-11-21T18:17:32-06:00 ===
+=== Starting task item6v3_pr1345 2026-11-21T18:17:32-06:00 (remaining_ceiling=3953s) ===
+STEP_START item6-pilot-v3 item6v3_pr1345 2026-11-22T00:17:32Z 1795306652.251010256
+COMPACTION task=item6v3_pr1345 turn=1 stage=tool_truncate tool=read_file lines=176->121 elided_lines=56 chars=7122->5227
+COMPACTION task=item6v3_pr1345 turn=3 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=14641->12360 tokens=5102->4366
+COMPACTION task=item6v3_pr1345 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=12543->7482 tokens=4472->2596
+COMPACTION task=item6v3_pr1345 turn=5 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=9457->6465 tokens=3358->2303
+COMPACTION task=item6v3_pr1345 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8101->6430 tokens=2969->2365
+COMPACTION task=item6v3_pr1345 turn=8 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8472->7668 tokens=2992->2671
+COMPACTION task=item6v3_pr1345 turn=11 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=12583->12574 tokens=4410->4421
+item6v3_pr1345 pr=#1345 has_tests=True  passed=True  stop=pass             turns=12 tok=2861 diff_lines=24
+llmctl: run python3 rc=0 memory.peak=100 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1345 2026-11-22T00:18:35Z 1795306715.991226488
+STEP_WALL item6-pilot-v3 item6v3_pr1345 63.7 s
+=== Completed task item6v3_pr1345 2026-11-21T18:18:36-06:00 ===
+=== Starting task item6v3_pr1311 2026-11-21T18:18:36-06:00 (remaining_ceiling=3889s) ===
+STEP_START item6-pilot-v3 item6v3_pr1311 2026-11-22T00:18:36Z 1795306716.008628427
+COMPACTION task=item6v3_pr1311 turn=4 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=5881->5205 tokens=2140->1884
+COMPACTION task=item6v3_pr1311 turn=5 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=6225->5292 tokens=2271->1947
+COMPACTION task=item6v3_pr1311 turn=6 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=6758->6643 tokens=2560->2510
+COMPACTION task=item6v3_pr1311 turn=7 stage=stale_tool_summary msgs_compacted=1 msgs_dropped=0 chars=8095->7356 tokens=3129->2872
+item6v3_pr1311 pr=#1311 has_tests=True  passed=False stop=repeat_code      turns=8 tok=1228 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=40 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v3 item6v3_pr1311 2026-11-22T00:19:01Z 1795306741.959654143
+STEP_WALL item6-pilot-v3 item6v3_pr1311 26.0 s
+=== Completed task item6v3_pr1311 2026-11-21T18:19:01-06:00 ===
+llmctl: session 85: ENDED qwen; GTT after stop 1.2 GiB
+=== Offline grading and report 2026-11-21T18:19:02-06:00 ===
+{
+  "schema_version": 2,
+  "label": "item6-pilot-v3",
+  "tasks_evaluated": 7,
+  "testable_tasks": 7,
+  "testable_passed": 1,
+  "test_pass_rate": 0.1429,
+  "reviews_complete": false,
+  "approved_first_pass": null,
+  "approved_final": null,
+  "final_approve_rate": null,
+  "avg_hand_fix_lines_per_approved": null,
+  "decision": "DROP"
+}
+=== Item 6 pilot v3 (item6-pilot-v3) completed 2026-11-21T18:19:09-06:00 ===
+=== end 2026-11-21T18:19:09-06:00 rc=0 wall_s=467 ===

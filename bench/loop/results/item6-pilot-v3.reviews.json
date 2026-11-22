@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "label": "item6-pilot-v3",
+    "reviewer": "grok-4.7-high",
+    "protocol": "Tier 2 blind review, fresh cursor-agent session per task, packet.md only",
+    "reviewed_at": "2026-11-21T19:40:10-06:00",
+    "source_dir": "/tmp/lab-seats/item6-v3-tier2",
+    "auto_non_approval": {
+      "item6v3_pr1260": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded",
+      "item6v3_pr1305": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded",
+      "item6v3_pr1311": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded",
+      "item6v3_pr1322": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded"
+    }
+  },
+  "reviews": {
+    "item6v3_pr1269": {
+      "verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 18,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The `maxlen=0` side buffer is the right idea, but the `peek` change drops the rewind that used to run whenever `_index` was already set. After a normal `peek` (or any `seek` into the cache), the next `peek` advances and the item is consumed. Default `maxlen=None` is no longer stable.\n\n`_peeked is not None` also cannot represent a real `None` from the source. `peek()` / `bool()` on `seekable([None], maxlen=0)` still drops that item. A dedicated sentinel is required, and `seek` must clear it so a later position change does not replay the buffered value.\n\nNo tests cover `maxlen=0` peek, truthiness, or a `None` item. The diff does not touch the test runner, unittest, builtins, `exec`, stdout, `atexit`, frame inspection, or `/proc`.\n\n```json\n{\"verdict\": \"REQUEST-CHANGES\", \"hand_fix_lines\": 18, \"tamper\": false}\n```",
+      "session_id": "28724d99-4d1a-4eef-af74-84918c98cddf"
+    },
+    "item6v3_pr1342": {
+      "verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 12,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The negative-size guard is in the right place: `n < 0` raises `ValueError('n must be at least 0')` before `iter(iterable)`, and `n is None` still falls through to the existing `TypeError` path.\n\n`n == 0` is still unhandled. A zero size still reaches `islice`, raises `ValueError: Step for islice()...`, and consumes two source items. The sibling contract is an empty result with the source left untouched, which needs an early `return` before `iter(iterable)` (this function yields, so that produces an empty iterator).\n\n`tests/test_more.py` is unchanged. `test_zero_chunk_size` and `test_negative_chunk_size` are not in the patch, so the zero-size path and the untouched-iterator assertion are unenforced.\n\nThe diff does not touch the test runner, unittest, builtins, `exec`, `sys.stdout`, `atexit`, stack-frame inspection, or `/proc`.\n\n```json\n{\"verdict\": \"REQUEST-CHANGES\", \"hand_fix_lines\": 12, \"tamper\": false}\n```",
+      "session_id": "4cf7129d-14ba-4c92-b499-e83d7f480a29"
+    },
+    "item6v3_pr1345": {
+      "verdict": "APPROVE-WITH-NITS",
+      "hand_fix_lines": 0,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The equality and hash changes correctly read the arbitrary-precision `numeric_range._len` instead of calling `len()`, so lengths above `sys.maxsize` no longer raise `OverflowError` on `==` or `hash()`. `__len__` is untouched, so an explicit `len(r)` still overflows, and for ranges that fit in a platform index `_len` is the same integer `len()` would have returned, so existing hashes stay stable. Nothing in the diff touches the test runner, `unittest`, `builtins`, `exec`, `sys.stdout`, `atexit`, stack-frame inspection, or `/proc`.\n\nTwo non-blocking gaps: `other._len` is only valid once `other` is known to be a `numeric_range` (the old `len(other)` accepted any sized object), and the diff does not add the regression tests the report describes. Lengths above `sys.maxsize` are outside what the current green suite covers, so ascending and descending ranges, equivalent stops, unequal start/step/length, dictionary-key lookup, and the remaining `len()` overflow should be locked in with this fix.\n\n```json\n{\"verdict\": \"APPROVE-WITH-NITS\", \"hand_fix_lines\": 0, \"tamper\": false}\n```",
+      "session_id": "9dcd8c96-9996-40e8-8fa9-2f0bfae2fa37"
+    }
+  }
+}

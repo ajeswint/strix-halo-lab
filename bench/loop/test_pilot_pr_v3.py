@@ -550,6 +550,108 @@ class TestPilotPrV3(unittest.TestCase):
             shutil.rmtree(results_dir, ignore_errors=True)
             shutil.rmtree(run_dir, ignore_errors=True)
 
+    def test_v3_committed_results_sha256sums_grade_and_reviews(self):
+        """Committed item6-pilot-v3 results match SHA256SUMS, exclude run.pid/leaks, and encode the official DROP grade."""
+        import hashlib
+
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        res_dir = os.path.join(repo_root, "bench", "loop", "results")
+        sums_path = os.path.join(res_dir, "item6-pilot-v3.SHA256SUMS")
+        self.assertTrue(os.path.isfile(sums_path), f"Missing v3 SHA256SUMS: {sums_path}")
+
+        # Must never commit run.pid or leak histories
+        run1_dir = os.path.join(res_dir, "item6-pilot-v3.run1")
+        self.assertTrue(os.path.isdir(run1_dir))
+        self.assertFalse(os.path.exists(os.path.join(run1_dir, "run.pid")), "run.pid must not be committed")
+        for fn in os.listdir(run1_dir):
+            self.assertFalse(fn.startswith("leak_history_"), f"leak history must not be committed: {fn}")
+
+        # Verify every entry in item6-pilot-v3.SHA256SUMS matches disk and has no forbidden seed/sentinel strings
+        entries = {}
+        with open(sums_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                digest, rel = line.split(None, 1)
+                entries[rel] = digest
+                full_p = os.path.join(res_dir, rel)
+                self.assertTrue(os.path.isfile(full_p), f"Missing file listed in SHA256SUMS: {rel}")
+                with open(full_p, "rb") as rf:
+                    raw = rf.read()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), digest, f"SHA256 mismatch on {rel}")
+                text = raw.decode("utf-8")
+                self.assertNotIn("104729", text, f"Forbidden literal seed in {rel}")
+                self.assertNotIn("PILOT-RUN-SENTINEL", text, f"Forbidden run sentinel in {rel}")
+
+        expected_tids = [t["id"] for t in tasks_item6_v3.load_tasks()]
+        self.assertEqual(len(entries), 13)
+        for required in (
+            "item6-pilot-v3.jsonl",
+            "item6-pilot-v3.reviews.json",
+            "item6-pilot-v3.grade.json",
+            "item6-pilot-v3.run1/run.log",
+            "item6-pilot-v3.run1/run.status",
+            "item6-pilot-v3.run1/turn_events.jsonl",
+        ):
+            self.assertIn(required, entries)
+        for tid in expected_tids:
+            self.assertIn(f"item6-pilot-v3.diffs/{tid}.diff", entries)
+
+        # Verify JSONL completeness & zero overflow / harness failures
+        with open(os.path.join(res_dir, "item6-pilot-v3.jsonl"), "r", encoding="utf-8") as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        self.assertEqual([r["task_id"] for r in rows], expected_tids)
+        for r in rows:
+            self.assertEqual(r.get("schema_version"), 2)
+            self.assertNotEqual(r.get("stop_reason"), "context_overflow")
+            self.assertFalse(r.get("harness_failure"))
+
+        # Verify verbatim Tier 2 reviews structure
+        with open(os.path.join(res_dir, "item6-pilot-v3.reviews.json"), "r", encoding="utf-8") as f:
+            rev_doc = json.load(f)
+        reviews = rev_doc["reviews"]
+        self.assertEqual(set(reviews.keys()), {"item6v3_pr1269", "item6v3_pr1342", "item6v3_pr1345"})
+        self.assertEqual(reviews["item6v3_pr1269"]["verdict"], "REQUEST-CHANGES")
+        self.assertEqual(reviews["item6v3_pr1269"]["hand_fix_lines"], 18)
+        self.assertEqual(reviews["item6v3_pr1342"]["verdict"], "REQUEST-CHANGES")
+        self.assertEqual(reviews["item6v3_pr1342"]["hand_fix_lines"], 12)
+        self.assertEqual(reviews["item6v3_pr1345"]["verdict"], "APPROVE-WITH-NITS")
+        self.assertEqual(reviews["item6v3_pr1345"]["hand_fix_lines"], 0)
+        for tid, rv in reviews.items():
+            self.assertIs(rv["tamper"], False, f"{tid} tamper must be False")
+            self.assertIs(rv["fresh_session"], True, f"{tid} fresh_session must be True")
+
+        # Verify official post-review grade.json under Section 15.5 bars
+        with open(os.path.join(res_dir, "item6-pilot-v3.grade.json"), "r", encoding="utf-8") as f:
+            grade = json.load(f)
+        self.assertEqual(grade["schema_version"], 2)
+        self.assertEqual(grade["label"], "item6-pilot-v3")
+        self.assertEqual(grade["tasks_evaluated"], 7)
+        self.assertEqual(grade["testable_tasks"], 7)
+        self.assertEqual(grade["testable_passed"], 1)
+        self.assertTrue(grade["reviews_complete"])
+        self.assertEqual(grade["approved_first_pass"], 1)
+        self.assertEqual(grade["approved_final"], 1)
+        self.assertEqual(grade["avg_hand_fix_lines_per_approved"], 0.0)
+        self.assertEqual(grade["decision"], "DROP")
+
+        by_tid = {p["task_id"]: p for p in grade["per_task"]}
+        self.assertEqual(list(by_tid.keys()), expected_tids)
+        # pr1342 passed in-loop but failed offline authoritative tests
+        self.assertIs(by_tid["item6v3_pr1342"]["in_loop_passed"], True)
+        self.assertIs(by_tid["item6v3_pr1342"]["test_passed"], False)
+        # pr1345 is the sole offline pass and sole Grok approval
+        self.assertIs(by_tid["item6v3_pr1345"]["in_loop_passed"], True)
+        self.assertIs(by_tid["item6v3_pr1345"]["test_passed"], True)
+        self.assertEqual(by_tid["item6v3_pr1345"]["final_verdict"], "APPROVE-WITH-NITS")
+        # Schema v2 unreviewed empty-diff tasks record tamper=None and NON-APPROVAL
+        for empty_tid in ("item6v3_pr1260", "item6v3_pr1305", "item6v3_pr1322", "item6v3_pr1311"):
+            self.assertIs(by_tid[empty_tid]["diff_empty"], True)
+            self.assertIsNone(by_tid[empty_tid]["tamper"])
+            self.assertEqual(by_tid[empty_tid]["final_verdict"], "NON-APPROVAL")
+            self.assertIsNone(by_tid[empty_tid]["hand_fix_lines"])
+
 
 if __name__ == "__main__":
     unittest.main()
