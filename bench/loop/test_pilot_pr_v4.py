@@ -564,7 +564,14 @@ class TestPilotPrV4(unittest.TestCase):
     # (f) Unseen v4 task selection, contamination cutoff, prompts, bwrap, Section 18 table
     # ------------------------------------------------------------------
     def test_v4_mechanical_selection_matches_frozen_list(self):
-        """select_v4.py reproduces the exact frozen 7-PR lark-parser/lark list in tasks_item6_v4.py (Phase 1=0, Phase 2=lark)."""
+        """select_v4.py reproduces the exact frozen 7-PR lark-parser/lark list in tasks_item6_v4.py (Phase 1=0, Phase 2=lark).
+
+        Note: audit counts for skipped earlier shortlist repos (`python-markdown/markdown` and
+        `pyparsing/pyparsing`) are informational only and can vary across hosts because outer
+        `/usr/bin/bwrap` read-only bind-mounts `/usr` (e.g. system `python3-markdown` entry
+        points affect markdown PR #1621: 1 verified with it, 0 without it). Both are strictly
+        below 7 either way, so the frozen `lark-parser/lark` selection is invariant.
+        """
         repos_dir = tasks_item6_v4.DEFAULT_V4_REPOS_DIR
         self.assertTrue(os.path.isdir(repos_dir), f"v4 bare repos dir missing: {repos_dir}")
         frozen = tasks_item6_v4.load_tasks()
@@ -574,6 +581,10 @@ class TestPilotPrV4(unittest.TestCase):
         self.assertEqual(res["primary_selected"], [])
         self.assertEqual(res["fallback_repo_slug"], "lark-parser/lark")
         self.assertEqual(res["shortfall"], 0)
+        # Prior shortlist audit entries (markdown, pyparsing) are informational only; assert only < 7.
+        for audit_entry in res["fallback_audit"]:
+            if audit_entry["slug"] in ("python-markdown/markdown", "pyparsing/pyparsing"):
+                self.assertLess(audit_entry["verified_count"], select_v4.V4_BATCH_SIZE)
         selected = res["selected"]
         self.assertEqual(len(selected), 7)
         self.assertEqual([p["pr_number"] for p in selected], [t["pr_number"] for t in frozen])
@@ -588,6 +599,92 @@ class TestPilotPrV4(unittest.TestCase):
             self.assertEqual(p["test_cmd"], t["test_cmd"])
             self.assertEqual(p["expected_test_count"], t["grade_spec"]["expected_test_count"])
             self.assertEqual(p["total_changed_lines"], t["total_changed_lines"])
+
+    def test_search_replace_preserves_crlf_and_lf_line_endings(self):
+        """tool_search_replace preserves CRLF on CRLF files and LF on LF files, and captured diffs apply cleanly."""
+        wt_dir = tempfile.mkdtemp(prefix="pilot_v4_eol_")
+        try:
+            subprocess.run(["git", "init", "-q"], cwd=wt_dir, check=True)
+            subprocess.run(["git", "config", "user.name", "Tester"], cwd=wt_dir, check=True)
+            subprocess.run(["git", "config", "user.email", "tester@example.org"], cwd=wt_dir, check=True)
+
+            crlf_path = os.path.join(wt_dir, "crlf_mod.py")
+            lf_path = os.path.join(wt_dir, "lf_mod.py")
+            with open(crlf_path, "wb") as f:
+                f.write(b"def alpha():\r\n    return 1\r\n\r\ndef beta():\r\n    return 2\r\n")
+            with open(lf_path, "wb") as f:
+                f.write(b"def gamma():\n    return 3\n\ndef delta():\n    return 4\n")
+            subprocess.run(["git", "add", "."], cwd=wt_dir, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=wt_dir, check=True)
+            base_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=wt_dir, text=True).strip()
+
+            # Edit both files using LF old/new strings (as produced from read_file output)
+            ok_c, msg_c = pilot_pr.tool_search_replace(
+                wt_dir, "crlf_mod.py", "def alpha():\n    return 1", "def alpha():\n    return 10"
+            )
+            self.assertTrue(ok_c, msg_c)
+            ok_l, msg_l = pilot_pr.tool_search_replace(
+                wt_dir, "lf_mod.py", "def gamma():\n    return 3", "def gamma():\n    return 30"
+            )
+            self.assertTrue(ok_l, msg_l)
+
+            with open(crlf_path, "rb") as f:
+                crlf_after = f.read()
+            with open(lf_path, "rb") as f:
+                lf_after = f.read()
+
+            # CRLF file must retain \r\n on every line (no bare \n)
+            self.assertEqual(crlf_after, b"def alpha():\r\n    return 10\r\n\r\ndef beta():\r\n    return 2\r\n")
+            self.assertNotIn(b"\n", crlf_after.replace(b"\r\n", b""))
+            # LF file must retain pure \n (no \r)
+            self.assertEqual(lf_after, b"def gamma():\n    return 30\n\ndef delta():\n    return 4\n")
+            self.assertNotIn(b"\r", lf_after)
+
+            # Captured diff must be targeted (not a whole-file CRLF flip) and re-apply cleanly on base
+            diff_text = pilot_pr.capture_worktree_diff(wt_dir, base_sha)
+            self.assertIn("\r\n", diff_text)
+            self.assertNotIn("-def beta():", diff_text)
+            subprocess.run(["git", "checkout", "--", "crlf_mod.py", "lf_mod.py"], cwd=wt_dir, check=True)
+            ap_ok, ap_msg = pilot_pr.apply_updates(wt_dir, {"__patch__": diff_text.rstrip("\n")})
+            self.assertTrue(ap_ok, f"CRLF/LF diff failed to re-apply: {ap_msg}")
+            with open(crlf_path, "rb") as f:
+                self.assertEqual(f.read(), crlf_after)
+            with open(lf_path, "rb") as f:
+                self.assertEqual(f.read(), lf_after)
+        finally:
+            shutil.rmtree(wt_dir, ignore_errors=True)
+
+    def test_analyze_v3_turns_warns_to_stderr_on_git_show_fallback(self):
+        """analyze_v3_turns._read_pilot_source_text prints a warning to stderr on git show failure and stays silent when ddcbbfb succeeds."""
+        import io
+        from contextlib import redirect_stderr
+        from pathlib import Path
+        import analyze_v3_turns
+
+        pilot_path = Path(HERE) / "pilot_pr.py"
+
+        # 1. Valid pinned v3 commit -> silent on stderr
+        buf_ok = io.StringIO()
+        with redirect_stderr(buf_ok):
+            txt_ok = analyze_v3_turns._read_pilot_source_text(
+                pilot_source_path=pilot_path,
+                pilot_git_rev=analyze_v3_turns.V3_RUN_GIT_REV,
+            )
+        self.assertTrue(len(txt_ok) > 1000)
+        self.assertEqual(buf_ok.getvalue(), "")
+
+        # 2. Invalid git rev -> warns loudly on stderr before falling back to working tree
+        buf_warn = io.StringIO()
+        bad_rev = "0000000000000000000000000000000000000000"
+        with redirect_stderr(buf_warn):
+            txt_fb = analyze_v3_turns._read_pilot_source_text(
+                pilot_source_path=pilot_path,
+                pilot_git_rev=bad_rev,
+            )
+        self.assertIn("WARNING:", buf_warn.getvalue())
+        self.assertIn(bad_rev, buf_warn.getvalue())
+        self.assertIn("falling back", buf_warn.getvalue())
+        self.assertEqual(txt_fb, pilot_path.read_text(encoding="utf-8"))
 
     def test_v4_contamination_cutoff_and_disjoint_from_v2_v3(self):
         """All 7 v4 tasks are strictly post-Qwen3.6-35B-A3B release and disjoint from v2/v3 development sets."""

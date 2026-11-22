@@ -7,8 +7,8 @@ Frozen batch of 7 unseen merged PRs mechanically selected by `select_v4.py`:
     `e3f79f4fde5f7c107f70a20730b17240a05ba99b`.
   - Phase 2 (fixed priority shortlist of pure-Python, zero-dependency, stdlib-`unittest`
     repos stated before inspecting any candidate diff):
-      1. `python-markdown/markdown` (HEAD `5609061bd3359e882b745de184ebfe5ef1c08011`): 1 verified
-      2. `pyparsing/pyparsing` (HEAD `810199f89bf916590426e1c5cb3d612584f11a2f`): 3 verified
+      1. `python-markdown/markdown` (HEAD `5609061bd3359e882b745de184ebfe5ef1c08011`): 0–1 verified (host-dependent via `/usr` bind-mount: 1 on this host with system `python3-markdown` 3.10.2, 0 without it; `< 7` either way)
+      2. `pyparsing/pyparsing` (HEAD `810199f89bf916590426e1c5cb3d612584f11a2f`): 3 verified on this host (informational; `< 7`)
       3. `lark-parser/lark` (HEAD `9a4fb9c7458e8155636773a3cded0016d52516da`): 7 verified -> SELECTED
 
 All 7 selected PRs were merged strictly after the Qwen3.6-35B-A3B Hugging Face release date

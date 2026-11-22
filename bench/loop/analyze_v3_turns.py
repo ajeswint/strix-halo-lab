@@ -164,7 +164,12 @@ def _read_pilot_source_text(
     pilot_source_path: Path | None = None,
     pilot_git_rev: str | None = V3_RUN_GIT_REV,
 ) -> str:
-    """Read bench/loop/pilot_pr.py from the pinned v3 run git commit (default) or a disk path."""
+    """Read bench/loop/pilot_pr.py from the pinned v3 run git commit (default) or a disk path.
+
+    Emits a warning to stderr if `pilot_git_rev` is requested but `git show` fails and falls back
+    to the working-tree file.
+    """
+    fallback_path = pilot_source_path if pilot_source_path is not None else (Path(__file__).resolve().parent / "pilot_pr.py")
     if pilot_git_rev:
         repo_root = Path(__file__).resolve().parents[2]
         res = subprocess.run(
@@ -174,9 +179,13 @@ def _read_pilot_source_text(
         )
         if res.returncode == 0 and res.stdout:
             return res.stdout
-    if pilot_source_path is None:
-        pilot_source_path = Path(__file__).resolve().parent / "pilot_pr.py"
-    return pilot_source_path.read_text(encoding="utf-8")
+        err_detail = (res.stderr or "").strip() or f"rc={res.returncode}, empty stdout"
+        print(
+            f"WARNING: analyze_v3_turns could not read {pilot_git_rev}:bench/loop/pilot_pr.py "
+            f"({err_detail}); falling back to working-tree file {fallback_path}",
+            file=sys.stderr,
+        )
+    return fallback_path.read_text(encoding="utf-8")
 
 
 def inspect_pilot_source(
