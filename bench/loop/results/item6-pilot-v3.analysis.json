@@ -1,0 +1,2931 @@
+{
+  "meta": {
+    "label": "item6-pilot-v3",
+    "scope_label": "descriptive, post-hoc, n=7, one repo",
+    "official_decision_unchanged": "DROP",
+    "official_testable_passed": 1,
+    "official_testable_tasks": 7,
+    "official_approved_final": 1,
+    "tasks_analyzed": 7,
+    "turns_executed_total": 72,
+    "inputs_read": [
+      "bench/loop/results/item6-pilot-v3.jsonl",
+      "bench/loop/results/item6-pilot-v3.run1/turn_events.jsonl",
+      "bench/loop/results/item6-pilot-v3.run1/run.log",
+      "bench/loop/results/item6-pilot-v3.diffs/",
+      "bench/loop/results/item6-pilot-v3.grade.json",
+      "bench/loop/pilot_pr.py"
+    ],
+    "compaction_cross_check": {
+      "turn_events_compaction_total": 38,
+      "turn_events_by_stage": {
+        "tool_truncate": 4,
+        "history_compact": 34
+      },
+      "turn_events_history_compact_substages": {
+        "stale_tool_summary": 34
+      },
+      "run_log_compaction_total": 38,
+      "run_log_by_stage": {
+        "tool_truncate": 4,
+        "stale_tool_summary": 34
+      },
+      "jsonl_top_level_compaction_events_sum": 38,
+      "jsonl_top_level_compaction_chars_saved_sum": 65809,
+      "jsonl_history_compaction_entries_sum": 36,
+      "history_omitted_on_repeat_code_turns": [
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 10,
+          "stage": "history_compact",
+          "stages": [
+            "stale_tool_summary"
+          ],
+          "chars_saved": 480,
+          "stop": "repeat_code"
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 7,
+          "stage": "history_compact",
+          "stages": [
+            "stale_tool_summary"
+          ],
+          "chars_saved": 739,
+          "stop": "repeat_code"
+        }
+      ],
+      "peak_prompt_tokens": {
+        "usage_max": {
+          "tokens": 4763,
+          "task_id": "item6v3_pr1260",
+          "turn": 4
+        },
+        "preflight_max": {
+          "tokens": 4946,
+          "task_id": "item6v3_pr1260",
+          "turn": 4
+        },
+        "pre_compaction_max": {
+          "tokens": 5905,
+          "task_id": "item6v3_pr1260",
+          "turn": 5
+        },
+        "max_prompt_tokens_cap": 57344,
+        "stage2_target_tokens": 43008
+      }
+    }
+  },
+  "repeat_code_and_compaction": {
+    "repeat_code_task_count": 3,
+    "repeat_code_tasks": [
+      "item6v3_pr1305",
+      "item6v3_pr1322",
+      "item6v3_pr1311"
+    ],
+    "exact_duplicated_reply_recorded": false,
+    "exact_duplicated_reply_note": "Neither the raw assistant reply text, nor the SHA-256 code_hash, nor the matched earlier turn index is persisted in item6-pilot-v3.jsonl, turn_events.jsonl, or run.log (bench/loop/pilot_pr.py hashes content+tool_calls in memory and breaks before _append_turn_log).",
+    "same_turn_stage1_compaction_before_stop_count": 2,
+    "cases": [
+      {
+        "task_id": "item6v3_pr1305",
+        "pr_number": 1305,
+        "stop_turn": 10,
+        "turns_executed": 11,
+        "diff_empty": true,
+        "stop_turn_completion_tokens": 67,
+        "stop_turn_gen_s": 2.34,
+        "stop_turn_prompt_tokens": 3137,
+        "stop_turn_preflight_prompt_tokens": 3463,
+        "exact_duplicated_reply_recorded": false,
+        "duplicated_reply_proxy": {
+          "stop_turn_completion_tokens": 67,
+          "max_earlier_turn_completion_tokens": 211,
+          "stop_turn_exceeds_all_earlier_turns": false,
+          "exact_token_match_earlier_turns": [
+            {
+              "turn": 8,
+              "completion_tokens": 67,
+              "gen_s": 1.77,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 4520,
+                    "end": 4590
+                  },
+                  "ok": true,
+                  "result_chars": 2705
+                }
+              ],
+              "err": ""
+            }
+          ],
+          "nearest_token_earlier_turns": [
+            {
+              "turn": 8,
+              "completion_tokens": 67,
+              "gen_s": 1.77,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 4520,
+                    "end": 4590
+                  },
+                  "ok": true,
+                  "result_chars": 2705
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 6,
+              "completion_tokens": 69,
+              "gen_s": 1.86,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "def test_ichunked"
+                  },
+                  "ok": true,
+                  "result_chars": 36
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 4,
+              "completion_tokens": 64,
+              "gen_s": 1.61,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 3700,
+                    "end": 3760
+                  },
+                  "ok": true,
+                  "result_chars": 2371
+                }
+              ],
+              "err": ""
+            }
+          ],
+          "proxy_caveat": "Exact reply text and code_hash are not recorded in committed files. usage.completion_tokens combines unrecorded reasoning tokens plus visible content, whereas repeat_code hashes visible content + tool_calls only; token count is a proxy, not proof."
+        },
+        "preceding_tool_calls": {
+          "total": 9,
+          "read_only_count": 9,
+          "edit_count": 0,
+          "verify_count": 0,
+          "by_tool": {
+            "grep": 4,
+            "read_file": 5
+          },
+          "parse_error_turns": [
+            0,
+            2,
+            3
+          ],
+          "turns_before_stop": [
+            {
+              "turn": 0,
+              "completion_tokens": 211,
+              "gen_s": 4.03,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "Invalid JSON in tool block: Extra data: line 2 column 1 (char 90)"
+            },
+            {
+              "turn": 1,
+              "completion_tokens": 128,
+              "gen_s": 2.4,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 1,
+                    "end": 100
+                  },
+                  "ok": true,
+                  "result_chars": 2540
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "def ichunked"
+                  },
+                  "ok": true,
+                  "result_chars": 55
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "def chunked"
+                  },
+                  "ok": true,
+                  "result_chars": 127
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 2,
+              "completion_tokens": 107,
+              "gen_s": 2.92,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "Invalid JSON in tool block: Extra data: line 2 column 1 (char 94)"
+            },
+            {
+              "turn": 3,
+              "completion_tokens": 54,
+              "gen_s": 1.2,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
+            },
+            {
+              "turn": 4,
+              "completion_tokens": 64,
+              "gen_s": 1.61,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 3700,
+                    "end": 3760
+                  },
+                  "ok": true,
+                  "result_chars": 2371
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 5,
+              "completion_tokens": 96,
+              "gen_s": 2.48,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 215,
+                    "end": 250
+                  },
+                  "ok": true,
+                  "result_chars": 1404
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 6,
+              "completion_tokens": 69,
+              "gen_s": 1.86,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "def test_ichunked"
+                  },
+                  "ok": true,
+                  "result_chars": 36
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 7,
+              "completion_tokens": 44,
+              "gen_s": 1.69,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "ichunked"
+                  },
+                  "ok": true,
+                  "result_chars": 637
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 8,
+              "completion_tokens": 67,
+              "gen_s": 1.77,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 4520,
+                    "end": 4590
+                  },
+                  "ok": true,
+                  "result_chars": 2705
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 9,
+              "completion_tokens": 47,
+              "gen_s": 1.7,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 4590,
+                    "end": 4600
+                  },
+                  "ok": true,
+                  "result_chars": 539
+                }
+              ],
+              "err": ""
+            }
+          ]
+        },
+        "stage1_compaction_immediately_before_stop": {
+          "same_turn_history_compact": true,
+          "same_turn_event": {
+            "turn_events_line": 55,
+            "run_log_line": 57,
+            "stage": "history_compact",
+            "stages": [
+              "stale_tool_summary"
+            ],
+            "msgs_compacted": 1,
+            "chars_before": 9413,
+            "chars_after": 8933,
+            "chars_saved": 480,
+            "tokens_before": 3642,
+            "tokens_after": 3463,
+            "tokens_saved": 179
+          },
+          "jsonl_history_recorded_compaction": false,
+          "most_recent_history_compact_turn": 10,
+          "turns_since_last_history_compact": 0,
+          "total_history_compact_events_in_task": 4
+        }
+      },
+      {
+        "task_id": "item6v3_pr1322",
+        "pr_number": 1322,
+        "stop_turn": 4,
+        "turns_executed": 5,
+        "diff_empty": true,
+        "stop_turn_completion_tokens": 43,
+        "stop_turn_gen_s": 0.89,
+        "stop_turn_prompt_tokens": 1285,
+        "stop_turn_preflight_prompt_tokens": 1469,
+        "exact_duplicated_reply_recorded": false,
+        "duplicated_reply_proxy": {
+          "stop_turn_completion_tokens": 43,
+          "max_earlier_turn_completion_tokens": 140,
+          "stop_turn_exceeds_all_earlier_turns": false,
+          "exact_token_match_earlier_turns": [
+            {
+              "turn": 3,
+              "completion_tokens": 43,
+              "gen_s": 1.21,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
+            }
+          ],
+          "nearest_token_earlier_turns": [
+            {
+              "turn": 3,
+              "completion_tokens": 43,
+              "gen_s": 1.21,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
+            },
+            {
+              "turn": 1,
+              "completion_tokens": 61,
+              "gen_s": 2.04,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "class peekable"
+                  },
+                  "ok": true,
+                  "result_chars": 43
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 2,
+              "completion_tokens": 75,
+              "gen_s": 1.51,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "Invalid JSON in tool block: Expecting value: line 1 column 1 (char 0)"
+            }
+          ],
+          "proxy_caveat": "Exact reply text and code_hash are not recorded in committed files. usage.completion_tokens combines unrecorded reasoning tokens plus visible content, whereas repeat_code hashes visible content + tool_calls only; token count is a proxy, not proof."
+        },
+        "preceding_tool_calls": {
+          "total": 2,
+          "read_only_count": 2,
+          "edit_count": 0,
+          "verify_count": 0,
+          "by_tool": {
+            "grep": 1,
+            "read_file": 1
+          },
+          "parse_error_turns": [
+            2,
+            3
+          ],
+          "turns_before_stop": [
+            {
+              "turn": 0,
+              "completion_tokens": 140,
+              "gen_s": 2.98,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 1,
+                    "end": 100
+                  },
+                  "ok": true,
+                  "result_chars": 2540
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 1,
+              "completion_tokens": 61,
+              "gen_s": 2.04,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "class peekable"
+                  },
+                  "ok": true,
+                  "result_chars": 43
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 2,
+              "completion_tokens": 75,
+              "gen_s": 1.51,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "Invalid JSON in tool block: Expecting value: line 1 column 1 (char 0)"
+            },
+            {
+              "turn": 3,
+              "completion_tokens": 43,
+              "gen_s": 1.21,
+              "kind": "parse_error",
+              "tools": [],
+              "err": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
+            }
+          ]
+        },
+        "stage1_compaction_immediately_before_stop": {
+          "same_turn_history_compact": false,
+          "same_turn_event": null,
+          "jsonl_history_recorded_compaction": false,
+          "most_recent_history_compact_turn": 3,
+          "turns_since_last_history_compact": 1,
+          "total_history_compact_events_in_task": 1
+        }
+      },
+      {
+        "task_id": "item6v3_pr1311",
+        "pr_number": 1311,
+        "stop_turn": 7,
+        "turns_executed": 8,
+        "diff_empty": true,
+        "stop_turn_completion_tokens": 497,
+        "stop_turn_gen_s": 9.48,
+        "stop_turn_prompt_tokens": 2618,
+        "stop_turn_preflight_prompt_tokens": 2872,
+        "exact_duplicated_reply_recorded": false,
+        "duplicated_reply_proxy": {
+          "stop_turn_completion_tokens": 497,
+          "max_earlier_turn_completion_tokens": 210,
+          "stop_turn_exceeds_all_earlier_turns": true,
+          "exact_token_match_earlier_turns": [],
+          "nearest_token_earlier_turns": [
+            {
+              "turn": 0,
+              "completion_tokens": 210,
+              "gen_s": 3.98,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "def all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 64
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "def all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 33
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "docs/versions.rst",
+                    "pattern": "all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 71
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 4,
+              "completion_tokens": 148,
+              "gen_s": 3.18,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 898
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 6,
+              "completion_tokens": 93,
+              "gen_s": 2.45,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 5190,
+                    "end": 5220
+                  },
+                  "ok": true,
+                  "result_chars": 1317
+                }
+              ],
+              "err": ""
+            }
+          ],
+          "proxy_caveat": "Exact reply text and code_hash are not recorded in committed files. usage.completion_tokens combines unrecorded reasoning tokens plus visible content, whereas repeat_code hashes visible content + tool_calls only; token count is a proxy, not proof."
+        },
+        "preceding_tool_calls": {
+          "total": 9,
+          "read_only_count": 9,
+          "edit_count": 0,
+          "verify_count": 0,
+          "by_tool": {
+            "grep": 5,
+            "read_file": 4
+          },
+          "parse_error_turns": [],
+          "turns_before_stop": [
+            {
+              "turn": 0,
+              "completion_tokens": 210,
+              "gen_s": 3.98,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "def all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 64
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "def all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 33
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "docs/versions.rst",
+                    "pattern": "all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 71
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 1,
+              "completion_tokens": 74,
+              "gen_s": 1.56,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 4274,
+                    "end": 4295
+                  },
+                  "ok": true,
+                  "result_chars": 839
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 2,
+              "completion_tokens": 68,
+              "gen_s": 1.57,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "start": 4295,
+                    "end": 4320
+                  },
+                  "ok": true,
+                  "result_chars": 1098
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 3,
+              "completion_tokens": 65,
+              "gen_s": 1.57,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "more_itertools/more.py",
+                    "pattern": "key is not None"
+                  },
+                  "ok": true,
+                  "result_chars": 282
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 4,
+              "completion_tokens": 148,
+              "gen_s": 3.18,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "grep",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "pattern": "all_unique"
+                  },
+                  "ok": true,
+                  "result_chars": 898
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 5,
+              "completion_tokens": 73,
+              "gen_s": 1.94,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 902,
+                    "end": 930
+                  },
+                  "ok": true,
+                  "result_chars": 1333
+                }
+              ],
+              "err": ""
+            },
+            {
+              "turn": 6,
+              "completion_tokens": 93,
+              "gen_s": 2.45,
+              "kind": "read_only_tool_call",
+              "tools": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "tests/test_more.py",
+                    "start": 5190,
+                    "end": 5220
+                  },
+                  "ok": true,
+                  "result_chars": 1317
+                }
+              ],
+              "err": ""
+            }
+          ]
+        },
+        "stage1_compaction_immediately_before_stop": {
+          "same_turn_history_compact": true,
+          "same_turn_event": {
+            "turn_events_line": 107,
+            "run_log_line": 102,
+            "stage": "history_compact",
+            "stages": [
+              "stale_tool_summary"
+            ],
+            "msgs_compacted": 1,
+            "chars_before": 8095,
+            "chars_after": 7356,
+            "chars_saved": 739,
+            "tokens_before": 3129,
+            "tokens_after": 2872,
+            "tokens_saved": 257
+          },
+          "jsonl_history_recorded_compaction": false,
+          "most_recent_history_compact_turn": 7,
+          "turns_since_last_history_compact": 0,
+          "total_history_compact_events_in_task": 4
+        }
+      }
+    ],
+    "file_rereads_after_compaction": {
+      "definition": "read_file calls whose path was already read by an earlier read_file in the same task and that occurred after at least one history_compact (stale_tool_summary) event in that task",
+      "overall": {
+        "total_read_file_calls": 36,
+        "rereads_same_path_after_compact": 21,
+        "rereads_overlapping_range_after_compact": 17,
+        "rereads_exact_range_after_compact": 2,
+        "tasks_with_rereads_after_compact": 6
+      },
+      "per_task": {
+        "item6v3_pr1260": {
+          "total_read_file_calls": 8,
+          "rereads_same_path_after_compact": 6,
+          "rereads_overlapping_range_after_compact": 6,
+          "rereads_exact_range_after_compact": 0,
+          "events": [
+            {
+              "turn": 3,
+              "path": "more_itertools/recipes.py",
+              "start": 1435,
+              "end": 1580,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2
+              ],
+              "overlapping_prior_turns": [
+                2
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 4,
+              "path": "more_itertools/recipes.py",
+              "start": 1510,
+              "end": 1570,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2,
+                3
+              ],
+              "overlapping_prior_turns": [
+                2,
+                3
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 5,
+              "path": "more_itertools/recipes.py",
+              "start": 1578,
+              "end": 1621,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2,
+                3,
+                4
+              ],
+              "overlapping_prior_turns": [
+                2,
+                3
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 6,
+              "path": "more_itertools/recipes.py",
+              "start": 1430,
+              "end": 1470,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2,
+                3,
+                4,
+                5
+              ],
+              "overlapping_prior_turns": [
+                2,
+                3
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 7,
+              "path": "more_itertools/recipes.py",
+              "start": 1350,
+              "end": 1430,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2,
+                3,
+                4,
+                5,
+                6
+              ],
+              "overlapping_prior_turns": [
+                2,
+                6
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 10,
+              "path": "more_itertools/recipes.py",
+              "start": 1380,
+              "end": 1495,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                0,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7
+              ],
+              "overlapping_prior_turns": [
+                2,
+                3,
+                6,
+                7
+              ],
+              "exact_prior_turns": []
+            }
+          ]
+        },
+        "item6v3_pr1269": {
+          "total_read_file_calls": 7,
+          "rereads_same_path_after_compact": 5,
+          "rereads_overlapping_range_after_compact": 5,
+          "rereads_exact_range_after_compact": 1,
+          "events": [
+            {
+              "turn": 5,
+              "path": "more_itertools/more.py",
+              "start": 3090,
+              "end": 3150,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                2
+              ],
+              "overlapping_prior_turns": [
+                2
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 6,
+              "path": "more_itertools/more.py",
+              "start": 3120,
+              "end": 3145,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                2,
+                5
+              ],
+              "overlapping_prior_turns": [
+                2,
+                5
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 6,
+              "path": "tests/test_more.py",
+              "start": 3778,
+              "end": 3785,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                4
+              ],
+              "overlapping_prior_turns": [
+                4
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 8,
+              "path": "more_itertools/more.py",
+              "start": 3100,
+              "end": 3120,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                2,
+                5,
+                6
+              ],
+              "overlapping_prior_turns": [
+                2,
+                5,
+                6
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 10,
+              "path": "more_itertools/more.py",
+              "start": 3120,
+              "end": 3145,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": true,
+              "prior_read_turns_for_path": [
+                2,
+                5,
+                6,
+                8
+              ],
+              "overlapping_prior_turns": [
+                2,
+                5,
+                6,
+                8
+              ],
+              "exact_prior_turns": [
+                6
+              ]
+            }
+          ]
+        },
+        "item6v3_pr1305": {
+          "total_read_file_calls": 5,
+          "rereads_same_path_after_compact": 3,
+          "rereads_overlapping_range_after_compact": 1,
+          "rereads_exact_range_after_compact": 0,
+          "events": [
+            {
+              "turn": 4,
+              "path": "more_itertools/more.py",
+              "start": 3700,
+              "end": 3760,
+              "overlaps_prior_read": false,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1
+              ],
+              "overlapping_prior_turns": [],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 5,
+              "path": "more_itertools/more.py",
+              "start": 215,
+              "end": 250,
+              "overlaps_prior_read": false,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1,
+                4
+              ],
+              "overlapping_prior_turns": [],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 9,
+              "path": "tests/test_more.py",
+              "start": 4590,
+              "end": 4600,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                8
+              ],
+              "overlapping_prior_turns": [
+                8
+              ],
+              "exact_prior_turns": []
+            }
+          ]
+        },
+        "item6v3_pr1322": {
+          "total_read_file_calls": 1,
+          "rereads_same_path_after_compact": 0,
+          "rereads_overlapping_range_after_compact": 0,
+          "rereads_exact_range_after_compact": 0,
+          "events": []
+        },
+        "item6v3_pr1342": {
+          "total_read_file_calls": 6,
+          "rereads_same_path_after_compact": 3,
+          "rereads_overlapping_range_after_compact": 2,
+          "rereads_exact_range_after_compact": 1,
+          "events": [
+            {
+              "turn": 4,
+              "path": "more_itertools/more.py",
+              "start": 4627,
+              "end": 4670,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": true,
+              "prior_read_turns_for_path": [
+                1,
+                3
+              ],
+              "overlapping_prior_turns": [
+                1
+              ],
+              "exact_prior_turns": [
+                1
+              ]
+            },
+            {
+              "turn": 7,
+              "path": "more_itertools/more.py",
+              "start": 4627,
+              "end": 4680,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1,
+                3,
+                4
+              ],
+              "overlapping_prior_turns": [
+                1,
+                4
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 11,
+              "path": "tests/test_more.py",
+              "start": 5582,
+              "end": 5660,
+              "overlaps_prior_read": false,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                9
+              ],
+              "overlapping_prior_turns": [],
+              "exact_prior_turns": []
+            }
+          ]
+        },
+        "item6v3_pr1345": {
+          "total_read_file_calls": 5,
+          "rereads_same_path_after_compact": 3,
+          "rereads_overlapping_range_after_compact": 3,
+          "rereads_exact_range_after_compact": 0,
+          "events": [
+            {
+              "turn": 4,
+              "path": "more_itertools/more.py",
+              "start": 2360,
+              "end": 2410,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1,
+                2
+              ],
+              "overlapping_prior_turns": [
+                1
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 5,
+              "path": "more_itertools/more.py",
+              "start": 2410,
+              "end": 2430,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1,
+                2,
+                4
+              ],
+              "overlapping_prior_turns": [
+                1,
+                4
+              ],
+              "exact_prior_turns": []
+            },
+            {
+              "turn": 9,
+              "path": "more_itertools/more.py",
+              "start": 2369,
+              "end": 2430,
+              "overlaps_prior_read": true,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                1,
+                2,
+                4,
+                5
+              ],
+              "overlapping_prior_turns": [
+                1,
+                4,
+                5
+              ],
+              "exact_prior_turns": []
+            }
+          ]
+        },
+        "item6v3_pr1311": {
+          "total_read_file_calls": 4,
+          "rereads_same_path_after_compact": 1,
+          "rereads_overlapping_range_after_compact": 0,
+          "rereads_exact_range_after_compact": 0,
+          "events": [
+            {
+              "turn": 6,
+              "path": "tests/test_more.py",
+              "start": 5190,
+              "end": 5220,
+              "overlaps_prior_read": false,
+              "exact_match_prior_read": false,
+              "prior_read_turns_for_path": [
+                5
+              ],
+              "overlapping_prior_turns": [],
+              "exact_prior_turns": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  "turn_parse_errors": {
+    "total_count": 7,
+    "tasks_affected_count": 4,
+    "raw_model_snippet_recorded": false,
+    "recording_sources_note": "turn_events.jsonl records prompt_tokens, completion_tokens, tools=[], and result_chars, but omits the error text and raw model reply. run.log does not log turn_parse_error. The exact parser error string (matching result_chars in length on all 7 events) is recorded in item6-pilot-v3.jsonl history[turn].err; the raw model reply / offending JSON snippet is not recorded anywhere in the committed records.",
+    "by_error_class": {
+      "json_expecting_comma_delimiter": 2,
+      "json_extra_data": 2,
+      "no_valid_tool_calls": 2,
+      "json_expecting_value": 1
+    },
+    "per_task_counts": {
+      "item6v3_pr1260": 0,
+      "item6v3_pr1269": 1,
+      "item6v3_pr1305": 3,
+      "item6v3_pr1322": 2,
+      "item6v3_pr1342": 0,
+      "item6v3_pr1345": 1,
+      "item6v3_pr1311": 0
+    },
+    "events": [
+      {
+        "turn_events_line": 34,
+        "ts": "2026-11-22T00:15:42Z",
+        "task_id": "item6v3_pr1269",
+        "pr_number": 1269,
+        "turn": 7,
+        "prompt_tokens": 2862,
+        "preflight_prompt_tokens": 3116,
+        "completion_tokens": 3410,
+        "gen_s": 59.13,
+        "result_chars": 83,
+        "error_class": "json_expecting_comma_delimiter",
+        "error_message": "Invalid JSON in tool block: Expecting ',' delimiter: line 1 column 1555 (char 1554)",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "extract_tool_calls -> json.loads JSONDecodeError (bench/loop/pilot_pr.py:1261-1265)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "read_only_tool_call"
+      },
+      {
+        "turn_events_line": 42,
+        "ts": "2026-11-22T00:16:22Z",
+        "task_id": "item6v3_pr1305",
+        "pr_number": 1305,
+        "turn": 0,
+        "prompt_tokens": 843,
+        "preflight_prompt_tokens": 929,
+        "completion_tokens": 211,
+        "gen_s": 4.03,
+        "result_chars": 65,
+        "error_class": "json_extra_data",
+        "error_message": "Invalid JSON in tool block: Extra data: line 2 column 1 (char 90)",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "extract_tool_calls -> json.loads JSONDecodeError (bench/loop/pilot_pr.py:1261-1265)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "read_only_tool_call"
+      },
+      {
+        "turn_events_line": 44,
+        "ts": "2026-11-22T00:16:27Z",
+        "task_id": "item6v3_pr1305",
+        "pr_number": 1305,
+        "turn": 2,
+        "prompt_tokens": 2277,
+        "preflight_prompt_tokens": 2411,
+        "completion_tokens": 107,
+        "gen_s": 2.92,
+        "result_chars": 65,
+        "error_class": "json_extra_data",
+        "error_message": "Invalid JSON in tool block: Extra data: line 2 column 1 (char 94)",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "extract_tool_calls -> json.loads JSONDecodeError (bench/loop/pilot_pr.py:1261-1265)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "parse_error"
+      },
+      {
+        "turn_events_line": 45,
+        "ts": "2026-11-22T00:16:28Z",
+        "task_id": "item6v3_pr1305",
+        "pr_number": 1305,
+        "turn": 3,
+        "prompt_tokens": 2397,
+        "preflight_prompt_tokens": 2555,
+        "completion_tokens": 54,
+        "gen_s": 1.2,
+        "result_chars": 101,
+        "error_class": "no_valid_tool_calls",
+        "error_message": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls.",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "_run_task_loop_turns empty-calls fallback (bench/loop/pilot_pr.py:2281-2287)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "read_only_tool_call"
+      },
+      {
+        "turn_events_line": 58,
+        "ts": "2026-11-22T00:16:49Z",
+        "task_id": "item6v3_pr1322",
+        "pr_number": 1322,
+        "turn": 2,
+        "prompt_tokens": 2194,
+        "preflight_prompt_tokens": 2328,
+        "completion_tokens": 75,
+        "gen_s": 1.51,
+        "result_chars": 69,
+        "error_class": "json_expecting_value",
+        "error_message": "Invalid JSON in tool block: Expecting value: line 1 column 1 (char 0)",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "extract_tool_calls -> json.loads JSONDecodeError (bench/loop/pilot_pr.py:1261-1265)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "parse_error"
+      },
+      {
+        "turn_events_line": 60,
+        "ts": "2026-11-22T00:16:50Z",
+        "task_id": "item6v3_pr1322",
+        "pr_number": 1322,
+        "turn": 3,
+        "prompt_tokens": 1246,
+        "preflight_prompt_tokens": 1406,
+        "completion_tokens": 43,
+        "gen_s": 1.21,
+        "result_chars": 101,
+        "error_class": "no_valid_tool_calls",
+        "error_message": "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls.",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "_run_task_loop_turns empty-calls fallback (bench/loop/pilot_pr.py:2281-2287)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "repeat_code"
+      },
+      {
+        "turn_events_line": 90,
+        "ts": "2026-11-22T00:18:16Z",
+        "task_id": "item6v3_pr1345",
+        "pr_number": 1345,
+        "turn": 7,
+        "prompt_tokens": 2111,
+        "preflight_prompt_tokens": 2365,
+        "completion_tokens": 657,
+        "gen_s": 11.86,
+        "result_chars": 83,
+        "error_class": "json_expecting_comma_delimiter",
+        "error_message": "Invalid JSON in tool block: Expecting ',' delimiter: line 1 column 1639 (char 1638)",
+        "error_message_source": "item6-pilot-v3.jsonl history[turn].err",
+        "result_chars_matches_err_len": true,
+        "code_path": "extract_tool_calls -> json.loads JSONDecodeError (bench/loop/pilot_pr.py:1261-1265)",
+        "raw_model_snippet_recorded": false,
+        "next_turn_outcome": "edit_tool_call"
+      }
+    ]
+  },
+  "completion_length_distribution": {
+    "reasoning_tokens_recorded": false,
+    "reasoning_chars_recorded": false,
+    "reasoning_related_keys_in_committed_records": [],
+    "visible_vs_reasoning_note": "Visible vs reasoning tokens are not recorded separately in any committed v3 record. server_ask() computes reasoning_chars from msg.get('reasoning_content'), but _run_task_loop_turns() discards reasoning_chars and finish_reason and logs only combined usage.completion_tokens (as history[turn].tokens and turn_events.completion_tokens). Two direct observations show that usage.completion_tokens includes unrecorded reasoning tokens: (1) item6v3_pr1311 turn 7 logged 497 completion tokens yet matched an earlier turn's visible code_hash when the maximum earlier turn was 210 tokens; (2) item6v3_pr1269 turns 5-6 logged 4,171 and 4,213 completion tokens (just above REASONING_BUDGET=4096) to emit 1-2 short read_file calls.",
+    "overall": {
+      "turns_count": 72,
+      "total_completion_tokens": 22472,
+      "mean": 312.11,
+      "stdev": 784.9,
+      "min": 43,
+      "p10": 57.3,
+      "p25": 65.75,
+      "median": 79.0,
+      "p75": 181.75,
+      "p90": 504.2,
+      "p95": 927.2,
+      "max": 4213,
+      "buckets": {
+        "<50": 6,
+        "50-99": 35,
+        "100-199": 17,
+        "200-499": 6,
+        "500-999": 4,
+        ">=1000": 4
+      }
+    },
+    "per_task": {
+      "item6v3_pr1260": {
+        "turns_executed": 12,
+        "total_completion_tokens": 1156,
+        "share_of_total_tokens_pct": 5.14,
+        "min": 47,
+        "median": 72.5,
+        "mean": 96.33,
+        "max": 208,
+        "short_turns_lt100_count": 9,
+        "short_turns_lt100_pct": 75.0
+      },
+      "item6v3_pr1269": {
+        "turns_executed": 12,
+        "total_completion_tokens": 14104,
+        "share_of_total_tokens_pct": 62.76,
+        "min": 60,
+        "median": 193.0,
+        "mean": 1175.33,
+        "max": 4213,
+        "short_turns_lt100_count": 3,
+        "short_turns_lt100_pct": 25.0
+      },
+      "item6v3_pr1305": {
+        "turns_executed": 11,
+        "total_completion_tokens": 954,
+        "share_of_total_tokens_pct": 4.25,
+        "min": 44,
+        "median": 67.0,
+        "mean": 86.73,
+        "max": 211,
+        "short_turns_lt100_count": 8,
+        "short_turns_lt100_pct": 72.73
+      },
+      "item6v3_pr1322": {
+        "turns_executed": 5,
+        "total_completion_tokens": 362,
+        "share_of_total_tokens_pct": 1.61,
+        "min": 43,
+        "median": 61.0,
+        "mean": 72.4,
+        "max": 140,
+        "short_turns_lt100_count": 4,
+        "short_turns_lt100_pct": 80.0
+      },
+      "item6v3_pr1342": {
+        "turns_executed": 12,
+        "total_completion_tokens": 1807,
+        "share_of_total_tokens_pct": 8.04,
+        "min": 60,
+        "median": 93.5,
+        "mean": 150.58,
+        "max": 577,
+        "short_turns_lt100_count": 6,
+        "short_turns_lt100_pct": 50.0
+      },
+      "item6v3_pr1345": {
+        "turns_executed": 12,
+        "total_completion_tokens": 2861,
+        "share_of_total_tokens_pct": 12.73,
+        "min": 49,
+        "median": 102.0,
+        "mean": 238.42,
+        "max": 866,
+        "short_turns_lt100_count": 6,
+        "short_turns_lt100_pct": 50.0
+      },
+      "item6v3_pr1311": {
+        "turns_executed": 8,
+        "total_completion_tokens": 1228,
+        "share_of_total_tokens_pct": 5.46,
+        "min": 65,
+        "median": 83.5,
+        "mean": 153.5,
+        "max": 497,
+        "short_turns_lt100_count": 5,
+        "short_turns_lt100_pct": 62.5
+      }
+    },
+    "short_turns_lt100": {
+      "threshold_tokens": 100,
+      "count": 41,
+      "share_of_all_turns_pct": 56.94,
+      "by_turn_own_outcome": {
+        "read_only_tool_call": 35,
+        "parse_error": 3,
+        "repeat_code": 2,
+        "edit_tool_call": 1
+      },
+      "by_next_turn_outcome": {
+        "read_only_tool_call": 31,
+        "repeat_code": 3,
+        "task_end_repeat_code": 2,
+        "parse_error": 2,
+        "task_end_pass": 2,
+        "edit_tool_call": 1
+      },
+      "turns": [
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 1,
+          "completion_tokens": 74,
+          "gen_s": 2.29,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "pattern": "def running_"
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 60
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 2,
+          "completion_tokens": 60,
+          "gen_s": 1.34,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1390,
+              "end": 1621
+            }
+          ],
+          "next_turn": 3,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 63
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 3,
+          "completion_tokens": 63,
+          "gen_s": 2.89,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1435,
+              "end": 1580
+            }
+          ],
+          "next_turn": 4,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 77
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 4,
+          "completion_tokens": 77,
+          "gen_s": 4.57,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1510,
+              "end": 1570
+            }
+          ],
+          "next_turn": 5,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 47
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 5,
+          "completion_tokens": 47,
+          "gen_s": 3.35,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1578,
+              "end": 1621
+            }
+          ],
+          "next_turn": 6,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 68
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 6,
+          "completion_tokens": 68,
+          "gen_s": 2.93,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1430,
+              "end": 1470
+            }
+          ],
+          "next_turn": 7,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 75
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 7,
+          "completion_tokens": 75,
+          "gen_s": 2.98,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "start": 1350,
+              "end": 1430
+            }
+          ],
+          "next_turn": 8,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 71
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 8,
+          "completion_tokens": 71,
+          "gen_s": 3.33,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "pattern": "def running_min|def running_max|def running_stats"
+            }
+          ],
+          "next_turn": 9,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 57
+        },
+        {
+          "task_id": "item6v3_pr1260",
+          "turn": 9,
+          "completion_tokens": 57,
+          "gen_s": 2.9,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/recipes.py",
+              "pattern": "_index|running_stats"
+            }
+          ],
+          "next_turn": 10,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 165
+        },
+        {
+          "task_id": "item6v3_pr1269",
+          "turn": 1,
+          "completion_tokens": 84,
+          "gen_s": 1.66,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep",
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "class Seekable"
+            },
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "maxlen"
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 64
+        },
+        {
+          "task_id": "item6v3_pr1269",
+          "turn": 2,
+          "completion_tokens": 64,
+          "gen_s": 1.49,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 3070,
+              "end": 3200
+            }
+          ],
+          "next_turn": 3,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 187
+        },
+        {
+          "task_id": "item6v3_pr1269",
+          "turn": 4,
+          "completion_tokens": 60,
+          "gen_s": 2.72,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 3770,
+              "end": 3795
+            }
+          ],
+          "next_turn": 5,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 4171
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 3,
+          "completion_tokens": 54,
+          "gen_s": 1.2,
+          "turn_outcome": "parse_error",
+          "tools": [],
+          "tool_args": [],
+          "next_turn": 4,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 64
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 4,
+          "completion_tokens": 64,
+          "gen_s": 1.61,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 3700,
+              "end": 3760
+            }
+          ],
+          "next_turn": 5,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 96
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 5,
+          "completion_tokens": 96,
+          "gen_s": 2.48,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 215,
+              "end": 250
+            }
+          ],
+          "next_turn": 6,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 69
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 6,
+          "completion_tokens": 69,
+          "gen_s": 1.86,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "pattern": "def test_ichunked"
+            }
+          ],
+          "next_turn": 7,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 44
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 7,
+          "completion_tokens": 44,
+          "gen_s": 1.69,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "pattern": "ichunked"
+            }
+          ],
+          "next_turn": 8,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 67
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 8,
+          "completion_tokens": 67,
+          "gen_s": 1.77,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 4520,
+              "end": 4590
+            }
+          ],
+          "next_turn": 9,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 47
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 9,
+          "completion_tokens": 47,
+          "gen_s": 1.7,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 4590,
+              "end": 4600
+            }
+          ],
+          "next_turn": 10,
+          "next_turn_outcome": "repeat_code",
+          "next_turn_tokens": 67
+        },
+        {
+          "task_id": "item6v3_pr1305",
+          "turn": 10,
+          "completion_tokens": 67,
+          "gen_s": 2.34,
+          "turn_outcome": "repeat_code",
+          "tools": [],
+          "tool_args": [],
+          "next_turn": null,
+          "next_turn_outcome": "task_end_repeat_code",
+          "next_turn_tokens": null
+        },
+        {
+          "task_id": "item6v3_pr1322",
+          "turn": 1,
+          "completion_tokens": 61,
+          "gen_s": 2.04,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "class peekable"
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "parse_error",
+          "next_turn_tokens": 75
+        },
+        {
+          "task_id": "item6v3_pr1322",
+          "turn": 2,
+          "completion_tokens": 75,
+          "gen_s": 1.51,
+          "turn_outcome": "parse_error",
+          "tools": [],
+          "tool_args": [],
+          "next_turn": 3,
+          "next_turn_outcome": "parse_error",
+          "next_turn_tokens": 43
+        },
+        {
+          "task_id": "item6v3_pr1322",
+          "turn": 3,
+          "completion_tokens": 43,
+          "gen_s": 1.21,
+          "turn_outcome": "parse_error",
+          "tools": [],
+          "tool_args": [],
+          "next_turn": 4,
+          "next_turn_outcome": "repeat_code",
+          "next_turn_tokens": 43
+        },
+        {
+          "task_id": "item6v3_pr1322",
+          "turn": 4,
+          "completion_tokens": 43,
+          "gen_s": 0.89,
+          "turn_outcome": "repeat_code",
+          "tools": [],
+          "tool_args": [],
+          "next_turn": null,
+          "next_turn_outcome": "task_end_repeat_code",
+          "next_turn_tokens": null
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 1,
+          "completion_tokens": 66,
+          "gen_s": 1.39,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 4627,
+              "end": 4670
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 60
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 2,
+          "completion_tokens": 60,
+          "gen_s": 1.75,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "def chunked\\("
+            }
+          ],
+          "next_turn": 3,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 66
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 3,
+          "completion_tokens": 66,
+          "gen_s": 1.37,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 215,
+              "end": 260
+            }
+          ],
+          "next_turn": 4,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 577
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 9,
+          "completion_tokens": 77,
+          "gen_s": 1.6,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 1469,
+              "end": 1520
+            }
+          ],
+          "next_turn": 10,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 84
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 10,
+          "completion_tokens": 84,
+          "gen_s": 2.27,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "pattern": "class.*Chunked"
+            }
+          ],
+          "next_turn": 11,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 67
+        },
+        {
+          "task_id": "item6v3_pr1342",
+          "turn": 11,
+          "completion_tokens": 67,
+          "gen_s": 1.46,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 5582,
+              "end": 5660
+            }
+          ],
+          "next_turn": null,
+          "next_turn_outcome": "task_end_pass",
+          "next_turn_tokens": null
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 1,
+          "completion_tokens": 81,
+          "gen_s": 2.16,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 2276,
+              "end": 2450
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 49
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 2,
+          "completion_tokens": 49,
+          "gen_s": 2.45,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 2450,
+              "end": 2520
+            }
+          ],
+          "next_turn": 3,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 62
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 3,
+          "completion_tokens": 62,
+          "gen_s": 3.9,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "def __eq__"
+            }
+          ],
+          "next_turn": 4,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 71
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 4,
+          "completion_tokens": 71,
+          "gen_s": 2.58,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 2360,
+              "end": 2410
+            }
+          ],
+          "next_turn": 5,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 123
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 9,
+          "completion_tokens": 64,
+          "gen_s": 1.68,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 2369,
+              "end": 2430
+            }
+          ],
+          "next_turn": 10,
+          "next_turn_outcome": "edit_tool_call",
+          "next_turn_tokens": 157
+        },
+        {
+          "task_id": "item6v3_pr1345",
+          "turn": 11,
+          "completion_tokens": 68,
+          "gen_s": 2.3,
+          "turn_outcome": "edit_tool_call",
+          "tools": [
+            "search_replace"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "old_chars": 28,
+              "new_chars": 28
+            }
+          ],
+          "next_turn": null,
+          "next_turn_outcome": "task_end_pass",
+          "next_turn_tokens": null
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 1,
+          "completion_tokens": 74,
+          "gen_s": 1.56,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 4274,
+              "end": 4295
+            }
+          ],
+          "next_turn": 2,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 68
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 2,
+          "completion_tokens": 68,
+          "gen_s": 1.57,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "start": 4295,
+              "end": 4320
+            }
+          ],
+          "next_turn": 3,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 65
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 3,
+          "completion_tokens": 65,
+          "gen_s": 1.57,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "grep"
+          ],
+          "tool_args": [
+            {
+              "path": "more_itertools/more.py",
+              "pattern": "key is not None"
+            }
+          ],
+          "next_turn": 4,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 148
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 5,
+          "completion_tokens": 73,
+          "gen_s": 1.94,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 902,
+              "end": 930
+            }
+          ],
+          "next_turn": 6,
+          "next_turn_outcome": "read_only_tool_call",
+          "next_turn_tokens": 93
+        },
+        {
+          "task_id": "item6v3_pr1311",
+          "turn": 6,
+          "completion_tokens": 93,
+          "gen_s": 2.45,
+          "turn_outcome": "read_only_tool_call",
+          "tools": [
+            "read_file"
+          ],
+          "tool_args": [
+            {
+              "path": "tests/test_more.py",
+              "start": 5190,
+              "end": 5220
+            }
+          ],
+          "next_turn": 7,
+          "next_turn_outcome": "repeat_code",
+          "next_turn_tokens": 497
+        }
+      ]
+    }
+  },
+  "tool_usage_and_reachability": {
+    "known_tools": [
+      "list_files",
+      "grep",
+      "read_file",
+      "search_replace",
+      "create_file",
+      "run_tests",
+      "finish"
+    ],
+    "overall": {
+      "total_tool_calls": 71,
+      "by_tool": {
+        "list_files": {
+          "total": 0,
+          "ok": 0,
+          "error": 0
+        },
+        "grep": {
+          "total": 28,
+          "ok": 28,
+          "error": 0
+        },
+        "read_file": {
+          "total": 36,
+          "ok": 36,
+          "error": 0
+        },
+        "search_replace": {
+          "total": 7,
+          "ok": 5,
+          "error": 2
+        },
+        "create_file": {
+          "total": 0,
+          "ok": 0,
+          "error": 0
+        },
+        "run_tests": {
+          "total": 0,
+          "ok": 0,
+          "error": 0
+        },
+        "finish": {
+          "total": 0,
+          "ok": 0,
+          "error": 0
+        }
+      },
+      "by_category": {
+        "read_only": 64,
+        "edit": 7,
+        "verify_finish": 0
+      },
+      "read_only_share_pct": 90.14,
+      "edit_share_pct": 9.86,
+      "run_tests_never_used": true,
+      "finish_never_used": true
+    },
+    "per_task": {
+      "item6v3_pr1260": {
+        "total_tool_calls": 12,
+        "read_only_count": 12,
+        "edit_count": 0,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": null,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 4,
+            "ok": 4,
+            "error": 0
+          },
+          "read_file": {
+            "total": 8,
+            "ok": 8,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1269": {
+        "total_tool_calls": 14,
+        "read_only_count": 12,
+        "edit_count": 2,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": 9,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 5,
+            "ok": 5,
+            "error": 0
+          },
+          "read_file": {
+            "total": 7,
+            "ok": 7,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 2,
+            "ok": 2,
+            "error": 0
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1305": {
+        "total_tool_calls": 9,
+        "read_only_count": 9,
+        "edit_count": 0,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": null,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 4,
+            "ok": 4,
+            "error": 0
+          },
+          "read_file": {
+            "total": 5,
+            "ok": 5,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1322": {
+        "total_tool_calls": 2,
+        "read_only_count": 2,
+        "edit_count": 0,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": null,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 1,
+            "ok": 1,
+            "error": 0
+          },
+          "read_file": {
+            "total": 1,
+            "ok": 1,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1342": {
+        "total_tool_calls": 13,
+        "read_only_count": 11,
+        "edit_count": 2,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": 6,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 5,
+            "ok": 5,
+            "error": 0
+          },
+          "read_file": {
+            "total": 6,
+            "ok": 6,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 2,
+            "ok": 1,
+            "error": 1
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1345": {
+        "total_tool_calls": 12,
+        "read_only_count": 9,
+        "edit_count": 3,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": 10,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 4,
+            "ok": 4,
+            "error": 0
+          },
+          "read_file": {
+            "total": 5,
+            "ok": 5,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 3,
+            "ok": 2,
+            "error": 1
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      },
+      "item6v3_pr1311": {
+        "total_tool_calls": 9,
+        "read_only_count": 9,
+        "edit_count": 0,
+        "verify_finish_count": 0,
+        "first_successful_edit_turn": null,
+        "by_tool": {
+          "list_files": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "grep": {
+            "total": 5,
+            "ok": 5,
+            "error": 0
+          },
+          "read_file": {
+            "total": 4,
+            "ok": 4,
+            "error": 0
+          },
+          "search_replace": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "create_file": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "run_tests": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          },
+          "finish": {
+            "total": 0,
+            "ok": 0,
+            "error": 0
+          }
+        }
+      }
+    },
+    "reachability_inspection": {
+      "pilot_source_file": "bench/loop/pilot_pr.py",
+      "uses_openai_tools_param": false,
+      "tool_declaration_mechanism": "free-text system/user prompt in format_tool_messages; parsed from fenced ```json/```tool blocks in extract_tool_calls",
+      "run_tests_in_system_prompt": true,
+      "run_tests_in_user_prompt": true,
+      "run_tests_in_dispatch": true,
+      "finish_in_system_prompt": true,
+      "finish_in_user_prompt": true,
+      "finish_in_final_turn_note": true,
+      "finish_in_dispatch": true,
+      "rules_section_mentions_run_tests": false,
+      "rules_section_mentions_finish": false,
+      "code_citations": {
+        "REASONING_BUDGET": 34,
+        "READ_FILE_MAX_LINES": 44,
+        "TOOL_RESULT_MAX_LINES": 54,
+        "COMPACT_KEEP_RECENT_TURNS": 64,
+        "extract_tool_calls": [
+          1232,
+          1274
+        ],
+        "format_tool_messages": [
+          1301,
+          1352
+        ],
+        "run_tests_system_prompt_line": 1309,
+        "finish_system_prompt_line": 1327,
+        "run_tests_user_prompt_line": 1337,
+        "finish_user_prompt_line": 1345,
+        "rules_section": [
+          1328,
+          1334
+        ],
+        "stale_tool_re_inspect_hint_line": 1771,
+        "compact_conversation_messages": [
+          1807,
+          1986
+        ],
+        "stage1_stale_tool_summary_line": 1867,
+        "final_turn_note_line": 2021,
+        "final_turn_attach_line": 2107,
+        "repeat_code_check_line": 2262,
+        "turn_parse_error_event_line": 2295,
+        "finish_dispatch_line": 2365,
+        "run_tests_dispatch_line": 2370,
+        "dirty_since_last_test_init_line": 2015,
+        "dirty_since_last_test_set_line": 2406,
+        "dirty_since_last_test_end_check_line": 2564,
+        "server_ask": [
+          3000,
+          3040
+        ],
+        "server_ask_reasoning_chars_line": 3033,
+        "regrade_task_diff_line": 3441
+      }
+    }
+  },
+  "dirty_since_last_test_and_pr1342_false_pass": {
+    "code_citations": {
+      "dirty_since_last_test_init_line": 2015,
+      "dirty_since_last_test_set_line": 2406,
+      "dirty_since_last_test_end_check_line": 2564,
+      "regrade_task_diff_line": 3441
+    },
+    "tasks_triggering_end_of_loop_check": [
+      "item6v3_pr1269",
+      "item6v3_pr1342",
+      "item6v3_pr1345"
+    ],
+    "false_pass_tasks": [
+      "item6v3_pr1342"
+    ],
+    "per_task": {
+      "item6v3_pr1260": {
+        "had_successful_edit": false,
+        "first_successful_edit_turn": null,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 12,
+        "triggered_end_of_loop_dirty_check": false,
+        "jsonl_stop_reason": "max_turns",
+        "in_loop_passed": false,
+        "offline_test_passed": false,
+        "false_pass": false,
+        "tier2_verdict": "NON-APPROVAL",
+        "hand_fix_lines": null,
+        "diff_lines": 0,
+        "diff_files_touched": []
+      },
+      "item6v3_pr1269": {
+        "had_successful_edit": true,
+        "first_successful_edit_turn": 9,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 12,
+        "triggered_end_of_loop_dirty_check": true,
+        "jsonl_stop_reason": "max_turns",
+        "in_loop_passed": false,
+        "offline_test_passed": false,
+        "false_pass": false,
+        "tier2_verdict": "REQUEST-CHANGES",
+        "hand_fix_lines": 18,
+        "diff_lines": 36,
+        "diff_files_touched": [
+          "more_itertools/more.py"
+        ]
+      },
+      "item6v3_pr1305": {
+        "had_successful_edit": false,
+        "first_successful_edit_turn": null,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 11,
+        "triggered_end_of_loop_dirty_check": false,
+        "jsonl_stop_reason": "repeat_code",
+        "in_loop_passed": false,
+        "offline_test_passed": false,
+        "false_pass": false,
+        "tier2_verdict": "NON-APPROVAL",
+        "hand_fix_lines": null,
+        "diff_lines": 0,
+        "diff_files_touched": []
+      },
+      "item6v3_pr1322": {
+        "had_successful_edit": false,
+        "first_successful_edit_turn": null,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 5,
+        "triggered_end_of_loop_dirty_check": false,
+        "jsonl_stop_reason": "repeat_code",
+        "in_loop_passed": false,
+        "offline_test_passed": false,
+        "false_pass": false,
+        "tier2_verdict": "NON-APPROVAL",
+        "hand_fix_lines": null,
+        "diff_lines": 0,
+        "diff_files_touched": []
+      },
+      "item6v3_pr1342": {
+        "had_successful_edit": true,
+        "first_successful_edit_turn": 6,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 12,
+        "triggered_end_of_loop_dirty_check": true,
+        "jsonl_stop_reason": "pass",
+        "in_loop_passed": true,
+        "offline_test_passed": false,
+        "false_pass": true,
+        "tier2_verdict": "REQUEST-CHANGES",
+        "hand_fix_lines": 12,
+        "diff_lines": 14,
+        "diff_files_touched": [
+          "more_itertools/more.py"
+        ]
+      },
+      "item6v3_pr1345": {
+        "had_successful_edit": true,
+        "first_successful_edit_turn": 10,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 12,
+        "triggered_end_of_loop_dirty_check": true,
+        "jsonl_stop_reason": "pass",
+        "in_loop_passed": true,
+        "offline_test_passed": true,
+        "false_pass": false,
+        "tier2_verdict": "APPROVE-WITH-NITS",
+        "hand_fix_lines": 0,
+        "diff_lines": 24,
+        "diff_files_touched": [
+          "more_itertools/more.py"
+        ]
+      },
+      "item6v3_pr1311": {
+        "had_successful_edit": false,
+        "first_successful_edit_turn": null,
+        "called_run_tests": false,
+        "called_finish": false,
+        "turns_executed": 8,
+        "triggered_end_of_loop_dirty_check": false,
+        "jsonl_stop_reason": "repeat_code",
+        "in_loop_passed": false,
+        "offline_test_passed": false,
+        "false_pass": false,
+        "tier2_verdict": "NON-APPROVAL",
+        "hand_fix_lines": null,
+        "diff_lines": 0,
+        "diff_files_touched": []
+      }
+    },
+    "pr1342_detail": {
+      "task_id": "item6v3_pr1342",
+      "failed_edit_turns": [
+        5
+      ],
+      "successful_edit_turns": [
+        6
+      ],
+      "post_edit_turns": [
+        {
+          "turn": 7,
+          "tools": [
+            "read_file"
+          ],
+          "completion_tokens": 103
+        },
+        {
+          "turn": 8,
+          "tools": [
+            "grep"
+          ],
+          "completion_tokens": 105
+        },
+        {
+          "turn": 9,
+          "tools": [
+            "read_file"
+          ],
+          "completion_tokens": 77
+        },
+        {
+          "turn": 10,
+          "tools": [
+            "grep"
+          ],
+          "completion_tokens": 84
+        },
+        {
+          "turn": 11,
+          "tools": [
+            "read_file"
+          ],
+          "completion_tokens": 67
+        }
+      ],
+      "diff_file": "bench/loop/results/item6-pilot-v3.diffs/item6v3_pr1342.diff",
+      "diff_lines": 14,
+      "diff_files_touched": [
+        "more_itertools/more.py"
+      ],
+      "touched_test_file": false,
+      "jsonl_stop_reason": "pass",
+      "in_loop_passed": true,
+      "offline_test_passed": false,
+      "tier2_verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 12,
+      "mechanism": "Turn 6 search_replace dirtied the scratch worktree (dirty_since_last_test=True) with only the n<0 check; turns 7-11 ran read_file/grep only without calling run_tests or finish. At max_turns=12, bench/loop/pilot_pr.py end-of-loop check ran run_tests once against base_commit tests/test_more.py (which lacks n==0 / n<0 regression tests for chunked_even), exited 0, and rewrote stop_reason from 'max_turns' to 'pass'. Offline regrade_task_diff mounted merged_commit tests/test_more.py read-only and failed (test_passed=false).",
+      "section_16_reference": "docs/item6-pilot.md Section 16 ('Why item6v3_pr1342 Passed In-Loop (in_loop_passed = true) but Failed Offline (test_passed = false)')"
+    }
+  }
+}
