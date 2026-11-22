@@ -584,3 +584,131 @@ This mismatch is directly established from `bench/loop/results/item6-pilot-v3.js
 4. **No Overclaiming Beyond the Bars**: Under Section 15.5's absolute bars, `1/7` (`14.3%`) authoritative offline test passes and `1/7` (`14.3%`) blind Grok approvals independently trigger **DROP**. This settles the pre-registered scale/no-scale question for this single-model `Qwen3.6-35B-A3B` structured-tool loop on unseen external PRs; it is a small ($n = 7$) test on one external repository (with 4/7 prompts from PR bodies and `#1260` flagged above) and makes no broader claim beyond those bars.
 5. **Possible Harness Confounds (Not Yet Measured)**: Separate from model capability, four possible harness-level confounds observed in v3 have not been isolated or measured yet: (a) `repeat_code` triggered by repeated read-only calls after Stage 1 compaction (`stale_tool_summary`), (b) JSON parse errors in tool-call blocks, (c) very short generations, and (d) in-loop test feedback (`run_tests`/`finish`) never being invoked across all 7 tasks. Their individual impact on the v3 outcome has not been measured.
 
+## 17. Item 6 Pilot v3 CPU-Only `turn_events` Analysis (2026-11-22 CT)
+
+**Scope: descriptive, post-hoc, n=7, one repo.** This section measures the harness-level confounds flagged at the end of Section 16 strictly from the committed v3 artifacts (`bench/loop/results/item6-pilot-v3.{jsonl,grade.json,diffs/,run1/turn_events.jsonl,run1/run.log}`) and `bench/loop/pilot_pr.py`. **No GPU session, model call, re-run, or re-grade occurred; the official v3 DROP decision (`1/7` authoritative offline test passes, `1/7` blind Grok approvals) and all 13 frozen files in `bench/loop/results/item6-pilot-v3.SHA256SUMS` stay byte-identical.**
+
+Reproducible machine-readable summary committed to `bench/loop/results/item6-pilot-v3.analysis.json` via:
+
+```bash
+python3 bench/loop/analyze_v3_turns.py --output bench/loop/results/item6-pilot-v3.analysis.json
+```
+
+### 17.1 `repeat_code` Stops, Unconditional Stage 1 Compaction, and Post-Compaction File Re-Reads
+
+- **Tasks Stopping on `repeat_code` (`3 / 7`)**: `item6v3_pr1305` (turn 10), `item6v3_pr1322` (turn 4), and `item6v3_pr1311` (turn 7). Zero other tasks stopped on `repeat_code`.
+- **Exact Duplicated Reply Not Recorded**: Neither the raw assistant text (`content`), nor the SHA-256 `code_hash`, nor the matched earlier turn index is persisted in `item6-pilot-v3.jsonl`, `turn_events.jsonl`, or `run.log`. In `bench/loop/pilot_pr.py:2256-2276`, `_run_task_loop_turns` hashes `content + json.dumps(raw_tool_calls)` in memory and `break`s before `_append_turn_log` (so `turn_events.jsonl` has no `turn_tools` / `turn_parse_error` row on the `repeat_code` turn).
+- **Compaction-Log Cross-Check (`38` vs. `36` in `history`)**: Across all 7 tasks, `turn_events.jsonl` records **38** compaction events (`34` `history_compact` with `stages=["stale_tool_summary"]`, `4` `tool_truncate` on `read_file`; `0` Stage 2 events), matching `run.log` (`38` `COMPACTION` lines) and top-level `compaction_events_total` sum (`38`, `65,809` chars saved). Per-turn `history[t]["compaction"]` sums to **36** because the `repeat_code` early-break dict (`bench/loop/pilot_pr.py:2263-2273`) omits `"compaction"` on `item6v3_pr1305` turn 10 (`480` chars saved) and `item6v3_pr1311` turn 7 (`739` chars saved).
+- **Per-Task `repeat_code` Breakdown** *(all 3 tasks had `0` edit calls — 100% read-only tools plus parse errors, `diff_empty = true`)*:
+
+| Task ID | Stop Turn | Stop Turn Tokens / Wall | Preceding Tool Calls (Read-Only / Edit / Parse Errors) | Same-Turn Stage 1 `stale_tool_summary` Immediately Before Stop? | Best Available Duplicated-Reply Proxy *(exact text not recorded)* |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1305` | 10 *(11 turns)* | `67` tok / `2.34 s` | `9` read-only (`5 read_file`, `4 grep`), `0` edits, `3` parse errors (t=0, 2, 3) | **Yes** — turn 10 (`turn_events.jsonl:55`, `run.log:57`; `9,413 -> 8,933` chars, `3,642 -> 3,463` tok; omitted from `history[10]`) | Turn 8 is the sole earlier exact token match (`67` tok: `read_file(tests/test_more.py, 4520..4590)`); nearest others: t=4 (`64`), t=6 (`69`). |
+| `item6v3_pr1322` | 4 *(5 turns)* | `43` tok / `0.89 s` | `2` read-only (`1 read_file`, `1 grep`), `0` edits, `2` parse errors (t=2, 3) | **No on turn 4** — sole Stage 1 compaction ran **1 turn earlier on turn 3** (`turn_events.jsonl:59`, `run.log:65`; `6,665 -> 4,287` chars, `2,437 -> 1,406` tok); turn 1's 43-char `grep` was too short to shrink on turn 4 (`pilot_pr.py:1773`) | Turn 3 is the sole earlier exact token match (`43` tok: `turn_parse_error` `"No valid tool calls found..."`), pointing to a repeated non-tool/empty visible reply immediately after turn 3's compaction. |
+| `item6v3_pr1311` | 7 *(8 turns)* | `497` tok / `9.48 s` | `9` read-only (`4 read_file`, `5 grep`), `0` edits, `0` parse errors | **Yes** — turn 7 (`turn_events.jsonl:107`, `run.log:102`; `8,095 -> 7,356` chars, `3,129 -> 2,872` tok; omitted from `history[7]`) | **No earlier token match** (max earlier turn was t=0 at `210` tok; t=1..6 were `65–148` tok). Because `code_hash` hashes visible `content` (+ `tool_calls`) only, the count exceeds the visible reply; consistent with but not proof of unrecorded reasoning tokens. |
+
+- **Unconditional Stage 1 Compaction vs. Available Context**: In `bench/loop/pilot_pr.py:1867-1884` (`COMPACT_KEEP_RECENT_TURNS = 2`, line 64), Stage 1 `stale_tool_summary` runs unconditionally whenever more than 2 user tool-result turns exist, even when prompts are tiny. Across all 7 tasks, peak prompt utilization was `5,905` tokens pre-compaction (`4,946` preflight, `4,763` server `usage.prompt_tokens`) — at most **10.3%** of the `57,344`-token prompt cap (`43,008` Stage 2 target never reached). Every compacted turn was replaced with `[Use read_file/grep to re-inspect if needed.]` (`bench/loop/pilot_pr.py:1771`), while `seen_code_hashes` (`bench/loop/pilot_pr.py:2258-2276`) hard-terminates the task if the model re-emits an identical read-only reply.
+- **File Re-Reads After Compaction (`21 / 36` `read_file` Calls = `58.3%`)**: Counting `read_file` calls targeting a path already read earlier in the same task after at least one `history_compact` (`stale_tool_summary`) event:
+  - **Overall**: **21** same-path re-reads across **6 of 7** tasks (`pr1260`: 6, `pr1269`: 5, `pr1305`: 3, `pr1322`: 0, `pr1342`: 3, `pr1345`: 3, `pr1311`: 1).
+  - **Overlapping line range**: **17 / 21** overlapped a previously read line range (`pr1260`: 6, `pr1269`: 5, `pr1305`: 1, `pr1342`: 2, `pr1345`: 3).
+  - **Exact `(path, start, end)` re-reads**: **2 / 21** (`item6v3_pr1269` turn 10 `more_itertools/more.py:3120-3145` duplicating turn 6 after turn 9 compacted turn 6; `item6v3_pr1342` turn 4 `more_itertools/more.py:4627-4670` duplicating turn 1 immediately after turn 4 compacted turn 1).
+  - **Prompt-vs-Truncation Mismatch**: `format_tool_messages` (`bench/loop/pilot_pr.py:1320`) advertises `read_file` as `max 250 lines/call` (`READ_FILE_MAX_LINES = 250`, line 44), while `TOOL_RESULT_MAX_LINES = 120` (line 54) elided lines on all 4 `tool_truncate` events (`pr1260` t=2 `113` elided & t=3 `27` elided; `pr1269` t=2 `12` elided; `pr1345` t=1 `56` elided).
+
+### 17.2 `turn_parse_error` Events (`7` Events Across `4 / 7` Tasks)
+
+- **Recording Sources**: `turn_events.jsonl` logs `prompt_tokens`, `completion_tokens`, `tools=[]`, and `result_chars` without the error text or raw model reply (`bench/loop/pilot_pr.py:2288-2303`); `run.log` does not log `turn_parse_error`. The exact parser error string is preserved in `item6-pilot-v3.jsonl` `history[turn].err` (matching `result_chars` byte-for-byte on all 7 events). **The raw model reply / offending JSON snippet is not recorded anywhere in the committed v3 records.**
+
+| Task ID | Turn | Prompt Tok | Comp. Tok | `result_chars` | Error Class | Recorded Error Message (`item6-pilot-v3.jsonl` `history[turn].err`) | Next-Turn Outcome |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1269` | 7 | 2,862 | 3,410 | 83 | `json_expecting_comma_delimiter` | `Invalid JSON in tool block: Expecting ',' delimiter: line 1 column 1555 (char 1554)` | `read_only_tool_call` |
+| `item6v3_pr1305` | 0 | 843 | 211 | 65 | `json_extra_data` | `Invalid JSON in tool block: Extra data: line 2 column 1 (char 90)` | `read_only_tool_call` |
+| `item6v3_pr1305` | 2 | 2,277 | 107 | 65 | `json_extra_data` | `Invalid JSON in tool block: Extra data: line 2 column 1 (char 94)` | `parse_error` |
+| `item6v3_pr1305` | 3 | 2,397 | 54 | 101 | `no_valid_tool_calls` | `No valid tool calls found. Respond with a \`\`\`json block containing a tool call or list of tool calls.` | `read_only_tool_call` |
+| `item6v3_pr1322` | 2 | 2,194 | 75 | 69 | `json_expecting_value` | `Invalid JSON in tool block: Expecting value: line 1 column 1 (char 0)` | `parse_error` |
+| `item6v3_pr1322` | 3 | 1,246 | 43 | 101 | `no_valid_tool_calls` | `No valid tool calls found. Respond with a \`\`\`json block containing a tool call or list of tool calls.` | `repeat_code` |
+| `item6v3_pr1345` | 7 | 2,111 | 657 | 83 | `json_expecting_comma_delimiter` | `Invalid JSON in tool block: Expecting ',' delimiter: line 1 column 1639 (char 1638)` | `edit_tool_call` |
+
+- **Class Breakdown**:
+  - `json_expecting_comma_delimiter` (`2`): `pr1269` t=7 (`3,410` tok, `char 1554`) and `pr1345` t=7 (`657` tok, `char 1638`) — both single-line JSON failures at `>1,550` chars right before large `search_replace` attempts (`extract_tool_calls`, `bench/loop/pilot_pr.py:1261-1265`).
+  - `json_extra_data` (`2`): `pr1305` t=0 and t=2 (`line 2 column 1`, `char 90`/`94`) — `json.loads` at `bench/loop/pilot_pr.py:1262` rejects multiple newline-separated JSON objects inside one fenced block (NDJSON instead of a JSON array).
+  - `json_expecting_value` (`1`): `pr1322` t=2 (`line 1 column 1`, `char 0`).
+  - `no_valid_tool_calls` (`2`): `pr1305` t=3 and `pr1322` t=3 — fallback at `bench/loop/pilot_pr.py:2281-2287` when `extract_tool_calls` yields neither valid calls nor JSON decode errors.
+  - Five of the 7 parse errors occurred on `pr1305` (`3`) and `pr1322` (`2`), both of which subsequently ended on `repeat_code` with empty diffs.
+
+### 17.3 Completion-Length Distribution, Unrecorded Reasoning Split, and Short Turns (`< 100` Tokens)
+
+- **Visible vs. Reasoning Tokens Not Recorded**: Zero reasoning-related fields appear anywhere in the committed v3 records (`reasoning_related_keys_in_committed_records = []`). Although `server_ask` (`bench/loop/pilot_pr.py:3030-3037`) computes `reasoning_chars = len(msg.get("reasoning_content") or "")` and captures `finish_reason`, `_run_task_loop_turns` discards both and stores only `usage.completion_tokens` (`history[t]["tokens"]` and `turn_events.completion_tokens`). Two observations show the count exceeds the visible reply; consistent with but not proof of unrecorded reasoning tokens:
+  1. `item6v3_pr1311` turn 7 logged `497` completion tokens yet matched an earlier turn's visible `code_hash` when no earlier turn exceeded `210` tokens.
+  2. `item6v3_pr1269` turns 5–6 logged `4,171` and `4,213` completion tokens (just above `REASONING_BUDGET = 4096`, `bench/loop/pilot_pr.py:34`) while emitting 1–2 short `read_file` JSON calls.
+- **Overall Distribution (`n = 72` Executed Turns, `22,472` Total Tokens)**:
+  - `min = 43`, `p10 = 57.3`, `p25 = 65.8`, `median = 79.0`, `mean = 312.11` (`stdev = 784.90`), `p75 = 181.8`, `p90 = 504.2`, `p95 = 927.2`, `max = 4,213`.
+  - Buckets: `<50`: **6**, `50–99`: **35**, `100–199`: **17**, `200–499`: **6**, `500–999`: **4**, `>=1000`: **4**.
+  - Skew: `item6v3_pr1269` alone accounts for `14,104 / 22,472` (**62.8%**) of all completion tokens (turns 5–7 = `4,171`, `4,213`, `3,410`).
+- **Short-Turn Set (`< 100` Completion Tokens: `41 / 72` Turns = `56.9%`)**:
+  - Per-task counts: `pr1260` `9/12`, `pr1269` `3/12`, `pr1305` `8/11`, `pr1322` `4/5`, `pr1342` `6/12`, `pr1345` `6/12`, `pr1311` `5/8`.
+  - **Outcome on the short turn itself**: `35` valid read-only tool calls (`read_file`/`grep`), `3` `parse_error` (`pr1305` t=3 `54`; `pr1322` t=2 `75`, t=3 `43`), `2` `repeat_code` stops (`pr1305` t=10 `67`; `pr1322` t=4 `43`), and `1` successful `search_replace` (`pr1345` t=11 `68` — the final edit of the passing task).
+  - **What followed on the next turn**: `31` read-only tool calls, `3` `repeat_code` stops (all 3 `repeat_code` stops — `pr1305` t=9->10, `pr1322` t=3->4, `pr1311` t=6->7 — were immediately preceded by a `< 100`-token turn), `2` `parse_error` (`pr1322` t=1->2, t=2->3), `2` `task_end_repeat_code`, `2` `task_end_pass` (`pr1342` t=11, `pr1345` t=11), and `1` `edit_tool_call` (`pr1345` t=9->10).
+  - Plain reading: `< 100`-token turns were mostly well-formed single-call navigation turns (`35/41` valid `read_file`/`grep` + `1/41` valid `search_replace`), not corrupted truncations; however, combined with shallow multi-turn slicing they dominated the 12-turn budget on empty-diff tasks (e.g., `pr1260` spent 9/12 turns at `47–77` tokens reading slices without ever editing).
+
+### 17.4 Tool-Usage Counts and `run_tests` / `finish` Reachability
+
+| Task ID | `read_file` (ok/err) | `grep` (ok/err) | `search_replace` (ok/err) | `list_files` | `create_file` | `run_tests` | `finish` | Total Calls | First OK Edit Turn |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1260` | 8 (8/0) | 4 (4/0) | 0 (0/0) | 0 | 0 | 0 | 0 | 12 | `null` |
+| `item6v3_pr1269` | 7 (7/0) | 5 (5/0) | 2 (2/0) | 0 | 0 | 0 | 0 | 14 | 9 |
+| `item6v3_pr1305` | 5 (5/0) | 4 (4/0) | 0 (0/0) | 0 | 0 | 0 | 0 | 9 | `null` |
+| `item6v3_pr1322` | 1 (1/0) | 1 (1/0) | 0 (0/0) | 0 | 0 | 0 | 0 | 2 | `null` |
+| `item6v3_pr1342` | 6 (6/0) | 5 (5/0) | 2 (1/1) | 0 | 0 | 0 | 0 | 13 | 6 |
+| `item6v3_pr1345` | 5 (5/0) | 4 (4/0) | 3 (2/1) | 0 | 0 | 0 | 0 | 12 | 10 |
+| `item6v3_pr1311` | 4 (4/0) | 5 (5/0) | 0 (0/0) | 0 | 0 | 0 | 0 | 9 | `null` |
+| **Overall** | **36 (36/0)** | **28 (28/0)** | **7 (5/2)** | **0** | **0** | **0** | **0** | **71** | — |
+
+- **Confirmed Unused**: `run_tests` = **0 / 71**, `finish` = **0 / 71** (alongside `list_files` = 0 and `create_file` = 0). `64 / 71` (**90.1%**) of all calls were read-only (`read_file` + `grep`) and `7 / 71` (**9.9%**) were `search_replace` (`5` succeeded, `2` failed: `pr1342` t=5 ambiguous 5 matches, `pr1345` t=8 0 matches).
+- **Static Reachability in `bench/loop/pilot_pr.py`**:
+  - **Wired in dispatch**: Both `finish` (`pilot_pr.py:2365-2369, 2432-2486`) and `run_tests` (`pilot_pr.py:2370-2394`) are implemented and reachable whenever `extract_tool_calls` (`pilot_pr.py:1232-1274`) extracts `{"tool": "run_tests", "args": {}}` or `{"tool": "finish", "args": {"summary": "..."}}`.
+  - **No OpenAI `tools` JSON schema**: `server_ask` (`pilot_pr.py:3000-3040`) sends no `"tools"` parameter to `/v1/chat/completions`; tools are declared strictly in free-text prompt prose (`format_tool_messages`, `pilot_pr.py:1301-1352`).
+  - **Prompt presence**: `run_tests` appears in the system tool list (`pilot_pr.py:1309`, included when `has_tests=True`, which holds for all 7 v3 tasks) and in the user prompt line `Verification command (\`run_tests\`): \`...\`` (`pilot_pr.py:1337`). However, neither the system `Rules:` bullets (`pilot_pr.py:1328-1333`) nor the user prompt's workflow sentence (`pilot_pr.py:1344-1345`: *"Start by reading... then apply targeted edits... and call `finish` when done."*) instructs calling `run_tests`. `finish` appears in the system tool list (`pilot_pr.py:1327`), user closing sentence (`pilot_pr.py:1345`), and the turn-11 `final_turn_note` (`pilot_pr.py:2021, 2107-2112`), which was attached on all 4 tasks reaching turn 11 (`pr1260`, `pr1269`, `pr1342`, `pr1345`) without eliciting a `finish` call.
+  - **Observed edit timing**: Across the 3 tasks that edited, first successful edits occurred late (`pr1342` turn 6, `pr1269` turn 9, `pr1345` turn 10); `pr1269` and `pr1345` were still applying `search_replace` on turn 11, while `pr1342` spent turns 7–11 reading/grepping `tests/test_more.py`.
+
+### 17.5 End-of-Loop `dirty_since_last_test` Check and the `item6v3_pr1342` False Pass
+
+- **Code Path**: `dirty_since_last_test` is initialized `False` (`bench/loop/pilot_pr.py:2015`), set `True` on any successful `search_replace`/`create_file` (`pilot_pr.py:2406`), and cleared only by in-loop `run_tests` (`pilot_pr.py:2385`) or `finish` (`pilot_pr.py:2467`). When the loop exits with `stop_reason in ("max_turns", "budget")`, `has_tests=True`, and `dirty_since_last_test=True`, `pilot_pr.py:2564-2570` runs `run_tests(clean_task, worktree_dir)` once against the scratch worktree's `base_commit` test suite; if that exits `0`, it overwrites `stop_reason` to `"pass"` and sets `history[-1]["passed"] = True`.
+- **Triggered Tasks (`3 / 7`)**: All 3 editing tasks (`pr1269`, `pr1342`, `pr1345`) reached turn 12 with `dirty_since_last_test = True` and `0` calls to `run_tests`/`finish`:
+  - `item6v3_pr1269`: end-of-loop `base_commit` tests **failed** -> `stop_reason = "max_turns"`, `in_loop_passed = false`, offline `test_passed = false` (consistent with Grok's Tier 2 finding of a `maxlen=None` regression).
+  - `item6v3_pr1342` (**false pass**, matching Section 16): turn 6 `search_replace` added only the `n < 0` guard in `more_itertools/more.py` (`item6v3_pr1342.diff`: 14 lines, `tests/test_more.py` untouched, omitting `n == 0`). After turns 7–11 read/grepped without calling `run_tests`/`finish`, `pilot_pr.py:2564-2570` ran `base_commit` (`20c4ee5c`) `tests/test_more.py` (which lacks `n == 0` / `n < 0` tests for `chunked_even`), exited `0`, and rewrote `stop_reason` from `"max_turns"` to `"pass"` (`in_loop_passed = true`). Offline `regrade_task_diff` (`pilot_pr.py:3441`) mounted `merged_commit`'s authoritative `tests/test_more.py` read-only in `/usr/bin/bwrap` and failed (`test_passed = false` in `item6-pilot-v3.grade.json`; Grok Tier 2 `REQUEST-CHANGES`, `12` hand-fix lines).
+  - `item6v3_pr1345`: end-of-loop `base_commit` tests **passed** (`stop_reason = "pass"`, `in_loop_passed = true`) and offline authoritative `merged_commit` tests also **passed** (`test_passed = true`, Grok `APPROVE-WITH-NITS`, `0` hand-fix lines).
+- **Reporting Artifact**: Rewriting `stop_reason` from `"max_turns"` to `"pass"` at `pilot_pr.py:2568` makes `pr1342` and `pr1345` indistinguishable in JSONL from explicit `finish` passes. As stated in Section 16, only offline `regrade_task_diff` counts for scoring, and the official v3 grade (`1/7` tests, `1/7` approvals, **DROP**) is unchanged.
+
+### 17.6 Required v4 Telemetry and Ranked Harness Fixes *(Descriptive, Post-Hoc, n=7, One Repo)*
+
+No harness edits are applied in this analysis PR. Diagnostic telemetry is required in v4 regardless of which behavioral changes are adopted; the remaining harness fixes are ranked by observed frequency and directness of link to failed v3 tasks, with all impact labels stated as untested hypotheses:
+
+#### Required in v4 (Regardless of Other Changes)
+
+- **Required — Persist missing diagnostic telemetry (`reasoning_chars`, `content_chars`, `finish_reason`, `repeat_code` matched turn/hash, truncated parse-error snippet, and `repeat_code` turn compactions)**
+  - *Evidence*: `reasoning_chars` is computed at `pilot_pr.py:3033` and then discarded; `repeat_code` (`pilot_pr.py:2256-2276`) drops `code_hash`, matched turn index, `turn_events` logging, and `turn_compactions`; `turn_parse_error` (`pilot_pr.py:2288-2303`) drops `err_msg` and any truncated raw snippet.
+  - *Hypothesised impact (untested)*: **Diagnostic only** (`0` direct task-pass delta, required in v4 regardless of other changes to remove measurement blind spots so future runs report visible vs. reasoning tokens and exact repeat/parse causes directly).
+
+#### Ranked Behavioral Harness Fixes
+
+1. **Rank 1 — Gate Stage 1 `stale_tool_summary` compaction on prompt-token pressure (not unconditional age `keep_recent_turns = 2`) and avoid hard-exiting `repeat_code` on read-only replies *(inferred trigger)***
+   - *Evidence*: All `34` Stage 1 compactions fired at `2,140–5,905` tokens (`3.7%–10.3%` of the `57,344`-token cap), injecting `[Use read_file/grep to re-inspect if needed.]` (`pilot_pr.py:1771`). That was followed by `21 / 36` (`58.3%`) same-path post-compaction re-reads (`17` overlapping, `2` exact range duplicates), same-turn compaction directly before `2 / 3` `repeat_code` stops (`pr1305` t=10, `pr1311` t=7; plus 1-turn-prior compaction on `pr1322` t=3), and `3 / 7` empty-diff `repeat_code` stops (`0` edits across all 3). Because neither the raw duplicated reply text, nor `code_hash`, nor the matched earlier turn index is persisted (Section 17.1), that `repeat_code` fired on repeated read-only replies is **inferred** from the preceding zero-edit, read-only tool histories (and on `pr1322`, the sole token-count proxy is turn 3's `turn_parse_error` non-tool reply rather than a read-only tool call).
+   - *Hypothesised impact (untested)*: **High** (touches `6/7` tasks with post-compaction re-reads and, under the inferred read-only `repeat_code` trigger, up to `3/7` empty-diff `repeat_code` terminations). Keeping full tool outputs while below a token threshold (e.g., `>= 50%` of `max_prompt_tokens`) preserves read context across the 12-turn loop and may reduce re-read turns, while restricting `repeat_code` (e.g., warning instead of hard stop on read-only calls, or requiring consecutive identical replies) would prevent read-only re-inspection from killing a task.
+
+2. **Rank 2 — Harden `extract_tool_calls` JSON parsing (multi-object NDJSON / fenced-block recovery) and/or pass native OpenAI `tools` schema**
+   - *Evidence*: `7` `turn_parse_error` turns wasted across `4 / 7` tasks (`pr1305`: 3, `pr1322`: 2, `pr1269`: 1 at `3,410` tok, `pr1345`: 1 at `657` tok). Two were `Extra data: line 2 column 1` (`pr1305` t=0, t=2: `json.loads` at `pilot_pr.py:1262` rejects newline-separated JSON objects in one block, fixable via `json.JSONDecoder().raw_decode`), two were `Expecting ',' delimiter` at char `1554`/`1638` on large single-line `search_replace` payloads (`pr1269` t=7, `pr1345` t=7), one was `Expecting value` (`pr1322` t=2), and two had no ```` ```json ```` block (`pr1305` t=3, `pr1322` t=3). `server_ask` (`pilot_pr.py:3010-3018`) currently sends no OpenAI `"tools"` schema.
+   - *Hypothesised impact (untested)*: **Medium–High** (could recover up to `7` wasted turns across `4/7` tasks, including `pr1269`'s 3,410-token failed edit turn and `5` error turns on `repeat_code` tasks `pr1305` and `pr1322`).
+
+3. **Rank 3 — Prompt/auto-trigger `run_tests` after edits and keep end-of-loop `dirty_since_last_test` status distinct from `stop_reason = "pass"`**
+   - *Evidence*: `run_tests` = `0/71` and `finish` = `0/71` across all 7 tasks (`pilot_pr.py:1328-1333` `Rules:` and `1344-1345` omit `run_tests`). All 3 editing tasks (`pr1269`, `pr1342`, `pr1345`) exhausted 12 turns without seeing any in-loop test output, and `pr1269`'s diff failed even `base_commit` tests at loop end. Separately, `pilot_pr.py:2564-2570` overwrote `stop_reason = "max_turns"` to `"pass"` on `pr1342` (false pass against `base_commit` tests) and `pr1345`.
+   - *Hypothesised impact (untested)*: **Medium** (could deliver actual test-failure tracebacks mid-loop — directly relevant to base-suite regressions like `pr1269` — and eliminate misleading `"stop_reason": "pass"` records by recording e.g. `stop_reason = "max_turns"` with a separate `end_of_loop_test_passed` boolean; note this cannot catch missing tests absent from `base_commit`, as on `pr1342`, unless the model also writes tests).
+
+4. **Rank 4 — Align `TOOL_RESULT_MAX_LINES` (`120`) with `READ_FILE_MAX_LINES` (`250`) when prompt utilization is low**
+   - *Evidence*: `format_tool_messages` (`pilot_pr.py:1320`) advertises `read_file` up to `250` lines/call (`READ_FILE_MAX_LINES = 250`, line 44), but `TOOL_RESULT_MAX_LINES = 120` (line 54) immediately elided lines on all `4` `tool_truncate` events (`pr1260` t=2 `113` elided & t=3 `27` elided; `pr1269` t=2 `12` elided; `pr1345` t=1 `56` elided) at `< 4,000` prompt tokens (`< 7%` of `57,344`).
+   - *Hypothesised impact (untested)*: **Medium–Low** (removes a direct prompt-vs-harness contradiction and could reduce multi-turn follow-up slicing on tasks like `pr1260` and `pr1345`).
+
+### 17.7 Open Question *(Not a Harness Fix)*
+
+- **Median `79.0`-Token Completion vs. `REASONING_BUDGET = 4,096`**: Across all `72` executed v3 turns, median `usage.completion_tokens` was `79.0` (`p75 = 181.8`; `41 / 72 = 56.9%` of turns `< 100` tokens; Section 17.3) against a configured `REASONING_BUDGET = 4,096` (`bench/loop/pilot_pr.py:34`) — under `2%` of the reasoning budget on the median turn — while `item6v3_pr1269` turns 5–6 reached `4,171` and `4,213` tokens. Why `Qwen3.6-35B-A3B` generated under `100` total completion tokens on most turns despite a `4,096`-token reasoning budget, and how those tokens split between reasoning and visible output, cannot be determined from the committed v3 records (where `reasoning_chars` and `reasoning_content` were not persisted); this remains an open question rather than a proposed harness fix.
+
+
