@@ -456,7 +456,33 @@ WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix
 mkdir -p /data/datasets/item6-v3-repos && git clone --bare https://github.com/more-itertools/more-itertools.git /data/datasets/item6-v3-repos/more-itertools.git
 ```
 
-### 15.7 Step 1 Practice Run Result Note (Pending Practice Run)
+### 15.7 Step 1 Practice Run Result Note & Step 2 Authorization (2026-11-21 CT)
 
-- *Status (2026-11-21 CT)*: Not yet run. AJ authorized the Step 1 practice run on Nov 21 2026 11:28 AM CT ("address all nits and then follow claude rec"), so only the PR merge gates it.
-- *Step 1 Gate & Required Record*: The Step 1 gate uses all three practice criteria — (1) no `context_overflow`, (2) no harness errors (`harness_failure` / `task_error`), and (3) compaction events visible (`COMPACTION` lines in `run.log` and `compaction_events_total > 0`). After Step 1 completes, record the practice run head SHA, per-task stop reasons (`item6_pr13`, `item6_pr14`, `item6_pr16`), the largest prompt token count per task alongside the `57,344` limit (`65,536 - 8,192`), compaction event counts (`COMPACTION` lines and `compaction_events_total`), whether all three practice criteria passed, and the final frozen compaction settings before launching Step 2.
+**Practice run complete (PASS on all 3 Step 1 criteria); NOT counting as a pilot result (no KEEP/DROP verdict, no Tier 2 Grok review, and no practice transcripts or artifacts committed to the repo). No GPU session starts in this docs-only commit.**
+
+- **Provenance & Execution Summary** (read from uncommitted `/tmp/lab-seats/item6-v3-practice/{run.status,run.log,turn_events.jsonl,results/item6-v3-practice.jsonl}`):
+  - **Practice Head SHA**: `61239956e03c6133fbe1079f88ae6565c6afb7ce` (`61239956`, PR #28 merge commit, verified reachable from `origin/main` by `scripts/prereg-guard.sh`).
+  - **Window & Serving**: `2026-11-21T16:17:55-06:00` to `2026-11-21T16:39:12-06:00` (`llmctl` session 84, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, build `b11669-620d2225c`, GTT `23.5 GiB`, `ceiling_seconds=1851`, `resume=0`).
+  - **Status & Wall Time**: `done rc=0 wall_s=1277` (~21.3 min, under the `1,851 s` ceiling; `run.status`: `done rc=0 wall_s=1277 end=2026-11-21T16:39:12-06:00`).
+- **Per-Task Practice Outcomes** (`slot_ctx = 65,536`, `RESERVED_OUTPUT_TOKENS = 8,192`, prompt cap = `57,344` tokens; Stage 2 compaction threshold = `43,008` tokens):
+
+| Task ID | PR # | `stop_reason` | Turns | `harness_failure` | `diff_empty` (Lines) | Compaction Events (`tool` / `turn` / `stale`) | Chars Saved | Peak Prompt Tokens (`usage` / `/tokenize` post-compact / pre-compact `stale_tool_summary` vs. `57,344`) | Task Wall (s) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6_pr13` | #13 | `repeat_error` | 10 | `false` | `true` (`0`) | `22` (`12` / `3` / `7`) | `134,516` | `13,341` / `13,643` / `18,394` (turn 9) | `379.48` |
+| `item6_pr14` | #14 | `repeat_code` | 12 | `false` | `true` (`0`) | `116` (`99` / `8` / `9`) | `2,022,129` | `15,886` / `16,236` / `19,990` (turn 11) | `421.84` |
+| `item6_pr16` | #16 | `max_turns` | 12 | `false` | `false` (`1,090`) | `14` (`9` / `2` / `3`) | `685,364` | `23,304` / `23,654` (turn 11) / `14,143` (turn 3) | `469.32` |
+
+  - All 3 tasks recorded `passed = false`, `harness_failure = false`, and `abort_reason = null` (step walls in `run.log`: `379.7 s`, `422.0 s`, `469.5 s`; completion tokens: `17,440`, `18,568`, `23,893`; `item6_pr16.diff` size: `304,156` bytes; `item6_pr13.diff` and `item6_pr14.diff`: `0` bytes).
+  - On `item6_pr14` turn 11, `stale_tool_summary` compacted `19,990 -> 16,218` tokens (`COMPACTION` line in `run.log` and `turn_events.jsonl`, included in `compaction_events_total = 116`) before the 18-token final-turn note yielded `preflight_prompt_tokens = 16,236` (`usage.prompt_tokens = 15,886`).
+  - Across all 3 tasks, observed peak prompts stayed well below the `57,344`-token limit (`23.8%`–`41.2%` post-compaction; max `19,990` pre-compaction), never reaching the `43,008`-token Stage 2 compaction threshold (`0.75 * 57,344`).
+- **Compaction Totals & Step 1 Pass Criteria (`practice_criteria_passed = true`)**:
+  - **Total Compaction Events**: **`152`** (`22 + 116 + 14`), matching verbatim across `run.log` (`152` `COMPACTION` lines), `turn_events.jsonl` (`152` `"event": "compaction"` records), and `item6-v3-practice.jsonl` (`compaction_events_total = 152`, `compaction_chars_saved = 2,842,009`).
+  - **All 3 Step 1 Criteria Passed**:
+    1. Zero `context_overflow` across all 3 tasks (`context_overflow_tasks: []`).
+    2. Zero `harness_failure` / `task_error` across all 3 tasks (`harness_failure_tasks: []`).
+    3. Compaction events visibly logged (`152` `COMPACTION` lines in `run.log`, `152` compaction events in `turn_events.jsonl`, `compaction_events_total = 152 > 0`).
+- **Frozen Compaction Settings for Step 2 (Unchanged)**:
+  - All compaction settings remain **unchanged** from the merged v3 pre-registration in Section 15.2 (head `61239956`): `TOOL_RESULT_MAX_LINES = 120` (`HEAD=80`, `TAIL=40`), `TOOL_RESULT_MAX_CHARS = 6,000`, `TEST_OUTPUT_MAX_LINES = 80` (`HEAD=30`, `TAIL=50`), `TEST_OUTPUT_MAX_CHARS = 3,500`, `TURN_FEEDBACK_MAX_CHARS = 12,000`, `COMPACT_KEEP_RECENT_TURNS = 2`, `COMPACT_MIN_RECENT_TURNS = 1`, `COMPACT_TARGET_CTX_RATIO = 0.75` (`43,008` tok at `57,344` max), `STALE_ASSISTANT_MAX_CHARS = 1,200`. No code, `bench/loop/results/`, or `SHA256SUMS` files are modified.
+- **Step 2 Authorization (AJ)**:
+  - AJ, Nov 21 2026 5:48 PM CST: 'Yes, launch the counted 7-task more-itertools run.'
+  - This authorizes launching Step 2 (`item6-pilot-v3`, Section 15.6) once this docs-only practice record PR is merged to `main` and verified via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`.
