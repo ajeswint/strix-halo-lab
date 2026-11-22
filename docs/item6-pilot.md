@@ -711,4 +711,125 @@ No harness edits are applied in this analysis PR. Diagnostic telemetry is requir
 
 - **Median `79.0`-Token Completion vs. `REASONING_BUDGET = 4,096`**: Across all `72` executed v3 turns, median `usage.completion_tokens` was `79.0` (`p75 = 181.8`; `41 / 72 = 56.9%` of turns `< 100` tokens; Section 17.3) against a configured `REASONING_BUDGET = 4,096` (`bench/loop/pilot_pr.py:34`) — under `2%` of the reasoning budget on the median turn — while `item6v3_pr1269` turns 5–6 reached `4,171` and `4,213` tokens. Why `Qwen3.6-35B-A3B` generated under `100` total completion tokens on most turns despite a `4,096`-token reasoning budget, and how those tokens split between reasoning and visible output, cannot be determined from the committed v3 records (where `reasoning_chars` and `reasoning_content` were not persisted); this remains an open question rather than a proposed harness fix.
 
+## 18. Amendment, Nov 22 2026: Item 6 Pilot v4 (Telemetry, Four Ranked Harness Fixes, and Unseen `lark-parser/lark` PRs, Pre-Run)
+
+Stated before any v4 practice or counted GPU session (2026-11-22 CT). **No GPU session starts in this commit.** Per AJ's decision following Section 17, v4 adds the required Section 17.6 telemetry and **all four ranked harness fixes**, runs a pre-declared non-counting practice run on the 7 v3 `more-itertools` tasks first, and evaluates the counted run on a newly selected unseen batch of 7 external-repository PRs.
+
+### 18.1 Freeze Status & Unchanged Protocol Elements
+
+- **v1, v2, and v3 Permanently Frozen (`DROP`)**:
+  - **v1** (`item6-pilot`): `0/6` authoritative tests, `0/7` approvals, **DROP** (frozen in PR #23).
+  - **v2** (`item6-pilot-v2`): `0/6` authoritative tests, `0/7` approvals, **DROP** (`bench/loop/results/item6-pilot-v2.final.SHA256SUMS`, 12/12 OK).
+  - **v3** (`item6-pilot-v3`): `1/7` authoritative tests, `1/7` approvals, **DROP** (`bench/loop/results/item6-pilot-v3.SHA256SUMS`, 13/13 OK; post-hoc analysis in `bench/loop/results/item6-pilot-v3.analysis.json` untouched).
+  - All frozen result artifacts and `SHA256SUMS` under `bench/loop/results/` and `/tmp/lab-seats/item6-v3-frozen` stay strictly untouched. Both v4 launchers refuse frozen labels `item6-pilot`, `item6-pilot-v2`, and `item6-pilot-v3`.
+- **v3 Tasks Retired to Development Set**: Because the 7 v3 `more-itertools/more-itertools` tasks (`pr1260`, `pr1269`, `pr1305`, `pr1322`, `pr1342`, `pr1345`, `pr1311`) drove the Section 17 analysis and v4 fixes, they are now a **DEVELOPMENT set** and may **never** be counted for v4 KEEP/DROP.
+- **Unchanged Model, Serving, Budgets, and Absolute Bars (Same as v3)**:
+  - Model: `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (single-model loop; no DeepSeek arm).
+  - Serving: `scripts/llmctl.py invite qwen --ctx 65536 --np 1` (`total_slots 1 n_ctx 65536`, `slot_ctx = 65,536`, `RESERVED_OUTPUT_TOKENS = 8,192`, `max_prompt_tokens = 57,344`). No serving flag changes are required by any v4 fix.
+  - Sampling & Budgets: `temperature = 0.6`, `top_p = 0.95`, `top_k = 20`, `REASONING_BUDGET = 4,096`, `MAX_TOKENS = 8,192`, `MAX_TURNS_DEFAULT = 12`, `TASK_BUDGET_TOKENS = 32,768`, `TASK_WALL_BUDGET = 617` s (`floor(4320 / 7)`), `CEILING_SECONDS = 4,320` s (1.2 GPU-hours).
+  - **Absolute KEEP / DROP Bars (Section 15.5, unchanged)**: No cloud-seat baseline exists on `lark-parser/lark`; bars are absolute (`compute_keep_drop`, `bench/loop/pilot_pr.py`):
+    - **KEEP**: Authoritative offline test pass rate $\ge 50.0\%$ ($\ge 4/7$ on $N_{\text{test}} = 7$) **AND** blind Tier 2 Grok 4.7 high approval $\ge 3/7$ ($\ge 42.9\%$) **AND** average `hand_fix_lines` $\le 20$ per approved PR (`tamper = true` fails both bars).
+    - **DROP**: Authoritative offline test pass rate $< 33.3\%$ ($\le 2/7 = 28.6\%$ on $N_{\text{test}} = 7$) **OR** blind Tier 2 Grok 4.7 high approval $< 2/7$ ($< 28.6\%$).
+    - **INCONCLUSIVE**: Intermediate outcome (e.g., `3/7` tests with $\ge 2/7$ approvals, or avg `hand_fix_lines > 20`); defaults to **DROP** unless AJ approves a bounded extension.
+  - Same outer `/usr/bin/bwrap` read-only authoritative test grading, schema v2 (`tamper: null` on unreviewed empty diffs, explicit `diff_empty`, `abort_reason`, `harness_failure`), and per-run random leak sentinel.
+
+### 18.2 Required v4 Diagnostic Telemetry (Frozen)
+
+Recorded per turn in `<run_dir>/turn_events.jsonl` (uncommitted) and in task JSONL `history[turn]` (`bench/loop/pilot_pr.py`):
+
+| Event / Record | Added Telemetry Fields | Notes |
+| :--- | :--- | :--- |
+| Every model-reply turn (`turn_tools`, `turn_parse_error`, `turn_repeat_code`, and `history[turn]`) | `reasoning_chars` (`int`), `content_chars` (`int`), `finish_reason` (`str \| null`) | `server_ask` preserves both `finish` and `finish_reason`; `_run_task_loop_turns` persists all three on every reply turn. |
+| `turn_repeat_code` (and `history[turn]` on `repeat_code` stop) | `matched_turn` (`int`), `reply_hash` (`str`, SHA-256 hex), `repeat_read_only` (`bool`), `compaction_count` (`int`), plus `compaction` list preserved in `history[turn]` | Removes the v3 blind spot where `repeat_code` broke before `_append_turn_log` and dropped `turn_compactions`. |
+| `turn_tools` (when a read-only repeat is allowed instead of hard-stopped) | `read_only_repeat_matched_turn` (`int`), `reply_hash` (`str`) | Makes allowed read-only repeats observable. |
+| `turn_parse_error` (and `history[turn]` on parse error) | `error` (`str`, capped at 500 chars), `raw_snippet` (`str`, seed-redacted, capped at `PARSE_ERROR_RAW_SNIPPET_MAX_CHARS = 500` chars) | Removes the v3 blind spot where raw offending model replies were discarded. |
+| `auto_run_tests` (and task JSONL top-level fields) | `passed` (`bool`), `dirty_since_last_test` (`bool`), `result_chars` (`int`); task-level `run_tests_calls`, `finish_tests_calls`, `auto_run_tests`, `end_of_loop_test_passed` | Keeps end-of-loop test status strictly separate from `stop_reason` and `passed`. |
+
+### 18.3 Frozen v4 Ranked Harness Fixes & Parameters
+
+| Fix Rank | Change in `bench/loop/pilot_pr.py` | Frozen Parameters |
+| :--- | :--- | :--- |
+| **Rank 1a — Pressure-Gated Stage 1 Compaction** | Gate Stage 1 `stale_tool_summary` on actual prompt-token pressure (`tokens_before > stage1_trigger_tokens`) rather than running unconditionally on every turn after `keep_recent_turns`. Stage 2a–2d budget compaction stays intact above `target_tokens`. | `COMPACT_STAGE1_TRIGGER_RATIO = 0.50` (`28,672` tokens at `57,344` max prompt tokens); `COMPACT_KEEP_RECENT_TURNS = 2`; `COMPACT_MIN_RECENT_TURNS = 1`; `COMPACT_TARGET_CTX_RATIO = 0.75` (`43,008` tokens); `STALE_ASSISTANT_MAX_CHARS = 1,200`. |
+| **Rank 1b — Read-Only `repeat_code` Guard** | Extract tool calls before the `repeat_code` stop check. If the repeated reply consists strictly of read-only tool calls (`READ_ONLY_TOOLS = {"read_file", "grep", "list_files"}`), do **not** hard-stop on the first repeat: execute the read, append a nudge pointing to `matched_turn`, and keep bounded safeguards against true infinite loops (trigger is inferred per Sec. 17.1). Non-read-only repeats (`search_replace`, `create_file`, parse errors) still hard-stop immediately. | `READ_ONLY_TOOLS = {"read_file", "grep", "list_files"}`; `MAX_CONSECUTIVE_READ_ONLY_REPEATS = 2` (hard-stop on 2nd consecutive repeated read-only turn); `MAX_TOTAL_READ_ONLY_REPEATS = 3` (hard-stop on 3rd total repeated read-only turn in a task). |
+| **Rank 2 — Robust JSON Tool-Call Parsing** | **Choice & Justification**: Harden `extract_tool_calls` JSON parsing (while preserving existing `raw_tool_calls` support) rather than enabling native OpenAI `tools` in `llama-server`. `scripts/llm-serve.sh` launches `llama-server` without `--jinja`; keeping v3 serving unchanged avoids introducing a serving/template confound with `Qwen3.6-35B-A3B`'s `reasoning_content`, and robust JSON parsing is deterministic and CPU-verified across all 7 logged v3 parse-error classes plus synthetic edge cases. Tolerates code fences (`json`, `tool`, bare, unclosed), leading/trailing prose, trailing commas outside string literals, single object vs. list, NDJSON multi-object streams (`json.JSONDecoder(strict=False).raw_decode`), unescaped newlines in strings, and missing commas between array objects, while refusing to silently mangle genuinely corrupted unescaped-quote JSON. | `PARSE_ERROR_RAW_SNIPPET_MAX_CHARS = 500`; `strict=False` decoder; trailing-comma stripper respects JSON string escapes. |
+| **Rank 3 — Prompt `run_tests` + Separate End-of-Loop Auto-Run** | Instruct the model in `format_tool_messages` (`Rules:` + user workflow) and `final_turn_note` to call `run_tests` after `search_replace`/`create_file` edits before `finish` (when `has_tests = true`). If a testable task ends without aborting (`stop_reason not in ABORT_STOP_REASONS` and `stop_reason != "pass"`) and either never called tests (`run_tests_calls == 0 and finish_tests_calls == 0`) or had edits since the last test run (`dirty_since_last_test`), auto-run `run_tests` once and record `auto_run_tests = true` and `end_of_loop_test_passed` as separate diagnostic fields that **never** rewrite `stop_reason` to `"pass"` and **never** set `passed = true` (only hidden offline `grade` counts). | `auto_run_tests` (`bool`), `end_of_loop_test_passed` (`bool \| null`), `run_tests_calls` (`int`), `finish_tests_calls` (`int`). |
+| **Rank 4 — Align `TOOL_RESULT_MAX_LINES` with Prompt (`250`)** | Align `TOOL_RESULT_MAX_LINES` with `READ_FILE_MAX_LINES = 250` stated in `format_tool_messages` (`max 250 lines/call`). Raise companion char/turn-feedback caps so a single 250-line read (~8.5–11k chars) is not re-elided at low prompt utilization while still bounding pathological outputs. | `READ_FILE_MAX_LINES = TOOL_RESULT_MAX_LINES = 250` (`HEAD = 160`, `TAIL = 90`); `TOOL_RESULT_MAX_CHARS = 12,000`; `TURN_FEEDBACK_MAX_LINES = 300` (`HEAD = 200`, `TAIL = 100`); `TURN_FEEDBACK_MAX_CHARS = 16,000`; `TEST_OUTPUT_MAX_LINES = 80` (`HEAD = 30`, `TAIL = 50`), `TEST_OUTPUT_MAX_CHARS = 3,500` (unchanged). |
+
+### 18.4 Unseen External-Repo Task Selection Rule (Stated Before Inspecting Any Diff)
+
+Implemented in `bench/loop/select_v4.py` and verified by CPU tests in `bench/loop/test_pilot_pr_v4.py`:
+
+- **Contamination Cutoff & Primary Source**:
+  - `Qwen/Qwen3.6-35B-A3B` Hugging Face release timestamp: **`2026-04-15T05:59:19Z`** (source: `https://huggingface.co/Qwen/Qwen3.6-35B-A3B`, API field `createdAt: "2026-04-15T05:59:19.000Z"`; unsloth GGUF `https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF` `createdAt: "2026-04-16T04:31:31.000Z"`, `lastModified: "2026-04-20T12:42:25.000Z"`).
+- **Phase 1 — Primary Repo (`more-itertools/more-itertools`) after `2026-11-17`**:
+  - Window: `[2026-11-18T00:00:00Z, 2026-11-22T23:59:59Z]`; explicitly excludes the 7 frozen v3 dev PRs (`{1260, 1269, 1305, 1322, 1342, 1345, 1311}`).
+  - Same numstat and offline `/usr/bin/bwrap` pass-at-merged / fail-at-base filters as v3 (first-parent PR merge `^Merge pull request #(\d+)\b` or squash `\(#(\d+)\)$`, no binary/rename/build/CI files, `>= 1` runtime `.py` + `>= 1` test `.py`, `2..8` files, `15..250` changed lines, offline `python3 -I -B -m unittest` in `/usr/bin/bwrap`).
+  - **Observed Phase 1 Result (at pinned HEAD `e3f79f4fde5f7c107f70a20730b17240a05ba99b`, fetched 2026-11-22)**: **0 / 7 qualifying PRs** (1 post-`2026-11-17` PR, `#1366`, mechanically excluded for `no_test_py_changed`).
+- **Phase 2 — Single Fallback Repo (Fixed Pre-Stated Priority Shortlist)**:
+  - Because Phase 1 yielded fewer than 7 tasks (`needed = 7`), evaluate a fixed priority shortlist of pure-Python, zero-runtime-dependency, stdlib-`unittest` GitHub repositories stated before inspecting any candidate repo or diff, over `[2026-05-01T00:00:00Z, 2026-11-22T23:59:59Z]` with the exact same numstat and `/usr/bin/bwrap` filters:
+    1. `python-markdown/markdown` (pinned HEAD `5609061bd3359e882b745de184ebfe5ef1c08011`): **1** bwrap-verified PR (`#1621`) — fewer than 7.
+    2. `pyparsing/pyparsing` (pinned HEAD `810199f89bf916590426e1c5cb3d612584f11a2f`): **3** bwrap-verified PRs (`#621`, `#652`, `#653`) — fewer than 7.
+    3. **`lark-parser/lark`** (pinned HEAD `9a4fb9c7458e8155636773a3cded0016d52516da`): **7** bwrap-verified PRs (`#1543`, `#1601`, `#1619`, `#1613`, `#1624`, `#1632`, `#1641`) $\rightarrow$ **SELECTED (`shortfall = 0`)**.
+    4. `python/typing_extensions` (pinned HEAD `a2024556ab75799fbd2f41d1c2d114dd6372de12`) — not needed after #3 satisfied 7/7.
+    5. `bottlepy/bottle` (pinned HEAD `aba0c1a7ee59ed851db001d100b6a792b54a94a3`) — not needed after #3 satisfied 7/7.
+  - Local bare mirror stored read-only under `/data/datasets/item6-v4-repos/lark.git` (outside `strix-halo-lab`; `/data` is obscured by `--tmpfs` inside `/usr/bin/bwrap`).
+- **Rule-Built Task Prompts (`tasks_item6_v4.build_v4_task_prompt`)**:
+  - Built strictly by deterministic rule from verbatim GitHub/git metadata without viewing any merged diff and without hand-writing task prose:
+    1. Linked non-PR GitHub issue title and body when linked (4/7: PR #1601 $\to$ Issue #1598, PR #1619 $\to$ Issue #1618, PR #1613 $\to$ Issue #1500, PR #1632 $\to$ Issue #1630).
+    2. Linked PR title and body when a merge PR's body is strictly a `"Merges PR #M"` wrapper (1/7: PR #1624 $\to$ PR #1622).
+    3. PR's own title and body (1/7: PR #1543).
+    4. Verbatim git commit subject when GitHub returns HTTP 404 for the PR (1/7: PR #1641, `Fix InteractiveParser.copy() sharing the lexer thread with the original (#1641)`).
+  - Mechanically strips HTML comments, replaces every fenced code block (```` ``` ```` / `~~~`) with `[code block removed]`, and redacts `104729`. Hidden tests, reference diffs, `merged_commit` SHAs, and seed `104729` never enter the loop.
+
+### 18.5 Frozen v4 Unseen Task List (`bench/loop/tasks_item6_v4.py`, `lark-parser/lark`)
+
+| Task ID | PR # | Merged (UTC) | Lines | Base Commit | Prompt Source | Test Command (`test_cmd`) | Expected Tests | Target Files |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v4_pr1543` | #1543 | `2026-05-02T19:50:46Z` | 80 | `1573ca82a7b4af3a81919245e31a84a68b40f5b7` | PR #1543 | `python3 -m unittest tests.test_trees` | 22 | `docs/visitors.rst`, `lark/visitors.py`, `tests/test_trees.py` |
+| `item6v4_pr1601` | #1601 | `2026-06-03T07:20:38Z` | 21 | `71ab62450cbb6f48d91a73b7e385aca5d4f6994f` | Issue #1598 | `python3 -m unittest tests.test_parser` | 1146 | `lark/parsers/xearley.py`, `tests/test_parser.py` |
+| `item6v4_pr1619` | #1619 | `2026-07-19T07:41:12Z` | 28 | `5892df12bd6badd3ee555db3b2ae54a4e5911147` | Issue #1618 | `python3 -m unittest tests.test_grammar` | 27 | `lark/lexer.py`, `tests/test_grammar.py` |
+| `item6v4_pr1613` | #1613 | `2026-08-25T11:32:09Z` | 30 | `51272c044e76f729238f5a93ee0337eac2f07396` | Issue #1500 | `python3 -m unittest tests.test_reconstructor` | 9 | `lark/reconstruct.py`, `tests/test_reconstructor.py` |
+| `item6v4_pr1624` | #1624 | `2026-08-25T13:21:10Z` | 33 | `e1817787d2ed2a10477734b1f784cbc7eee8dfa4` | PR #1622 (via #1624) | `python3 -m unittest tests.test_trees` | 25 | `lark/visitors.py`, `tests/test_trees.py` |
+| `item6v4_pr1632` | #1632 | `2026-08-26T19:56:53Z` | 30 | `bb11b5398b9a96865ff7c57e04739410273434df` | Issue #1630 | `python3 -m unittest tests.test_tree_templates` | 21 | `lark/tree_templates.py`, `tests/test_tree_templates.py` |
+| `item6v4_pr1641` | #1641 | `2026-08-27T11:07:40Z` | 29 | `e7c2564859ba865618d81db1a5aa0b9a3ce5ec8e` | Commit subject (#1641; GitHub 404) | `python3 -m unittest tests.test_parser` | 1166 | `lark/parsers/lalr_interactive_parser.py`, `lark/parsers/lalr_parser_state.py`, `tests/test_parser.py` |
+
+- All **7 of 7** tasks are testable (`has_tests = true`, `testable_total = 7`), merged between `2026-05-02` and `2026-08-27` (strictly post-`2026-04-15` Qwen3.6-35B-A3B release), and verified offline in `/usr/bin/bwrap` (pass at `merged_commit` with exact test counts, fail at `base_commit`) by `bench/loop/test_pilot_pr_v4.py`.
+
+### 18.6 Two-Step Execution Protocol & Launchers
+
+#### Step 1: Practice Run on the 7 v3 `more-itertools` Dev PRs (Pre-Declared as NOT Counting)
+
+- **Declared in Advance as NOT Counting**:
+  - Runs FIRST on the 7 retired v3 `more-itertools/more-itertools` dev PRs (`item6v3_pr1260`, `item6v3_pr1269`, `item6v3_pr1305`, `item6v3_pr1322`, `item6v3_pr1342`, `item6v3_pr1345`, `item6v3_pr1311`).
+  - **No KEEP/DROP decision is computed, no Tier 2 Grok review is run, and the practice run is NEVER reported as a pilot result.**
+  - Outputs stay in uncommitted `/tmp/lab-seats/item6-v4-practice/` (never written to `bench/loop/results/`).
+- **Practice Pass Criteria (All 4 Required)**:
+  1. Zero `context_overflow` across all 7 dev tasks,
+  2. Zero `harness_failure` (`task_error`) across all 7 dev tasks,
+  3. Telemetry fields (`reasoning_chars`, `content_chars`, `finish_reason`, plus `matched_turn`/`reply_hash` on any `turn_repeat_code` and `raw_snippet` on any `turn_parse_error`) present in every model-reply turn in `turn_events.jsonl`,
+  4. At least one `run_tests` call (or `finish` test run / end-of-loop `auto_run_tests`) per task.
+- **Budget & Ceiling**: Same per-task ceiling as v3 (`TASK_WALL_BUDGET = 617` s; total ceiling `CEILING_SECONDS = 4,320` s = 1.2 GPU-hours).
+- **Post-Practice Freeze Rule**: Parameters may be adjusted after inspecting the practice run, **but any adjustments must be committed and frozen in a dated v4 pre-run note in `docs/item6-pilot.md` (verified pushed via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`) before launching Step 2 (the counted v4 run).**
+- **Launcher**: `bench/loop/runs/item6-v4-practice/run.sh` (waits for PR merge and AJ's go):
+
+```bash
+WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-v4-practice/run.sh >/dev/null 2>&1 &
+```
+
+#### Step 2: Counted Unseen v4 Pilot Run (`item6-pilot-v4` on `lark-parser/lark`)
+
+- Runs **only** after Step 1 passes, the practice note and final v4 pre-run parameter freeze are committed and pushed to `origin/main`, and AJ gives a separate yes.
+- **Launcher**: `bench/loop/runs/item6-pilot-v4/run.sh`:
+
+```bash
+WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
+```
+
+- If the external bare mirror does not yet exist on disk, populate it read-only before launching:
+
+```bash
+mkdir -p /data/datasets/item6-v4-repos && git clone --bare https://github.com/lark-parser/lark.git /data/datasets/item6-v4-repos/lark.git
+```
+
+
 

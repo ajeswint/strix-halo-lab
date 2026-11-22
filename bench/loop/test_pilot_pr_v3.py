@@ -43,21 +43,22 @@ class TestPilotPrV3(unittest.TestCase):
     def test_head_tail_truncation_markers_for_tool_and_test_output(self):
         """Tool and test outputs cap lines & chars, keeping head and tail with explicit elided-lines markers and redacting 104729."""
         # 1. Line-capped tool output (> TOOL_RESULT_MAX_LINES)
-        lines_250 = [f"L{i:04d}: payload content row {i}" for i in range(250)]
-        lines_250[0] = "L0000: head sentinel seed 104729"
-        lines_250[-1] = "L0249: tail sentinel"
-        out_tool, info_tool = pilot_pr.compact_tool_output("\n".join(lines_250))
+        n_over = pilot_pr.TOOL_RESULT_MAX_LINES + 50
+        lines_over = [f"L{i:04d}: payload content row {i}" for i in range(n_over)]
+        lines_over[0] = "L0000: head sentinel seed 104729"
+        lines_over[-1] = f"L{n_over - 1:04d}: tail sentinel"
+        out_tool, info_tool = pilot_pr.compact_tool_output("\n".join(lines_over))
         self.assertTrue(info_tool["truncated"])
-        self.assertEqual(info_tool["orig_lines"], 250)
+        self.assertEqual(info_tool["orig_lines"], n_over)
         self.assertGreater(info_tool["elided_lines"], 0)
         self.assertIn("L0000: head sentinel seed <REDACTED_SEED>", out_tool)
-        self.assertIn("L0249: tail sentinel", out_tool)
+        self.assertIn(f"L{n_over - 1:04d}: tail sentinel", out_tool)
         self.assertNotIn("104729", out_tool)
         self.assertRegex(out_tool, r"\.\.\. \[elided \d+ lines.*\] \.\.\.")
         self.assertLessEqual(len(out_tool), pilot_pr.TOOL_RESULT_MAX_CHARS + 120)
 
         # 2. Char-capped tool output (few lines, huge line length)
-        long_lines = "\n".join([f"H{i}: " + ("A" * 2000) for i in range(5)])
+        long_lines = "\n".join([f"H{i}: " + ("A" * 4000) for i in range(5)])
         out_chars, info_chars = pilot_pr.compact_tool_output(long_lines)
         self.assertTrue(info_chars["truncated"])
         self.assertIn("H0:", out_chars)
@@ -121,7 +122,17 @@ class TestPilotPrV3(unittest.TestCase):
             {"turn": 3, "tools": []}, {"turn": 3, "tools": []},
         ]
 
-        comp_msgs, comp_meta, ev = pilot_pr.compact_conversation_messages(msgs, msg_meta=meta)
+        # Under low prompt pressure (default 64k ctx), Stage 1 stays dormant
+        _, _, ev_low = pilot_pr.compact_conversation_messages(msgs, msg_meta=meta)
+        self.assertFalse(ev_low["compacted"])
+
+        # Under prompt pressure (> 50% of max_prompt_tokens), Stage 1 compacts turns 0 and 1
+        comp_msgs, comp_meta, ev = pilot_pr.compact_conversation_messages(
+            msgs,
+            slot_ctx=3000,
+            reserved_output=500,
+            msg_meta=meta,
+        )
         self.assertTrue(ev["compacted"])
         self.assertIn("stale_tool_summary", ev["stages"])
         self.assertEqual(ev["msgs_compacted"], 2)
@@ -141,7 +152,12 @@ class TestPilotPrV3(unittest.TestCase):
         self.assertEqual(comp_msgs[9]["content"], recent_3)
 
         # Idempotent on immediate second call
-        comp_msgs2, _, ev2 = pilot_pr.compact_conversation_messages(comp_msgs, msg_meta=comp_meta)
+        comp_msgs2, _, ev2 = pilot_pr.compact_conversation_messages(
+            comp_msgs,
+            slot_ctx=3000,
+            reserved_output=500,
+            msg_meta=comp_meta,
+        )
         self.assertFalse(ev2["compacted"])
         self.assertEqual(comp_msgs2, comp_msgs)
 

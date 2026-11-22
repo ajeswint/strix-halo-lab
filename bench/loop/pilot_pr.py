@@ -51,20 +51,30 @@ SEARCH_REPLACE_REWRITE_MAX_RATIO = 0.80
 STUB_GUARD_MIN_REMOVED_LINES = 40
 STUB_GUARD_MIN_REMOVED_RATIO = 0.50
 STUB_GUARD_MOVE_MATCH_MIN_RATIO = 0.50
-TOOL_RESULT_MAX_LINES = 120
-TOOL_RESULT_HEAD_LINES = 80
-TOOL_RESULT_TAIL_LINES = 40
-TOOL_RESULT_MAX_CHARS = 6000
+TOOL_RESULT_MAX_LINES = READ_FILE_MAX_LINES  # 250 (aligned with read_file max lines stated in prompt)
+TOOL_RESULT_HEAD_LINES = 160
+TOOL_RESULT_TAIL_LINES = 90
+TOOL_RESULT_MAX_CHARS = 12000
 TEST_OUTPUT_MAX_LINES = 80
 TEST_OUTPUT_HEAD_LINES = 30
 TEST_OUTPUT_TAIL_LINES = 50
 TEST_OUTPUT_MAX_CHARS = 3500
-TURN_FEEDBACK_MAX_CHARS = 12000
+TURN_FEEDBACK_MAX_LINES = 300
+TURN_FEEDBACK_HEAD_LINES = 200
+TURN_FEEDBACK_TAIL_LINES = 100
+TURN_FEEDBACK_MAX_CHARS = 16000
 
 COMPACT_KEEP_RECENT_TURNS = 2
 COMPACT_MIN_RECENT_TURNS = 1
+COMPACT_STAGE1_TRIGGER_RATIO = 0.50  # gate Stage 1 stale_tool_summary at >50% of max_prompt_tokens (28,672 at 57,344)
 COMPACT_TARGET_CTX_RATIO = 0.75
 STALE_ASSISTANT_MAX_CHARS = 1200
+
+READ_ONLY_TOOLS = frozenset({"read_file", "grep", "list_files"})
+KNOWN_TOOL_NAMES = frozenset({"list_files", "grep", "read_file", "search_replace", "create_file", "run_tests", "finish"})
+MAX_CONSECUTIVE_READ_ONLY_REPEATS = 2  # allow 1 repeated read-only turn; hard-stop on 2nd consecutive
+MAX_TOTAL_READ_ONLY_REPEATS = 3        # hard-stop on 3rd total repeated read-only turn in a task
+PARSE_ERROR_RAW_SNIPPET_MAX_CHARS = 500
 
 RECORD_SCHEMA_VERSION = 2
 ABORT_STOP_REASONS = frozenset({
@@ -923,12 +933,17 @@ def tool_search_replace(worktree_dir, path, old, new, base_content=None, touched
         return False, f"search_replace error ({path}): 'old' and 'new' are identical (no-op edit)."
 
     try:
-        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        with open(full_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            raw_content = f.read()
     except OSError as e:
         return False, f"search_replace error ({path}): {e}"
 
-    occurrences = content.count(old)
+    uses_crlf = "\r\n" in raw_content
+    content = raw_content.replace("\r\n", "\n") if uses_crlf else raw_content
+    old_norm = old.replace("\r\n", "\n") if uses_crlf else old
+    new_norm = new.replace("\r\n", "\n") if uses_crlf else new
+
+    occurrences = content.count(old_norm)
     if occurrences == 0:
         return (
             False,
@@ -943,8 +958,8 @@ def tool_search_replace(worktree_dir, path, old, new, base_content=None, touched
         )
 
     total_lines = len(content.splitlines())
-    old_lines = len(old.splitlines())
-    new_lines = len(new.splitlines())
+    old_lines = len(old_norm.splitlines())
+    new_lines = len(new_norm.splitlines())
     if (
         total_lines >= SEARCH_REPLACE_REWRITE_MIN_LINES
         and (old_lines / max(total_lines, 1)) >= SEARCH_REPLACE_REWRITE_MAX_RATIO
@@ -957,7 +972,7 @@ def tool_search_replace(worktree_dir, path, old, new, base_content=None, touched
             "Make smaller, targeted edits instead of rewriting the whole file.",
         )
 
-    updated = content.replace(old, new, 1)
+    updated = content.replace(old_norm, new_norm, 1)
 
     ref_orig = base_content if base_content is not None else content
     stub_ok, stub_err = check_stub_truncation(
@@ -967,8 +982,9 @@ def tool_search_replace(worktree_dir, path, old, new, base_content=None, touched
         return False, stub_err
 
     try:
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(updated)
+        write_text = updated.replace("\n", "\r\n") if uses_crlf else updated
+        with open(full_path, "w", encoding="utf-8", newline="") as f:
+            f.write(write_text)
     except OSError as e:
         return False, f"search_replace error ({path}): failed writing file: {e}"
 
@@ -1229,8 +1245,152 @@ def _normalize_tool_call_obj(obj):
     return {"tool": name.strip(), "args": raw_args}
 
 
+def _strip_trailing_commas(text):
+    """Remove JSON5-style trailing commas before '}' or ']' outside JSON string literals."""
+    out = []
+    n = len(text)
+    in_str = False
+    escape = False
+    i = 0
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _decode_json_values_robust(raw_text, allow_prose_skip=True):
+    """Decode one or more JSON values (single object, array, or NDJSON stream) from raw_text.
+
+    Tolerates trailing commas, unescaped control characters inside strings (strict=False),
+    multiple newline/space-separated JSON objects (NDJSON), and leading/trailing prose.
+    Returns (values: list, first_error: JSONDecodeError | None).
+    """
+    cleaned = _strip_trailing_commas(raw_text or "")
+    decoder = json.JSONDecoder(strict=False)
+    n = len(cleaned)
+    idx = 0
+    values = []
+    first_err = None
+
+    while idx < n:
+        while idx < n and cleaned[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            break
+        if cleaned[idx] not in "{[":
+            if not allow_prose_skip:
+                if first_err is None:
+                    try:
+                        decoder.raw_decode(cleaned, idx)
+                    except json.JSONDecodeError as e:
+                        first_err = e
+                break
+            # Skip non-JSON leading/intervening prose until the next '{' or '['
+            next_obj = cleaned.find("{", idx)
+            next_arr = cleaned.find("[", idx)
+            candidates = [p for p in (next_obj, next_arr) if p != -1]
+            if not candidates:
+                if first_err is None and not values:
+                    try:
+                        decoder.raw_decode(cleaned, idx)
+                    except json.JSONDecodeError as e:
+                        first_err = e
+                break
+            if first_err is None and not values:
+                try:
+                    decoder.raw_decode(cleaned, idx)
+                except json.JSONDecodeError as e:
+                    first_err = e
+            idx = min(candidates)
+            continue
+
+        try:
+            val, end_idx = decoder.raw_decode(cleaned, idx)
+            values.append(val)
+            idx = end_idx
+        except json.JSONDecodeError as e:
+            if first_err is None:
+                first_err = e
+            if not allow_prose_skip:
+                break
+            # If a JSON array failed (e.g. missing comma between element objects), step inside '['
+            # to attempt recovering individual tool-call objects; otherwise advance past '{' / '['.
+            if cleaned[idx] == "[":
+                idx += 1
+                continue
+            next_obj = cleaned.find("{", idx + 1)
+            next_arr = cleaned.find("[", idx + 1)
+            candidates = [p for p in (next_obj, next_arr) if p != -1]
+            if not candidates:
+                break
+            idx = min(candidates)
+
+    return values, first_err
+
+
+def _extract_fenced_blocks(text):
+    """Extract fenced code blocks (```json, ```tool, ```js, bare ```, or unclosed trailing fence)."""
+    blocks = []
+    closed_pattern = re.compile(r"```(?:[A-Za-z0-9_-]*)?[ \t]*\r?\n(.*?)```", re.DOTALL)
+    last_end = 0
+    for m in closed_pattern.finditer(text):
+        blocks.append(m.group(1))
+        last_end = m.end()
+    tail = text[last_end:]
+    unclosed = re.search(r"```(?:tool|json|javascript|js)?[ \t]*\r?\n(.*)$", tail, re.DOTALL | re.IGNORECASE)
+    if unclosed:
+        blocks.append(unclosed.group(1))
+    return blocks
+
+
+def _iter_json_call_items(values):
+    """Flatten decoded JSON values (objects or nested lists of objects) into candidate dicts."""
+    for v in values:
+        if isinstance(v, list):
+            for elem in v:
+                yield elem
+        else:
+            yield v
+
+
+def _truncate_raw_snippet(text, max_chars=PARSE_ERROR_RAW_SNIPPET_MAX_CHARS):
+    """Return a seed-redacted, bounded snippet of raw model output for parse-error telemetry."""
+    s = redact_grading_seed(text or "")
+    if len(s) <= max_chars:
+        return s
+    omitted = len(s) - max_chars
+    return s[:max_chars] + f"... [truncated {omitted} chars]"
+
+
 def extract_tool_calls(response_text, raw_tool_calls=None):
-    """Extract structured tool calls from OpenAI tool_calls or fenced ```json / ```tool blocks.
+    """Extract structured tool calls from OpenAI tool_calls, fenced blocks, or raw JSON in prose.
+
+    Robustly tolerates code fences (```json, ```tool, bare ```, unclosed fences),
+    leading/trailing prose, trailing commas, single object vs list, NDJSON multi-object
+    blocks, and unescaped newlines inside strings.
 
     Returns (calls: list[dict], parse_errors: list[str]).
     """
@@ -1248,28 +1408,75 @@ def extract_tool_calls(response_text, raw_tool_calls=None):
             return calls, parse_errors
 
     text = response_text or ""
-    blocks = re.findall(r"```(?:tool|json)\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if not blocks:
-        stripped = text.strip()
-        if stripped.startswith("{") or stripped.startswith("["):
-            blocks = [stripped]
+    fenced_blocks = _extract_fenced_blocks(text)
+    fenced_errors = []
 
-    for blk in blocks:
+    for blk in fenced_blocks:
         blk_s = blk.strip()
         if not blk_s:
             continue
-        try:
-            parsed = json.loads(blk_s)
-        except json.JSONDecodeError as e:
-            parse_errors.append(f"Invalid JSON in tool block: {e}")
-            continue
-        items = parsed if isinstance(parsed, list) else [parsed]
-        for item in items:
+        values, first_err = _decode_json_values_robust(blk_s, allow_prose_skip=True)
+        blk_calls = []
+        blk_bad_items = []
+        for item in _iter_json_call_items(values):
             norm = _normalize_tool_call_obj(item)
             if norm is not None:
-                calls.append(norm)
+                blk_calls.append(norm)
             else:
-                parse_errors.append(f"JSON object is not a valid tool call (missing 'tool' name): {str(item)[:160]}")
+                blk_bad_items.append(item)
+        if blk_calls:
+            calls.extend(blk_calls)
+            for bad in blk_bad_items:
+                fenced_errors.append(
+                    f"JSON object is not a valid tool call (missing 'tool' name): {str(bad)[:160]}"
+                )
+        elif blk_bad_items:
+            for bad in blk_bad_items:
+                fenced_errors.append(
+                    f"JSON object is not a valid tool call (missing 'tool' name): {str(bad)[:160]}"
+                )
+        elif first_err is not None:
+            fenced_errors.append(f"Invalid JSON in tool block: {first_err}")
+
+    if calls:
+        return calls, fenced_errors
+
+    # Fallback: scan full text for unfenced JSON objects/arrays surrounded by leading/trailing prose
+    if text.strip():
+        values, first_err = _decode_json_values_robust(text, allow_prose_skip=True)
+        prose_calls = []
+        prose_bad_items = []
+        stripped = text.strip()
+        looks_raw_json = stripped.startswith("{") or stripped.startswith("[")
+        for item in _iter_json_call_items(values):
+            if isinstance(item, dict):
+                has_explicit_tool_key = (
+                    "tool" in item
+                    or "function" in item
+                    or (isinstance(item.get("name"), str) and item["name"].strip() in KNOWN_TOOL_NAMES)
+                )
+                if has_explicit_tool_key or looks_raw_json:
+                    norm = _normalize_tool_call_obj(item)
+                    if norm is not None:
+                        prose_calls.append(norm)
+                    elif looks_raw_json:
+                        prose_bad_items.append(item)
+            elif looks_raw_json:
+                prose_bad_items.append(item)
+
+        if prose_calls:
+            return prose_calls, []
+        if fenced_errors:
+            parse_errors.extend(fenced_errors)
+        else:
+            for bad in prose_bad_items:
+                parse_errors.append(
+                    f"JSON object is not a valid tool call (missing 'tool' name): {str(bad)[:160]}"
+                )
+            if not parse_errors and first_err is not None and looks_raw_json:
+                parse_errors.append(f"Invalid JSON in tool block: {first_err}")
+    elif fenced_errors:
+        parse_errors.extend(fenced_errors)
 
     return calls, parse_errors
 
@@ -1310,6 +1517,12 @@ def format_tool_messages(task, worktree_dir=None, run_sentinel=None):
         if has_tests
         else ""
     )
+    test_rule = (
+        "- After applying edits with `search_replace` or `create_file`, call `run_tests` to verify your changes "
+        "and inspect any failures before calling `finish`.\n"
+        if has_tests
+        else ""
+    )
     system_msg = (
         "You are a software engineer editing a clean git scratch repository at its base commit.\n"
         "You MUST make changes using structured tool calls inside a ```json code block.\n"
@@ -1317,7 +1530,7 @@ def format_tool_messages(task, worktree_dir=None, run_sentinel=None):
         "Available tools:\n"
         '- `{"tool": "list_files", "args": {"path": ".", "glob": "*.py"}}`: list files under path (glob optional).\n'
         '- `{"tool": "grep", "args": {"pattern": "regex", "path": "."}}`: search text files (path optional).\n'
-        '- `{"tool": "read_file", "args": {"path": "rel/path", "start": 1, "end": 200}}`: read numbered lines (max 250 lines/call).\n'
+        f'- `{{"tool": "read_file", "args": {{"path": "rel/path", "start": 1, "end": 200}}}}`: read numbered lines (max {READ_FILE_MAX_LINES} lines/call).\n'
         '- `{"tool": "search_replace", "args": {"path": "rel/path", "old": "exact unique text", "new": "replacement"}}`: '
         "targeted edit on an existing file (`old` must match uniquely; whole-file rewrites of large files and "
         "large unrelocated truncations >= 40 lines and >= 50% of a file are rejected — create destination files first when splitting/moving content).\n"
@@ -1328,6 +1541,7 @@ def format_tool_messages(task, worktree_dir=None, run_sentinel=None):
         "Rules:\n"
         "- Always read files with `read_file` or `grep` before editing them.\n"
         "- Make targeted edits with `search_replace`; never emit raw unified diffs.\n"
+        f"{test_rule}"
         "- The harness applies your edits and generates the git diff automatically.\n"
         "- Standard library or repository dependencies only; no unrequested subagents; no GPU work."
     )
@@ -1338,11 +1552,18 @@ def format_tool_messages(task, worktree_dir=None, run_sentinel=None):
         if has_tests and clean_task.get("test_cmd")
         else "\n\nThis task has no automated test command; call `finish` once all edits are applied."
     )
+    workflow_note = (
+        "Start by reading the relevant files using `read_file` / `grep`, then apply targeted edits "
+        "with `search_replace` / `create_file`, call `run_tests` after edits to verify your changes, "
+        "and call `finish` when tests pass."
+        if has_tests
+        else "Start by reading the relevant files using `read_file` / `grep`, then apply targeted edits "
+        "with `search_replace` / `create_file`, and call `finish` when done."
+    )
     user_msg = (
         f"{clean_task['prompt']}\n\n"
         f"Expected target files:\n{manifest}{test_note}\n\n"
-        "Start by reading the relevant files using `read_file` / `grep`, then apply targeted edits "
-        "with `search_replace` / `create_file`, and call `finish` when done."
+        f"{workflow_note}"
     )
     messages = [
         {"role": "system", "content": system_msg},
@@ -1428,7 +1649,7 @@ def apply_updates(worktree_dir, updates):
         except ValueError as e:
             return False, f"Rejected unsafe patch path: {e}"
         patch_file = os.path.join(worktree_dir, "_agent_update.patch")
-        with open(patch_file, "w", encoding="utf-8") as f:
+        with open(patch_file, "w", encoding="utf-8", newline="") as f:
             f.write(patch_text + "\n")
         try:
             res = subprocess.run(
@@ -1535,9 +1756,8 @@ def capture_worktree_diff(worktree_dir, base_commit="HEAD"):
         cwd=worktree_dir,
         env=clean_env,
         capture_output=True,
-        text=True,
     )
-    return diff_res.stdout or ""
+    return (diff_res.stdout or b"").decode("utf-8", errors="replace")
 
 
 def create_isolated_scratch_repo(repo_root, base_commit, scratch_dir):
@@ -1703,14 +1923,20 @@ def compact_test_output(
     )
 
 
-def compact_turn_feedback(result_lines, max_chars=TURN_FEEDBACK_MAX_CHARS):
+def compact_turn_feedback(
+    result_lines,
+    max_lines=TURN_FEEDBACK_MAX_LINES,
+    head_lines=TURN_FEEDBACK_HEAD_LINES,
+    tail_lines=TURN_FEEDBACK_TAIL_LINES,
+    max_chars=TURN_FEEDBACK_MAX_CHARS,
+):
     """Assemble and bound a turn's combined tool-results user message."""
     raw = "Tool results:\n" + "\n\n".join(result_lines)
     return compact_text_head_tail(
         raw,
-        max_lines=240,
-        head_lines=140,
-        tail_lines=80,
+        max_lines=max_lines,
+        head_lines=head_lines,
+        tail_lines=tail_lines,
         max_chars=max_chars,
     )
 
@@ -1812,6 +2038,7 @@ def compact_conversation_messages(
     msg_meta=None,
     keep_recent_turns=COMPACT_KEEP_RECENT_TURNS,
     min_recent_turns=COMPACT_MIN_RECENT_TURNS,
+    stage1_trigger_ratio=COMPACT_STAGE1_TRIGGER_RATIO,
     target_ctx_ratio=COMPACT_TARGET_CTX_RATIO,
     stale_assistant_max_chars=STALE_ASSISTANT_MAX_CHARS,
 ):
@@ -1819,8 +2046,9 @@ def compact_conversation_messages(
 
     Always preserves messages[0] (system prompt) and messages[1] (initial task prompt).
     Stages:
-      1. `stale_tool_summary`: summarize user tool-result messages older than the last
-         `keep_recent_turns` user tool-result turns.
+      1. `stale_tool_summary`: gated on actual prompt-token pressure (`tokens_before > stage1_trigger_tokens`,
+         default 50% of `max_prompt_tokens`, i.e., 28,672 tokens at 57,344 max); summarizes user tool-result
+         messages older than the last `keep_recent_turns` user tool-result turns.
       2a. `stale_assistant_summary`: if prompt tokens > target_tokens, summarize stale
           assistant messages > stale_assistant_max_chars.
       2b. `recent_tool_summary`: if still > target_tokens, summarize older kept user
@@ -1840,6 +2068,7 @@ def compact_conversation_messages(
         new_meta = [{} for _ in messages]
 
     max_prompt_tokens = max(0, int(slot_ctx) - int(reserved_output))
+    stage1_trigger_tokens = int(max_prompt_tokens * float(stage1_trigger_ratio))
     target_tokens = int(max_prompt_tokens * float(target_ctx_ratio))
     chars_before = sum(len(m.get("content") or "") for m in new_messages)
     tokens_before = count_prompt_tokens(new_messages, token_counter=token_counter)
@@ -1861,28 +2090,31 @@ def compact_conversation_messages(
             "tokens_after": tokens_before,
             "tokens_saved": 0,
             "max_prompt_tokens": max_prompt_tokens,
+            "stage1_trigger_tokens": stage1_trigger_tokens,
             "target_tokens": target_tokens,
         }
 
-    # Stage 1: Age-based summarization of stale tool-result user messages (index >= 2)
-    user_indices = [i for i in range(2, len(new_messages)) if new_messages[i].get("role") == "user"]
-    stale_user_cutoff = max(0, len(user_indices) - max(0, int(keep_recent_turns)))
-    stage1_hits = 0
-    for idx in user_indices[:stale_user_cutoff]:
-        md = new_meta[idx]
-        summarized, changed = summarize_stale_tool_message(
-            new_messages[idx].get("content") or "",
-            turn_idx=md.get("turn"),
-            tool_events=md.get("tools"),
-        )
-        if changed:
-            new_messages[idx]["content"] = summarized
-            stage1_hits += 1
-            msgs_compacted += 1
-    if stage1_hits > 0:
-        stages.append("stale_tool_summary")
+    curr_tokens = tokens_before
 
-    curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
+    # Stage 1: Pressure-gated summarization of stale tool-result user messages (index >= 2)
+    if curr_tokens > stage1_trigger_tokens:
+        user_indices = [i for i in range(2, len(new_messages)) if new_messages[i].get("role") == "user"]
+        stale_user_cutoff = max(0, len(user_indices) - max(0, int(keep_recent_turns)))
+        stage1_hits = 0
+        for idx in user_indices[:stale_user_cutoff]:
+            md = new_meta[idx]
+            summarized, changed = summarize_stale_tool_message(
+                new_messages[idx].get("content") or "",
+                turn_idx=md.get("turn"),
+                tool_events=md.get("tools"),
+            )
+            if changed:
+                new_messages[idx]["content"] = summarized
+                stage1_hits += 1
+                msgs_compacted += 1
+        if stage1_hits > 0:
+            stages.append("stale_tool_summary")
+            curr_tokens = count_prompt_tokens(new_messages, token_counter=token_counter)
 
     # Stage 2a: If above target_tokens, summarize large stale assistant turns
     if curr_tokens > target_tokens:
@@ -1982,6 +2214,7 @@ def compact_conversation_messages(
         "tokens_after": tokens_after,
         "tokens_saved": max(0, tokens_before - tokens_after),
         "max_prompt_tokens": max_prompt_tokens,
+        "stage1_trigger_tokens": stage1_trigger_tokens,
         "target_tokens": target_tokens,
     }
 
@@ -2009,19 +2242,31 @@ def _run_task_loop_turns(
 ):
     """Run the turn loop body while updating `history` and `loop_state` in place for fault isolation."""
     tool_session = ToolSession(worktree_dir)
-    seen_code_hashes = set()
+    seen_code_hashes = {}
+    consecutive_ro_repeats = 0
+    total_ro_repeats = 0
     last_test_err = None
     last_turn_err = None
     dirty_since_last_test = False
+    run_tests_calls = 0
+    finish_tests_calls = 0
     accumulated_completion_tokens = 0
     stop_reason = "max_turns"
     final_passed = False
     leak_branch = None
     loop_start = clock_fn()
-    final_turn_note = "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
+    final_turn_note = (
+        "\n\nNote: This is your final turn. Apply any remaining edits, call `run_tests`, and call `finish`."
+        if has_tests
+        else "\n\nNote: This is your final turn. Apply any remaining edits and call `finish`."
+    )
     msg_meta = [{} for _ in messages]
     loop_state.setdefault("compaction_events_total", 0)
     loop_state.setdefault("compaction_chars_saved", 0)
+    loop_state["run_tests_calls"] = 0
+    loop_state["finish_tests_calls"] = 0
+    loop_state["auto_run_tests"] = False
+    loop_state["end_of_loop_test_passed"] = None
 
     def _record_compaction_event(turn_idx, stage, details, turn_comp_list):
         saved = int(details.get("chars_saved") or 0)
@@ -2254,37 +2499,95 @@ def _run_task_loop_turns(
         loop_state["tokens"] = accumulated_completion_tokens
 
         content = reply.get("content", "") or ""
+        content_chars = len(content)
+        reasoning_chars = (
+            int(reply["reasoning_chars"])
+            if reply.get("reasoning_chars") is not None
+            else len(reply.get("reasoning_content") or "")
+        )
+        finish_reason = (
+            reply.get("finish_reason")
+            if "finish_reason" in reply
+            else reply.get("finish")
+        )
         raw_tool_calls = reply.get("tool_calls")
         hash_payload = content + (json.dumps(raw_tool_calls, sort_keys=True) if raw_tool_calls else "")
         code_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()
 
-        # Stop check: repeat code / identical reply
+        calls, parse_errors = extract_tool_calls(content, raw_tool_calls=raw_tool_calls)
+        is_read_only_reply = bool(calls) and all(c.get("tool") in READ_ONLY_TOOLS for c in calls)
+
+        # Stop check: repeat code / identical reply (do not hard-stop on first read-only tool repeat,
+        # but keep bounded consecutive & total safeguards against true infinite loops)
+        read_only_repeat_matched_turn = None
         if code_hash in seen_code_hashes:
-            history.append({
-                "turn": turn,
-                "seed": seed,
-                "passed": False,
-                "err": "repeat_code",
-                "stop": "repeat_code",
-                "gen_s": gen_s,
-                "tokens": comp_tokens,
-                "prompt_tokens": prompt_tokens,
-                "preflight_prompt_tokens": est_prompt_tokens,
-            })
-            stop_reason = "repeat_code"
-            break
-        seen_code_hashes.add(code_hash)
+            matched_turn = seen_code_hashes[code_hash]
+            hard_stop_repeat = True
+            if is_read_only_reply:
+                consecutive_ro_repeats += 1
+                total_ro_repeats += 1
+                if (
+                    consecutive_ro_repeats < MAX_CONSECUTIVE_READ_ONLY_REPEATS
+                    and total_ro_repeats < MAX_TOTAL_READ_ONLY_REPEATS
+                ):
+                    hard_stop_repeat = False
+                    read_only_repeat_matched_turn = matched_turn
+            if hard_stop_repeat:
+                if run_dir:
+                    _append_turn_log(
+                        run_dir,
+                        {
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "task_id": clean_task["id"],
+                            "turn": turn,
+                            "event": "turn_repeat_code",
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": comp_tokens,
+                            "reasoning_chars": reasoning_chars,
+                            "content_chars": content_chars,
+                            "finish_reason": finish_reason,
+                            "matched_turn": matched_turn,
+                            "reply_hash": code_hash,
+                            "repeat_read_only": is_read_only_reply,
+                            "compaction_count": len(turn_compactions),
+                        },
+                        label=label,
+                        repo_root=repo_root,
+                    )
+                history.append({
+                    "turn": turn,
+                    "seed": seed,
+                    "passed": False,
+                    "err": "repeat_code",
+                    "stop": "repeat_code",
+                    "matched_turn": matched_turn,
+                    "reply_hash": code_hash,
+                    "repeat_read_only": is_read_only_reply,
+                    "gen_s": gen_s,
+                    "tokens": comp_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "preflight_prompt_tokens": est_prompt_tokens,
+                    "reasoning_chars": reasoning_chars,
+                    "content_chars": content_chars,
+                    "finish_reason": finish_reason,
+                    "compaction": turn_compactions,
+                })
+                stop_reason = "repeat_code"
+                break
+        else:
+            seen_code_hashes[code_hash] = turn
+            consecutive_ro_repeats = 0
 
         messages.append({"role": "assistant", "content": content})
         msg_meta.append({"turn": turn, "tools": []})
 
-        calls, parse_errors = extract_tool_calls(content, raw_tool_calls=raw_tool_calls)
         if not calls:
             err_msg = (
                 "; ".join(parse_errors)
                 if parse_errors
                 else "No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls."
             )
+            raw_snippet = _truncate_raw_snippet(content, max_chars=PARSE_ERROR_RAW_SNIPPET_MAX_CHARS)
             if run_dir:
                 _append_turn_log(
                     run_dir,
@@ -2295,8 +2598,14 @@ def _run_task_loop_turns(
                         "event": "turn_parse_error",
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": comp_tokens,
+                        "reasoning_chars": reasoning_chars,
+                        "content_chars": content_chars,
+                        "finish_reason": finish_reason,
                         "tools": [],
                         "result_chars": len(err_msg),
+                        "error": err_msg[:500],
+                        "raw_snippet": raw_snippet,
+                        "compaction_count": len(turn_compactions),
                     },
                     label=label,
                     repo_root=repo_root,
@@ -2307,11 +2616,15 @@ def _run_task_loop_turns(
                     "seed": seed,
                     "passed": False,
                     "err": err_msg,
+                    "raw_snippet": raw_snippet,
                     "stop": "repeat_error",
                     "gen_s": gen_s,
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "reasoning_chars": reasoning_chars,
+                    "content_chars": content_chars,
+                    "finish_reason": finish_reason,
                     "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
@@ -2321,11 +2634,15 @@ def _run_task_loop_turns(
                 "seed": seed,
                 "passed": False,
                 "err": err_msg,
+                "raw_snippet": raw_snippet,
                 "tool_calls": [],
                 "gen_s": gen_s,
                 "tokens": comp_tokens,
                 "prompt_tokens": prompt_tokens,
                 "preflight_prompt_tokens": est_prompt_tokens,
+                "reasoning_chars": reasoning_chars,
+                "content_chars": content_chars,
+                "finish_reason": finish_reason,
                 "compaction": turn_compactions,
             })
             last_turn_err = err_msg
@@ -2368,6 +2685,8 @@ def _run_task_loop_turns(
                 turn_tool_events.append({"tool": "finish", "args": targs_summary, "ok": True, "result_chars": 0})
                 continue
             if tname == "run_tests":
+                run_tests_calls += 1
+                loop_state["run_tests_calls"] = run_tests_calls
                 if not has_tests:
                     msg = "This task has no automated test command; call finish when your edits are complete."
                     call_summaries.append({"tool": "run_tests", "ok": True})
@@ -2409,21 +2728,37 @@ def _run_task_loop_turns(
                 turn_errors.append(comp_out)
                 result_lines.append(f"[{idx}] {tname} ERROR:\n{comp_out}")
 
+        if read_only_repeat_matched_turn is not None:
+            result_lines.append(
+                f"Note: You already issued this identical read-only call on turn {read_only_repeat_matched_turn}. "
+                "Avoid repeating the same read; proceed to apply edits with search_replace/create_file or call run_tests."
+            )
+
         msg_meta[-1]["tools"] = list(turn_tool_events)
 
         if run_dir:
+            turn_ev = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "task_id": clean_task["id"],
+                "turn": turn,
+                "event": "turn_tools",
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": comp_tokens,
+                "reasoning_chars": reasoning_chars,
+                "content_chars": content_chars,
+                "finish_reason": finish_reason,
+                "tools": turn_tool_events,
+                "compaction_count": len(turn_compactions),
+            }
+            if read_only_repeat_matched_turn is not None:
+                turn_ev["read_only_repeat_matched_turn"] = read_only_repeat_matched_turn
+                turn_ev["reply_hash"] = code_hash
+            if parse_errors:
+                turn_ev["parse_errors"] = parse_errors
+                turn_ev["raw_snippet"] = _truncate_raw_snippet(content, max_chars=PARSE_ERROR_RAW_SNIPPET_MAX_CHARS)
             _append_turn_log(
                 run_dir,
-                {
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "task_id": clean_task["id"],
-                    "turn": turn,
-                    "event": "turn_tools",
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": comp_tokens,
-                    "tools": turn_tool_events,
-                    "compaction_count": len(turn_compactions),
-                },
+                turn_ev,
                 label=label,
                 repo_root=repo_root,
             )
@@ -2452,12 +2787,17 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "reasoning_chars": reasoning_chars,
+                    "content_chars": content_chars,
+                    "finish_reason": finish_reason,
                     "compaction": turn_compactions,
                 })
                 break
             else:
                 if not ran_tests_this_turn or dirty_since_last_test:
                     t_ok, t_out = run_tests(clean_task, worktree_dir)
+                    finish_tests_calls += 1
+                    loop_state["finish_tests_calls"] = finish_tests_calls
                     t_out_clean, t_trunc = compact_test_output(t_out or "")
                     if t_trunc["truncated"]:
                         _record_compaction_event(turn, "test_truncate", {"tool": "finish_tests", **t_trunc}, turn_compactions)
@@ -2478,6 +2818,9 @@ def _run_task_loop_turns(
                         "tokens": comp_tokens,
                         "prompt_tokens": prompt_tokens,
                         "preflight_prompt_tokens": est_prompt_tokens,
+                        "reasoning_chars": reasoning_chars,
+                        "content_chars": content_chars,
+                        "finish_reason": finish_reason,
                         "compaction": turn_compactions,
                     })
                     break
@@ -2498,6 +2841,9 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "reasoning_chars": reasoning_chars,
+                    "content_chars": content_chars,
+                    "finish_reason": finish_reason,
                     "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
@@ -2519,6 +2865,9 @@ def _run_task_loop_turns(
                     "tokens": comp_tokens,
                     "prompt_tokens": prompt_tokens,
                     "preflight_prompt_tokens": est_prompt_tokens,
+                    "reasoning_chars": reasoning_chars,
+                    "content_chars": content_chars,
+                    "finish_reason": finish_reason,
                     "compaction": turn_compactions,
                 })
                 stop_reason = "repeat_error"
@@ -2537,6 +2886,9 @@ def _run_task_loop_turns(
             "tokens": comp_tokens,
             "prompt_tokens": prompt_tokens,
             "preflight_prompt_tokens": est_prompt_tokens,
+            "reasoning_chars": reasoning_chars,
+            "content_chars": content_chars,
+            "finish_reason": finish_reason,
             "compaction": turn_compactions,
         })
 
@@ -2560,14 +2912,35 @@ def _run_task_loop_turns(
             messages.append({"role": "user", "content": feedback})
             msg_meta.append({"turn": turn, "tools": list(turn_tool_events)})
 
-    # If the loop stopped on max_turns/budget after edits without a final test check, evaluate final state once
-    if stop_reason in ("max_turns", "budget") and has_tests and dirty_since_last_test:
-        t_ok, _ = run_tests(clean_task, worktree_dir)
-        if t_ok:
-            final_passed = True
-            stop_reason = "pass"
-            if history:
-                history[-1]["passed"] = True
+    # Fix rank 3: if the loop ended without aborting and without calling run_tests (or with edits
+    # since the last test check), auto-run tests once. Keep the end-of-loop status as a separate
+    # diagnostic field that NEVER overwrites stop_reason to "pass" and NEVER sets passed=True
+    # (only hidden offline grading counts).
+    if (
+        has_tests
+        and stop_reason not in ABORT_STOP_REASONS
+        and stop_reason != "pass"
+        and ((run_tests_calls == 0 and finish_tests_calls == 0) or dirty_since_last_test)
+    ):
+        t_ok, t_out = run_tests(clean_task, worktree_dir)
+        t_out_clean, _ = compact_test_output(t_out or "")
+        loop_state["auto_run_tests"] = True
+        loop_state["end_of_loop_test_passed"] = bool(t_ok)
+        if run_dir:
+            _append_turn_log(
+                run_dir,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "task_id": clean_task["id"],
+                    "turn": history[-1]["turn"] if history else 0,
+                    "event": "auto_run_tests",
+                    "passed": bool(t_ok),
+                    "dirty_since_last_test": dirty_since_last_test,
+                    "result_chars": len(t_out_clean),
+                },
+                label=label,
+                repo_root=repo_root,
+            )
 
     return stop_reason, final_passed, leak_branch, accumulated_completion_tokens
 
@@ -2787,6 +3160,10 @@ def run_task_loop(
         "total_completion_tokens": accumulated_completion_tokens,
         "compaction_events_total": int(loop_state.get("compaction_events_total", 0)),
         "compaction_chars_saved": int(loop_state.get("compaction_chars_saved", 0)),
+        "run_tests_calls": int(loop_state.get("run_tests_calls", 0)),
+        "finish_tests_calls": int(loop_state.get("finish_tests_calls", 0)),
+        "auto_run_tests": bool(loop_state.get("auto_run_tests", False)),
+        "end_of_loop_test_passed": loop_state.get("end_of_loop_test_passed"),
         "final_diff": final_diff,
     }
     if leak_branch is not None:
@@ -2947,12 +3324,13 @@ def selftest():
         assert res_ovf["harness_failure"] is False
         print("[OK] Context preflight overflow verified")
 
-        # Case D: Head+tail tool/test truncation and stale conversation compaction
-        big_lines = "\n".join(f"line_{i:04d}: payload" for i in range(250))
+        # Case D: Head+tail tool/test truncation (aligned at 250 lines) and pressure-gated stale compaction
+        big_lines = "\n".join(f"line_{i:04d}: payload" for i in range(TOOL_RESULT_MAX_LINES + 50))
         comp_tool, info_tool = compact_tool_output(big_lines)
         assert info_tool["truncated"] is True and info_tool["elided_lines"] > 0
-        assert "line_0000:" in comp_tool and "line_0249:" in comp_tool and "elided" in comp_tool
-        comp_msgs, _, comp_ev = compact_conversation_messages([
+        assert "line_0000:" in comp_tool and f"line_{TOOL_RESULT_MAX_LINES + 49:04d}:" in comp_tool and "elided" in comp_tool
+        # Below Stage 1 pressure threshold: keep verbatim
+        sample_msgs = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "task"},
             {"role": "assistant", "content": "a0"},
@@ -2961,11 +3339,15 @@ def selftest():
             {"role": "user", "content": "Tool results:\n[1] read_file OK:\nrecent1"},
             {"role": "assistant", "content": "a2"},
             {"role": "user", "content": "Tool results:\n[1] read_file OK:\nrecent2"},
-        ])
+        ]
+        _, _, low_ev = compact_conversation_messages(sample_msgs, slot_ctx=SLOT_CTX_DEFAULT)
+        assert low_ev["compacted"] is False, f"Expected Stage 1 skipped under low pressure: {low_ev}"
+        # Above Stage 1 pressure threshold: compact stale tool output while preserving recent2
+        comp_msgs, _, comp_ev = compact_conversation_messages(sample_msgs, slot_ctx=1000, reserved_output=200)
         assert comp_ev["compacted"] is True and comp_ev["msgs_compacted"] >= 1
         assert comp_msgs[3]["content"].startswith("[compacted stale tool output")
         assert "recent2" in comp_msgs[7]["content"]
-        print("[OK] Tool output truncation and stale history compaction verified")
+        print("[OK] Tool output truncation and pressure-gated stale history compaction verified")
 
     finally:
         shutil.rmtree(temp_dir)
@@ -3032,6 +3414,7 @@ def server_ask(model, api=None):
             "tool_calls": msg.get("tool_calls"),
             "reasoning_chars": len(msg.get("reasoning_content") or ""),
             "finish": ch.get("finish_reason"),
+            "finish_reason": ch.get("finish_reason"),
             "usage": resp.get("usage", {}),
             "gen_s": round(time.time() - t, 2),
         }
@@ -3068,15 +3451,29 @@ def compute_keep_drop(testable_passed, testable_total, approved_final, total_tas
 
 
 
+def _resolve_task_target_repo(task, base_target_repo):
+    """Resolve per-task git repository path (supporting both a single bare repo and a repos_dir of <name>.git)."""
+    if base_target_repo and os.path.isdir(base_target_repo):
+        repo_name = task.get("repo_name")
+        if repo_name:
+            cand = os.path.join(base_target_repo, f"{repo_name}.git")
+            if os.path.isdir(cand):
+                return cand
+    return base_target_repo
+
+
 def load_task_suite(task_suite="v2"):
-    """Load tasks and default target git repository path for the requested suite ('v2' or 'v3')."""
+    """Load tasks and default target git repository path for the requested suite ('v2', 'v3', or 'v4')."""
     suite = (task_suite or "v2").strip().lower()
     if suite in ("v2", "v1", "dev"):
         return tasks_item6.load_tasks(), None
     if suite == "v3":
         import tasks_item6_v3  # noqa: E402
         return tasks_item6_v3.load_tasks(), tasks_item6_v3.DEFAULT_V3_REPO_DIR
-    raise ValueError(f"Unknown task suite: {task_suite!r} (expected 'v2' or 'v3')")
+    if suite == "v4":
+        import tasks_item6_v4  # noqa: E402
+        return tasks_item6_v4.load_tasks(), tasks_item6_v4.DEFAULT_V4_REPOS_DIR
+    raise ValueError(f"Unknown task suite: {task_suite!r} (expected 'v2', 'v3', or 'v4')")
 
 
 def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX_TURNS_DEFAULT,
@@ -3163,6 +3560,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         clean_task = tasks_item6.strip_hidden(task)
         task_id = clean_task["id"]
         base_sha = clean_task["base_commit"]
+        task_target_repo = _resolve_task_target_repo(task, effective_target_repo)
         # Host-memory-only guard task: hidden_diff, merged_commit, and hidden_sentinel live strictly
         # in host-side process memory for check_prompt_leak and are NEVER written to wt_dir, sandbox
         # TMPDIR/env/argv, run.log, or turn_events.jsonl (run_task_loop strips them via strip_hidden).
@@ -3172,13 +3570,13 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         if dict.__contains__(task, "hidden_diff"):
             guard_task["hidden_diff"] = dict.__getitem__(task, "hidden_diff")
         elif "merged_commit" in guard_task:
-            guard_task["hidden_diff"] = tasks_item6.get_hidden_diff(task, repo_root=effective_target_repo)
+            guard_task["hidden_diff"] = tasks_item6.get_hidden_diff(task, repo_root=task_target_repo)
         guard_task["hidden_sentinel"] = run_sentinel
 
         wt_dir = tempfile.mkdtemp(prefix=f"wt_{label}_{task_id}_")
         t_start = time.time()
         try:
-            create_isolated_scratch_repo(effective_target_repo, base_sha, wt_dir)
+            create_isolated_scratch_repo(task_target_repo, base_sha, wt_dir)
             res = run_task_loop(
                 guard_task,
                 ask_fn,
@@ -3261,7 +3659,7 @@ def run_subcommand(label, tasks_arg=None, api=API_URL, model=None, max_turns=MAX
         res["server"] = srv_info
 
         diff_file = os.path.join(diffs_dir, f"{task_id}.diff")
-        with open(diff_file, "w", encoding="utf-8") as df:
+        with open(diff_file, "w", encoding="utf-8", newline="") as df:
             df.write(res["final_diff"])
         res["diff_file"] = os.path.relpath(diff_file, repo_root) if diff_file.startswith(repo_root) else diff_file
 
@@ -3568,18 +3966,19 @@ def grade_subcommand(label, reviews_file=None, repo_root=None, results_dir=None,
         diff_empty = not bool(local_diff.strip())
         stop_reason = row.get("stop_reason")
         in_loop_passed = bool(row.get("passed")) if has_tests else None
+        task_target_repo = _resolve_task_target_repo(task, effective_target_repo)
         if has_tests:
             testable_total += 1
             if diff_empty:
                 passed = False
                 grade_test_out = "empty diff"
             else:
-                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=effective_target_repo)
+                passed, grade_test_out = regrade_task_diff(task, local_diff, repo_root=task_target_repo)
         else:
             passed = None
             grade_test_out = ""
 
-        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=effective_target_repo)
+        hidden_diff = task.get("hidden_diff") or tasks_item6.get_hidden_diff(task, repo_root=task_target_repo)
         diff_metrics = evaluate_diff(local_diff, hidden_diff)
 
         rev = reviews_by_id.get(tid)
@@ -3720,7 +4119,7 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
     parser.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
     parser.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/diff/grade outputs (default bench/loop/results)")
-    parser.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    parser.add_argument("--task-suite", type=str, choices=["v2", "v3", "v4"], default="v2", help="Task suite ('v2' dev PRs, 'v3' more-itertools dev PRs, or 'v4' unseen external PRs)")
     parser.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits (defaults to repo_root for v2 or DEFAULT_V3_REPO_DIR for v3)")
 
     subparsers = parser.add_subparsers(dest="subcommand")
@@ -3738,14 +4137,14 @@ def main(argv=None):
     p_run.add_argument("--resume", action="store_true", default=False, help="Resume run: skip already completed tasks")
     p_run.add_argument("--run-dir", type=str, default=None, help="Uncommitted scratch run dir for per-turn instrumentation and leak histories (default /tmp/lab-seats/<label>/)")
     p_run.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/diff outputs (default bench/loop/results)")
-    p_run.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    p_run.add_argument("--task-suite", type=str, choices=["v2", "v3", "v4"], default="v2", help="Task suite ('v2' dev PRs, 'v3' more-itertools dev PRs, or 'v4' unseen external PRs)")
     p_run.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits")
 
     p_grade = subparsers.add_parser("grade", help="Grade recorded worktree diffs and compute KEEP/DROP")
     p_grade.add_argument("--label", type=str, default="item6-pilot-v2", help="Run label")
     p_grade.add_argument("--reviews-file", type=str, default=None, help="Path to adversarial-reviewer verdicts JSON")
     p_grade.add_argument("--results-dir", type=str, default=None, help="Override directory for JSONL/grade outputs (default bench/loop/results)")
-    p_grade.add_argument("--task-suite", type=str, choices=["v2", "v3"], default="v2", help="Task suite ('v2' dev PRs or 'v3' unseen external PRs)")
+    p_grade.add_argument("--task-suite", type=str, choices=["v2", "v3", "v4"], default="v2", help="Task suite ('v2' dev PRs, 'v3' more-itertools dev PRs, or 'v4' unseen external PRs)")
     p_grade.add_argument("--target-repo", type=str, default=None, help="Path to target git repository containing task commits")
 
     args = parser.parse_args(argv)

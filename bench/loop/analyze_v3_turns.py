@@ -18,8 +18,12 @@ import os
 from pathlib import Path
 import re
 import statistics
+import subprocess
 import sys
 from typing import Any
+
+# Commit SHA of bench/loop/pilot_pr.py that actually executed Item 6 Pilot v3 (docs/item6-pilot.md Section 16).
+V3_RUN_GIT_REV = "ddcbbfb94403926c46644eaac978db268f8df848"
 
 KNOWN_TOOLS = (
     "list_files",
@@ -156,9 +160,31 @@ def _parse_diff_files(diff_text: str) -> list[str]:
     return paths
 
 
-def inspect_pilot_source(pilot_source_path: Path) -> dict[str, Any]:
+def _read_pilot_source_text(
+    pilot_source_path: Path | None = None,
+    pilot_git_rev: str | None = V3_RUN_GIT_REV,
+) -> str:
+    """Read bench/loop/pilot_pr.py from the pinned v3 run git commit (default) or a disk path."""
+    if pilot_git_rev:
+        repo_root = Path(__file__).resolve().parents[2]
+        res = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{pilot_git_rev}:bench/loop/pilot_pr.py"],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0 and res.stdout:
+            return res.stdout
+    if pilot_source_path is None:
+        pilot_source_path = Path(__file__).resolve().parent / "pilot_pr.py"
+    return pilot_source_path.read_text(encoding="utf-8")
+
+
+def inspect_pilot_source(
+    pilot_source_path: Path | None = None,
+    pilot_git_rev: str | None = V3_RUN_GIT_REV,
+) -> dict[str, Any]:
     """Inspect bench/loop/pilot_pr.py statically to cite exact line numbers and reachability."""
-    lines = pilot_source_path.read_text(encoding="utf-8").splitlines()
+    lines = _read_pilot_source_text(pilot_source_path, pilot_git_rev=pilot_git_rev).splitlines()
 
     def _find_first(substr: str, start_line: int = 1, end_line: int | None = None) -> int | None:
         end_idx = len(lines) if end_line is None else min(len(lines), end_line)
@@ -271,8 +297,9 @@ def inspect_pilot_source(pilot_source_path: Path) -> dict[str, Any]:
 
 def analyze_v3_records(
     results_dir: Path,
-    pilot_source_path: Path,
+    pilot_source_path: Path | None = None,
     label: str = "item6-pilot-v3",
+    pilot_git_rev: str | None = V3_RUN_GIT_REV,
 ) -> dict[str, Any]:
     """Analyze committed v3 records and return the structured JSON-serializable summary."""
     jsonl_path = results_dir / f"{label}.jsonl"
@@ -287,7 +314,7 @@ def analyze_v3_records(
     run_log_compactions = _parse_run_log_compactions(run_log_path)
     grade_data = json.loads(grade_path.read_text(encoding="utf-8")) if grade_path.exists() else {}
     grade_by_task = {item["task_id"]: item for item in grade_data.get("per_task", [])}
-    source_info = inspect_pilot_source(pilot_source_path)
+    source_info = inspect_pilot_source(pilot_source_path, pilot_git_rev=pilot_git_rev)
 
     # Index turn_events by task_id preserving file order and 1-based line number
     events_by_task: dict[str, list[dict[str, Any]]] = {r["task_id"]: [] for r in jsonl_rows}
@@ -1052,7 +1079,12 @@ def main(argv: list[str] | None = None) -> int:
         "--pilot-source",
         type=Path,
         default=repo_root / "bench" / "loop" / "pilot_pr.py",
-        help="Path to bench/loop/pilot_pr.py for static reachability & line-number citations.",
+        help="Path to bench/loop/pilot_pr.py (fallback when --pilot-git-rev is empty).",
+    )
+    parser.add_argument(
+        "--pilot-git-rev",
+        default=V3_RUN_GIT_REV,
+        help="Git revision of bench/loop/pilot_pr.py that ran v3 (default: ddcbbfb; pass '' to read --pilot-source).",
     )
     parser.add_argument(
         "--label",
@@ -1071,6 +1103,7 @@ def main(argv: list[str] | None = None) -> int:
         results_dir=args.results_dir,
         pilot_source_path=args.pilot_source,
         label=args.label,
+        pilot_git_rev=args.pilot_git_rev or None,
     )
     rendered = json.dumps(summary, indent=2) + "\n"
     if args.output is not None:

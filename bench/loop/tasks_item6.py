@@ -325,7 +325,8 @@ def get_hidden_diff(task, repo_root=None):
     if repo_root:
         cmd = ["git", "-C", repo_root, "diff", f"{base}..{merged}"]
     try:
-        return subprocess.check_output(cmd, stderr=subprocess.PIPE, text=True)
+        raw = subprocess.check_output(cmd, stderr=subprocess.PIPE)
+        return raw.decode("utf-8", errors="replace")
     except Exception as e:
         return f"# Error retrieving hidden diff: {e}"
 
