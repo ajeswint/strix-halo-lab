@@ -814,7 +814,7 @@ Implemented in `bench/loop/select_v4.py` and verified by CPU tests in `bench/loo
 
 ```bash
 git -C /home/aj/projects/strix-halo-lab fetch origin main && git -C /home/aj/projects/strix-halo-lab worktree add --detach /tmp/wt-item6-v4-practice origin/main
-WT=/tmp/wt-item6-v4-practice EXPECT_HEAD=$(git -C /tmp/wt-item6-v4-practice rev-parse HEAD) TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /tmp/wt-item6-v4-practice/bench/loop/runs/item6-v4-practice/run.sh >/dev/null 2>&1 &
+WT=/tmp/wt-item6-v4-practice EXPECT_HEAD=<40-hex SHA typed by hand, verified against git rev-parse HEAD> TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /tmp/wt-item6-v4-practice/bench/loop/runs/item6-v4-practice/run.sh >/dev/null 2>&1 &
 ```
 
 #### Step 2: Counted Unseen v4 Pilot Run (`item6-pilot-v4` on `lark-parser/lark`)
@@ -824,7 +824,7 @@ WT=/tmp/wt-item6-v4-practice EXPECT_HEAD=$(git -C /tmp/wt-item6-v4-practice rev-
 
 ```bash
 git -C /home/aj/projects/strix-halo-lab fetch origin main && git -C /home/aj/projects/strix-halo-lab worktree add --detach /tmp/wt-item6-pilot-v4 origin/main
-WT=/tmp/wt-item6-pilot-v4 EXPECT_HEAD=$(git -C /tmp/wt-item6-pilot-v4 rev-parse HEAD) TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /tmp/wt-item6-pilot-v4/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
+WT=/tmp/wt-item6-pilot-v4 EXPECT_HEAD=<40-hex SHA typed by hand, verified against git rev-parse HEAD> TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /tmp/wt-item6-pilot-v4/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
 ```
 
 - If the external bare mirror does not yet exist on disk, populate it read-only before launching:
@@ -879,6 +879,213 @@ mkdir -p /data/datasets/item6-v4-repos && git clone --bare https://github.com/la
   - **Task List, Grading & Absolute KEEP / DROP Bars (unchanged)**: Same 7 frozen `lark-parser/lark` PRs (Section 18.5, pinned HEAD `9a4fb9c7458e8155636773a3cded0016d52516da`), same outer `/usr/bin/bwrap` read-only authoritative grading, schema v2, and Section 15.5 / 18.1 absolute bars (`KEEP`: $\ge 4/7$ tests AND $\ge 3/7$ blind Grok 4.7 high approvals AND avg `hand_fix_lines` $\le 20$; `DROP`: $\le 2/7$ tests OR $< 2/7$ approvals; `INCONCLUSIVE` defaults to `DROP`).
 - **Step 2 Authorization Gate (Still Pending AJ's Separate Yes)**:
   - The counted 7-task `lark-parser/lark` run (`item6-pilot-v4`, Section 18.6 Step 2) **still requires AJ's separate yes** after this PR is merged to `main` and verified via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`. No authorization for Step 2 is recorded in this commit.
+
+## 19. Item 6 Pilot v4 Results (2026-11-22 CT)
+
+Final post-run results for Item 6 pilot v4 (`label = item6-pilot-v4`), the counted evaluation of the single-model `Qwen3.6-35B-A3B` loop with Section 18.2 telemetry and all four Section 18.3 ranked harness fixes on 7 unseen `lark-parser/lark` PRs (Section 18.4–18.5), graded offline under the unchanged pre-registered Section 18.1 / 15.5 absolute bars. **No GPU session starts in this commit.**
+
+### AJ Counted-Run Authorization (Verbatim)
+
+From `bench/loop/results/item6-pilot-v4.run1/AJ-GO-COUNTED.txt` (byte-identical copy of `/tmp/lab-seats/item6-pilot-v4/AJ-GO-COUNTED.txt`, dated **Nov 22 2026 8:44 AM CST**):
+
+> `AJ yes for COUNTED v4 lark run: Nov 22 2026 8:44 AM CST, replying to "7 lark tasks still needs a separate yes": "yes"`
+
+### Official Decision & Summary Metrics
+
+Official post-review grade computed through the merged `bench/loop/pilot_pr.py grade` path (`--label item6-pilot-v4 --task-suite v4 --target-repo /data/datasets/item6-v4-repos/lark.git --reviews-file bench/loop/results/item6-pilot-v4.reviews.json`, staged via `--results-dir` so the frozen run-time file `bench/loop/results/item6-pilot-v4.grade.json` covered by `item6-pilot-v4.SHA256SUMS` stays byte-identical) and saved verbatim to `bench/loop/results/item6-pilot-v4.official-grade.json`:
+
+```json
+{
+  "schema_version": 2,
+  "label": "item6-pilot-v4",
+  "tasks_evaluated": 7,
+  "testable_tasks": 7,
+  "testable_passed": 4,
+  "test_pass_rate": 0.5714,
+  "reviews_complete": true,
+  "approved_first_pass": 2,
+  "approved_final": 2,
+  "final_approve_rate": 0.2857,
+  "avg_hand_fix_lines_per_approved": 0.0,
+  "decision": "INCONCLUSIVE"
+}
+```
+
+| Metric | v4 Official Result | Target (KEEP, Sec. 18.1) | Threshold (DROP, Sec. 18.1) |
+| :--- | :--- | :--- | :--- |
+| **Schema Version** | `2` (Section 14) | — | — |
+| **Tasks Evaluated** | 7 | 7 | 7 |
+| **Testable Tasks** | 7 | — | — |
+| **In-Loop Test Passes** *(non-authoritative)* | **3 / 7** (`42.9%`: `pr1543`, `pr1619`, `pr1641`) | — | — |
+| **Authoritative Offline Test Passes** | **4 / 7** (`57.1%` / `0.5714`: `pr1543`, `pr1619`, `pr1624`, `pr1632`) | $\ge 4/7$ ($\ge 50.0\%$) | $\le 2/7$ ($< 33.3\%$) |
+| **Reviews Complete** | `true` (5 Grok reviewed, 2 auto non-approval) | `true` | — |
+| **First-Pass Reviewer Approvals** | **2 / 7** (`28.6%` / `0.2857`: `pr1543`, `pr1619`) | — | — |
+| **Final Reviewer Approvals** | **2 / 7** (`28.6%` / `0.2857`: `pr1543`, `pr1619`) | $\ge 3/7$ ($\ge 42.9\%$) | $< 2/7$ ($< 28.6\%$) |
+| **Avg Hand-Fix Lines / Approved** | **`0.0`** (2 approved PRs: `pr1543` = `0`, `pr1619` = `0`) | $\le 20$ lines | $> 20$ lines (INCONCLUSIVE) |
+| **Tamper Detected** | **0 / 5 reviewed** (`tamper = false` on `pr1543`, `pr1619`, `pr1624`, `pr1632`, `pr1641`; `tamper = null` on the 2 unreviewed empty-diff tasks `pr1601`, `pr1613` per Sec. 14) | 0 | $> 0$ |
+| **Context Overflows / Harness Failures** | **0 / 7** overflows, **0 / 7** `task_error` | — | — |
+| **Official Decision** | **`INCONCLUSIVE` $\rightarrow$ defaults to DROP** (Sec. 18.1 / 15.5) | **KEEP** | **DROP** |
+
+- **Decision Basis**: Under Section 18.1, **KEEP** requires $\ge 4/7$ authoritative tests **AND** $\ge 3/7$ blind Grok 4.7 high approvals **AND** average `hand_fix_lines` $\le 20$; **DROP** triggers at $\le 2/7$ tests **OR** $< 2/7$ approvals; **INCONCLUSIVE** defaults to **DROP** unless AJ explicitly approves a bounded extension. Here v4 meets the authoritative test bar (`4/7 = 57.1% >= 50.0%`) and the approved hand-fix bar (`0.0 <= 20`), clears the DROP approval floor (`2/7` is not `< 2/7`), and misses the KEEP approval bar by 1 PR (`2/7 < 3/7`), yielding **`INCONCLUSIVE` (defaults to DROP)**.
+- **Unofficial Run-Time Grade Comparison**: The frozen pre-review file `bench/loop/results/item6-pilot-v4.grade.json` *(unofficial run-time grade, `reviews_complete = false`, `decision = "PENDING_REVIEW"`)* recorded the exact same authoritative offline test result (`testable_passed = 4`, `test_pass_rate = 0.5714`, identical per-task `test_passed` and `diff_metrics`) before Tier 2 reviews were merged. It is preserved unmodified because it is covered by `item6-pilot-v4.SHA256SUMS`; `bench/loop/results/item6-pilot-v4.official-grade.json` is the official post-review grade.
+
+### Run Provenance & Integrity Checksums
+
+- **Run Head SHA**: `3122610984447d7010a75a08be56c0eac6ec6dc1` (`3122610`, PR #33 merge commit, verified reachable from `origin/main` by `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`, run from detached worktree `/tmp/wt-item6-pilot-v4`).
+- **Execution Window & Serving**: Single uninterrupted run `2026-11-22T15:10:58-06:00` to `2026-11-22T15:20:20-06:00` (`llmctl` session 87, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, build `b11669-620d2225c`, GTT `23.5 GiB`, GTT after stop `1.2 GiB`, `CEILING_SECONDS=4320`, `TASK_WALL_BUDGET=617`, `resume=0`, target bare repo `/data/datasets/item6-v4-repos/lark.git`).
+- **Total Wall Time, Turns & Tokens**: `run.status`: `done rc=0 wall_s=562 end=2026-11-22T15:20:20-06:00` (~9.4 minutes, well under the `4,320 s` / 1.2 GPU-hour ceiling; sum of per-task `wall_s = 545.75 s`; `56` total turns executed; `22,054` total completion tokens; `finish_reason = "stop"` on all `56/56` model-reply turns).
+- **Frozen Artifacts & Checksums**:
+  - `bench/loop/results/item6-pilot-v4.SHA256SUMS` is a byte-identical copy of `/tmp/lab-seats/item6-pilot-v4/SHA256SUMS` covering the 9 frozen run outputs (`item6-pilot-v4.jsonl`, unofficial run-time `item6-pilot-v4.grade.json`, and all 7 `.diff` files under `bench/loop/results/item6-pilot-v4.diffs/`), verified `9/9 OK` via `sha256sum -c item6-pilot-v4.SHA256SUMS` from `bench/loop/results/`.
+  - `bench/loop/results/item6-pilot-v4.run1/{run.log,run.status,turn_events.jsonl,AJ-GO-COUNTED.txt}` are byte-identical copies from `/tmp/lab-seats/item6-pilot-v4/` (`run.pid` excluded; zero `leak_history_*` files exist).
+  - `bench/loop/results/item6-pilot-v4.reviews.json` stores the verbatim Tier 2 Grok 4.7 high verdicts (`5` reviewed tasks, `2` empty-diff `auto_non_approval` entries).
+  - `bench/loop/results/item6-pilot-v4.official-grade.json` stores the official post-review grade.
+  - `bench/loop/results/item6-pilot-v4.final.SHA256SUMS` covers all 15 committed v4 result files, verified `15/15 OK`.
+
+### Per-Task Results
+
+| Task ID | PR # | Prompt Source | Stop Reason | Turns | Completion Tokens | Wall (s) | Diff Lines | Hidden Jaccard | In-Loop Test | Authoritative Test | Tier 2 Verdict | Tamper | Hand-Fix Lines |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v4_pr1543` | #1543 | PR #1543 | `pass` | 11 | 4,853 | 119.49 | 73 | 0.0897 | **PASS** | **PASS** | `APPROVE-WITH-NITS` | `false` | **0** |
+| `item6v4_pr1601` | #1601 | Issue #1598 | `repeat_error` | 3 | 287 | 10.92 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6v4_pr1619` | #1619 | Issue #1618 | `pass` | 7 | 1,078 | 28.21 | 13 | 0.0345 | **PASS** | **PASS** | `APPROVE-WITH-NITS` | `false` | **0** |
+| `item6v4_pr1613` | #1613 | Issue #1500 | `repeat_code` | 9 | 3,587 | 87.21 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6v4_pr1624` | #1624 | PR #1622 *(via #1624)* | `max_turns` | 12 | 6,778 | 162.88 | 72 | 0.1400 | **FAIL** | **PASS** | `REQUEST-CHANGES` | `false` | 1 *(n/a for approved bar)* |
+| `item6v4_pr1632` | #1632 | Issue #1630 | `repeat_code` | 6 | 2,546 | 60.89 | 31 | 0.1481 | **FAIL** | **PASS** | `REQUEST-CHANGES` | `false` | 5 *(n/a for approved bar)* |
+| `item6v4_pr1641` | #1641 | Commit subject *(GitHub 404)* | `pass` | 8 | 2,925 | 76.15 | 13 | 0.0800 | **PASS** | **FAIL** | `REQUEST-CHANGES` | `false` | 15 *(n/a for approved bar)* |
+
+Notes on `hand_fix_lines`:
+- Only the 2 approved tasks (`item6v4_pr1543`: `APPROVE-WITH-NITS`, `0` lines; `item6v4_pr1619`: `APPROVE-WITH-NITS`, `0` lines) enter `avg_hand_fix_lines_per_approved = 0.0`.
+- `item6v4_pr1624` (`1` line), `item6v4_pr1632` (`5` lines), and `item6v4_pr1641` (`15` lines) were all `REQUEST-CHANGES` (non-approved) and are reported above for completeness but excluded from the approved-PR hand-fix average.
+- The 2 empty-diff tasks (`item6v4_pr1601`, `item6v4_pr1613`) receive automatic `NON-APPROVAL` with no Grok review, `hand_fix_lines: null`, and `tamper: null` (Sections 10 and 14).
+
+### Tier 1 Discrepancy: In-Loop vs. Authoritative Offline Tests
+
+An earlier informal handoff mixed the two Tier 1 metrics ("4/7" alongside only 3 task names). The exact counts and differing tasks from `item6-pilot-v4.jsonl` and `item6-pilot-v4.official-grade.json` are:
+
+- **In-loop `passed = true` (`3 / 7` = `42.9%`, non-authoritative)**: `item6v4_pr1543`, `item6v4_pr1619`, `item6v4_pr1641`.
+- **Authoritative offline `test_passed = true` (`4 / 7` = `57.1%`, counts for Section 18.1 bars)**: `item6v4_pr1543`, `item6v4_pr1619`, `item6v4_pr1624`, `item6v4_pr1632` (`item6v4_pr1641`, `item6v4_pr1601`, and `item6v4_pr1613` are `false`).
+- **The 3 tasks where in-loop and authoritative test results diverge**:
+  1. **`item6v4_pr1624` (`in_loop_passed = false`, authoritative `test_passed = true`)**: The candidate diff applies the production stack fix in `lark/visitors.py` (`Transformer_NonRecursive.transform`), which passes the authoritative read-only test file offline. However, the candidate also added `test_transformer_variants_discard_with_preceding_sibling` in `tests/test_trees.py` where `start` returns `children` (yielding `['a', 'c']`) while the assertion expects `Tree('start', ['a', 'c'])`. That buggy self-written test failed in-loop `run_tests` (turn 7) and end-of-loop `auto_run_tests` (turn 11, after turn 10's attempted fix hit a parse error), ending `max_turns` (`in_loop_passed = false`) and triggering Grok's Tier 2 `REQUEST-CHANGES` (`1` hand-fix line).
+  2. **`item6v4_pr1632` (`in_loop_passed = false`, authoritative `test_passed = true`)**: The candidate diff applies the production fix in `lark/tree_templates.py` (`if res is not None:`), which passes the authoritative read-only test file offline. In `tests/test_tree_templates.py`, the candidate updated `test_template_search__same_tree_no_template` on turn 2, while its edit for the second old test (`test_template_search__same_tree_as_child__empty_generator`) failed parsing on turns 2 and 3 and repeated turn 3 verbatim on turn 5 (`repeat_code`). Consequently, end-of-loop `auto_run_tests` failed against the un-updated second test (`in_loop_passed = false`), and Grok returned `REQUEST-CHANGES` (`5` hand-fix lines).
+  3. **`item6v4_pr1641` (`in_loop_passed = true`, authoritative `test_passed = false`)**: The candidate diff changes only `ParserState.copy()` (`copy(self.lexer)`) in `lark/parsers/lalr_parser_state.py` without updating `InteractiveParser.copy()` in `lark/parsers/lalr_interactive_parser.py` and without adding a regression test in `tests/test_parser.py`. In-loop `run_tests` (turn 6) and `finish` (turn 7) ran against the unmodified `base_commit` test suite (which does not test `InteractiveParser.copy()` lexer isolation), exiting `0` (`stop_reason = "pass"`, `in_loop_passed = true`). Authoritative offline grading failed (`test_passed = false`), and Grok returned `REQUEST-CHANGES` (`15` hand-fix lines).
+
+### Peak Prompt Tokens, Compaction Counts, and Test Invocation Telemetry per Task
+
+Measured verbatim from `bench/loop/results/item6-pilot-v4.run1/turn_events.jsonl`, `bench/loop/results/item6-pilot-v4.run1/run.log`, and `bench/loop/results/item6-pilot-v4.jsonl` (prompt cap `57,344` tokens; Stage 1 trigger `28,672` tokens; Stage 2 target `43,008` tokens):
+
+| Task ID | Peak Prompt Tok (`usage` / `/tokenize` preflight; peak turn) | Total Compactions (`tool_truncate` / `turn_feedback_truncate` / `history_compact`) | Compaction Chars Saved | `run_tests_calls` | `finish_tests_calls` | `auto_run_tests` (`end_of_loop_test_passed`) | Reasoning Chars (sum / max) | Content Chars (sum / max) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v4_pr1543` | `13,342` / `13,668` (turn 10) | `5` (`3` / `2` / `0`) | `22,100` | 1 | 1 | `false` (`null`) | `10,273` / `6,157` | `9,502` / `3,084` |
+| `item6v4_pr1601` | `953` / `1,087` (turn 2) | `0` (`0` / `0` / `0`) | `0` | 0 | 0 | `true` (`true`) | `706` / `388` | `349` / `186` |
+| `item6v4_pr1619` | `5,103` / `5,333` (turn 6) | `0` (`0` / `0` / `0`) | `0` | 1 | 1 | `false` (`null`) | `1,757` / `547` | `2,011` / `623` |
+| `item6v4_pr1613` | `9,438` / `9,716` (turn 8) | `2` (`1` / `1` / `0`) | `12,492` | 5 | 0 | `false` (`null`) | `11,996` / `7,128` | `1,695` / `445` |
+| `item6v4_pr1624` | `14,456` / `14,806` (turn 11) | `1` (`0` / `1` / `0`) | `297` | 1 | 0 | `true` (`false`) | `19,135` / `5,769` | `8,250` / `3,447` |
+| `item6v4_pr1632` | `7,067` / `7,273` (turn 5) | `1` (`0` / `1` / `0`) | `5,103` | 0 | 0 | `true` (`false`) | `5,600` / `2,819` | `4,497` / `2,595` |
+| `item6v4_pr1641` | `7,739` / `7,993` (turn 7) | `0` (`0` / `0` / `0`) | `0` | 1 | 1 | `false` (`null`) | `7,357` / `4,899` | `3,874` / `1,151` |
+| **Total / Peak** | **Peak: `14,456` / `14,806`** (`25.8%` of cap) | **`9` (`4` / `5` / `0`)** | **`39,992`** | **9** | **3** | **3 auto-runs** | **`56,824` / `7,128`** | **`30,178` / `3,447`** |
+
+- **Compaction Verification**: Total compaction count (`9`, `39,992` chars saved) agrees identically across `run.log` (`9` `COMPACTION` lines), `turn_events.jsonl` (`9` `"event": "compaction"` records), and `item6-pilot-v4.jsonl` (`compaction_events_total` sum `9`, `history[t]["compaction"]` sum `9`):
+  - `item6v4_pr1543`: turn 0 `tool_truncate` (`read_file`, `252->251` lines, `104` chars saved), turn 0 `tool_truncate` (`read_file`, `252->251` lines, `53` chars saved), turn 0 `turn_feedback_truncate` (`631->301` lines, `14,187` chars saved), turn 2 `tool_truncate` (`read_file`, `252->251` lines, `66` chars saved), turn 2 `turn_feedback_truncate` (`482->301` lines, `7,690` chars saved).
+  - `item6v4_pr1613`: turn 0 `tool_truncate` (`read_file`, `252->251` lines, `16` chars saved), turn 0 `turn_feedback_truncate` (`605->301` lines, `12,476` chars saved).
+  - `item6v4_pr1624`: turn 2 `turn_feedback_truncate` (`308->301` lines, `297` chars saved).
+  - `item6v4_pr1632`: turn 0 `turn_feedback_truncate` (`417->301` lines, `5,103` chars saved).
+  - **Zero** Stage 1 `stale_tool_summary` (`history_compact`) and **zero** Stage 2 compactions fired across all 7 tasks; peak prompt utilization (`14,806` `/tokenize` preflight on `pr1624` turn 11) remained roughly half the `28,672`-token Stage 1 trigger.
+- **`repeat_code` Telemetry**: Two tasks stopped on `repeat_code` (`item6v4_pr1613` turn 8 matching turn 7 after five consecutive `run_tests` calls with zero edits, `repeat_read_only = false`; `item6v4_pr1632` turn 5 matching turn 3's failed edit parse-error reply, `repeat_read_only = false`). Zero `read_only_repeat_matched_turn` events occurred.
+- **Test Invocation**: Every task (`7/7`) executed tests either in-loop (`5/7`: `pr1543`, `pr1619`, `pr1613`, `pr1624`, `pr1641`; `9` `run_tests` calls + `3` `finish` test runs) or via end-of-loop `auto_run_tests` (`pr1601`, `pr1624`, `pr1632`). On `item6v4_pr1601`, `auto_run_tests` reported `end_of_loop_test_passed = true` on the untouched `base_commit` tree (`dirty_since_last_test = false`), while `passed` stayed `false` and `stop_reason` stayed `"repeat_error"` per Rank 3.
+
+### Parse Errors & Verbatim `raw_snippet` Records
+
+Across all 56 turns, `turn_events.jsonl` recorded **7** full `turn_parse_error` turns across 4 tasks (all 7 matching `item6-pilot-v4.jsonl` `history[turn].{err, raw_snippet}` byte-for-byte) plus **1** partial parse error attached to a `turn_tools` event (`item6v4_pr1632` turn 2, where 2 valid `search_replace` calls succeeded while a third object failed parsing; `history[2]` in `item6-pilot-v4.jsonl` records `err = ""` and omits `raw_snippet` for that partial-error turn). Every `raw_snippet` below is quoted verbatim from the data (truncated only where the harness capped it at 500 chars):
+
+1. **`item6v4_pr1543`, turn 1** (`turn_parse_error`, `prompt_tokens = 4,364`, `completion_tokens = 63`, `reasoning_chars = 162`, `content_chars = 0`, `finish_reason = "stop"`):
+   - `error`: ``No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls.``
+   - `raw_snippet`: `""` *(empty string; `content_chars = 0`)*
+2. **`item6v4_pr1601`, turn 0** (`turn_parse_error`, `prompt_tokens = 736`, `completion_tokens = 151`, `reasoning_chars = 388`, `content_chars = 186`, `finish_reason = "stop"`):
+   - `error`: `JSON object is not a valid tool call (missing 'tool' name): {'args': {'path': 'lark/parsers/xearley.py'}}; JSON object is not a valid tool call (missing 'tool' name): {'args': {'path': '.', 'pattern': 'should not generate multiple start symbol items'}}`
+   - `raw_snippet` *(verbatim)*:
+     ````text
+     ```json
+     [{"tool": "read_file", {"args": {"path": "lark/parsers/xearley.py"}}, {"tool": "grep", {"args": {"path": ".", "pattern": "should not generate multiple start symbol items"}}}]
+     ```
+     ````
+3. **`item6v4_pr1601`, turn 1** (`turn_parse_error`, `prompt_tokens = 875`, `completion_tokens = 41`, `reasoning_chars = 31`, `content_chars = 81`, `finish_reason = "stop"`):
+   - `error`: `JSON object is not a valid tool call (missing 'tool' name): {'args': {'path': 'lark/parsers/xearley.py'}}`
+   - `raw_snippet` *(verbatim)*:
+     ````text
+     ```json
+     [{"tool": "read_file", {"args": {"path": "lark/parsers/xearley.py"}}}
+     ```
+     ````
+4. **`item6v4_pr1601`, turn 2** (`turn_parse_error`, `prompt_tokens = 953`, `completion_tokens = 95`, `reasoning_chars = 287`, `content_chars = 82`, `finish_reason = "stop"` -> `stop_reason = "repeat_error"`):
+   - `error`: `JSON object is not a valid tool call (missing 'tool' name): {'args': {'path': 'lark/parsers/xearley.py'}}`
+   - `raw_snippet` *(verbatim)*:
+     ````text
+     ```json
+     [{"tool": "read_file", {"args": {"path": "lark/parsers/xearley.py"}}}]
+     ```
+     ````
+5. **`item6v4_pr1624`, turn 1** (`turn_parse_error`, `prompt_tokens = 4,231`, `completion_tokens = 24`, `reasoning_chars = 126`, `content_chars = 0`, `finish_reason = "stop"`):
+   - `error`: ``No valid tool calls found. Respond with a ```json block containing a tool call or list of tool calls.``
+   - `raw_snippet`: `""` *(empty string; `content_chars = 0`)*
+6. **`item6v4_pr1624`, turn 10** (`turn_parse_error`, `prompt_tokens = 14,014`, `completion_tokens = 420`, `reasoning_chars = 297`, `content_chars = 1,482`, `finish_reason = "stop"`):
+   - `error`: `JSON object is not a valid tool call (missing 'tool' name): {'path': 'tests/test_trees.py', 'old': "        tree = Tree('start', [\n            Tree('keep', ['a']),\n            Tree('discard', ['b']),\n            Tree(`
+   - `raw_snippet` *(verbatim, truncated by harness at 500 chars)*:
+     ````text
+     Now fix the test - remove the `start` method so `__default__` creates the Tree:
+
+     ```json
+     [{"tool": "search_replace", "args": {"path": "tests/test_trees.py", "old": "        tree = Tree('start', [\n            Tree('keep', ['a']),\n            Tree('discard', ['b']),\n            Tree('keep', ['c']),\n        ])\n        for base in (Transformer, Transformer_InPlace, Transformer_NonRecursive, Transformer_InPlaceRecursive):\n            class T(base):\n                def start(self, children):\n ... [truncated 982 chars]
+     ````
+7. **`item6v4_pr1632`, turn 2** (`turn_tools` with partial `parse_errors`, `prompt_tokens = 5,738`, `completion_tokens = 1,352`, `reasoning_chars = 2,819`, `content_chars = 2,595`, `finish_reason = "stop"`; 2 `search_replace` calls succeeded while 1 failed parsing; `history[2].err = ""` and `raw_snippet` absent in `item6-pilot-v4.jsonl`):
+   - `parse_errors[0]`: `JSON object is not a valid tool call (missing 'tool' name): {'path': 'tests/test_tree_templates.py', 'old': '    def test_template_search__same_tree_as_child__empty_generator(self):\n        template = Template(SOME_NON_`
+   - `raw_snippet` *(verbatim from `turn_events.jsonl` line 56, truncated by harness at 500 chars)*:
+     ````text
+     Now I understand the issue clearly:
+
+     1. In `tree_templates.py` line 146, `if res:` treats empty dict `{}` as falsy, so zero-variable matches are dropped.
+     2. The fix is to change it to `if res is not None:` to distinguish "no match" (None) from "match with no bindings" ({}).
+     3. Two tests in `test_tree_templates.py` (lines 146-156) were written to match the broken behavior and need to be corrected.
+
+     Let me apply the fixes:
+
+     ```json
+     [{"tool": "search_replace", "args": {"path": "lark/tree_templates.... [truncated 2095 chars]
+     ````
+8. **`item6v4_pr1632`, turn 3** (`turn_parse_error`, `prompt_tokens = 6,508`, `completion_tokens = 195`, `reasoning_chars = 94`, `content_chars = 723`, `finish_reason = "stop"`):
+   - `error`: `JSON object is not a valid tool call (missing 'tool' name): {'path': 'tests/test_tree_templates.py', 'old': '    def test_template_search__same_tree_as_child__empty_generator(self):\n        template = Template(SOME_NON_`
+   - `raw_snippet` *(verbatim, truncated by harness at 500 chars)*:
+     ````text
+     ```json
+     [{"tool": "search_replace", "args": {"path": "tests/test_tree_templates.py", "old": "    def test_template_search__same_tree_as_child__empty_generator(self):\n        template = Template(SOME_NON_TEMPLATE_TREE, conf=self.conf)\n\n        self.assertEqual(\n            [], list(template.search(Tree(\"root\", children=[SOME_NON_TEMPLATE_TREE])))\n        )", "new": "    def test_template_search__same_tree_as_child__matched_result(self):\n        template = Template(SOME_NON_TEMPLATE_TREE, ... [truncated 223 chars]
+     ````
+
+### Results Split by Prompt Source
+
+| Prompt Source | Tasks ($n$) | Non-Empty Diffs | In-Loop Test Passes | Authoritative Offline Passes | Grok Approvals |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Linked issue** (`Issue #1598` / PR #1601, `Issue #1618` / PR #1619, `Issue #1500` / PR #1613, `Issue #1630` / PR #1632) | 4 | 2 / 4 (`pr1619`, `pr1632`) | 1 / 4 (`pr1619`) | **2 / 4** (`50.0%`: `pr1619`, `pr1632`) | **1 / 4** (`25.0%`: `pr1619`) |
+| **PR body / linked PR body** (`PR #1543`, `PR #1622` via PR #1624) | 2 | 2 / 2 (`pr1543`, `pr1624`) | 1 / 2 (`pr1543`) | **2 / 2** (`100.0%`: `pr1543`, `pr1624`) | **1 / 2** (`50.0%`: `pr1543`) |
+| **Commit subject only** (`PR #1641`, GitHub 404) | 1 | 1 / 1 (`pr1641`) | 1 / 1 (`pr1641`) | **0 / 1** (`0.0%`) | **0 / 1** (`0.0%`) |
+| **Total** | **7** | **5 / 7** | **3 / 7** (`42.9%`) | **4 / 7** (`57.1%`) | **2 / 7** (`28.6%`) |
+
+### Tier 2 Blind Review Summary
+
+Verbatim Grok 4.7 high verdicts (fresh `cursor-agent` session per task, `packet.md` only, `rc=0` on all 5, finished `2026-11-22T15:58:39-06:00`, `tamper = false` on all 5 reviewed diffs) are stored in `bench/loop/results/item6-pilot-v4.reviews.json`:
+
+- `item6v4_pr1543` (`APPROVE-WITH-NITS`, `0` hand-fix lines, `tamper = false`, session `3c245659-7832-46fe-b5f0-cadf94a147b4`): Doc updates accurate and `TypeError` guard in `visit_children_decor` in the right place. Non-blocking nits: `Interpreter.visit` docstring overstates traversal, `visit_children_decor` wording says replacing `tree.children` rather than the tree, `TypeError` fires on call rather than decoration and says "subclasses", and no test was added in `tests/test_trees.py`.
+- `item6v4_pr1619` (`APPROVE-WITH-NITS`, `0` hand-fix lines, `tamper = false`, session `449ce409-49f8-4317-9dc7-73b135aa9514`): Closure default-argument binding of `type_` correctly captures each terminal name per `CallChain` gate. Non-blocking nit: no regression test added for two keyword terminals with both `UnlessCallback` and `lexer_callbacks`.
+- `item6v4_pr1624` (`REQUEST-CHANGES`, `1` hand-fix line, `tamper = false`, session `96946c6e-04f6-417f-883f-97d04188d787`): Production `Transformer_NonRecursive.transform` `Discard` stack fix and discarded-root `None` handling are right; new test fails because `start` returns `children` (`['a', 'c']`) while the assertion expects `Tree('start', ['a', 'c'])`.
+- `item6v4_pr1632` (`REQUEST-CHANGES`, `5` hand-fix lines, `tamper = false`, session `65ce44be-64bc-49f9-82a3-bd18c06bccaa`): Production `if res is not None:` fix in `Template.search()` is right; `test_template_search__same_tree_no_template` was updated, but `test_template_search__same_tree_as_child__empty_generator` was left expecting an empty iterator and fails.
+- `item6v4_pr1641` (`REQUEST-CHANGES`, `15` hand-fix lines, `tamper = false`, session `d1efabd4-6955-4f24-b42f-3c53ebd33ad9`): Shallow `copy(self.lexer)` in `ParserState.copy()` alone does not fix `InteractiveParser.copy()`, which still passes the original `lexer_thread` and desyncs it from `parser_state.lexer`; no regression test added.
+
+### Unmeasured Confounds & Scope of the Decision
+
+1. **Tool-Call JSON Malformation & Fallback Scanner Interaction (Unmeasured)**: On `item6v4_pr1601` turns 0–2, the model emitted an extra `{` before `"args"` (`[{"tool": "read_file", {"args": ...}}]`), ending the task on turn 2 (`repeat_error`, 0 diff lines). On `item6v4_pr1624` turn 10 (the model's attempt to fix its 1-line test bug) and `item6v4_pr1632` turns 2–3 (the model's attempt to update the second old test), whose exact tails beyond 500 chars are truncated in `raw_snippet`, the outer `{"tool": "search_replace", "args": {...}}` object failed JSON decoding and the fallback scanner decoded the inner `args` dict (`missing 'tool' name`). Whether fixing JSON formatting / native tool calling would have converted `pr1624` (`1` hand-fix line), `pr1632` (`5` hand-fix lines), or `pr1601` into approvals is **unmeasured**.
+2. **Empty-Content Reply Turns (`content_chars = 0`, Unmeasured)**: Two turns (`item6v4_pr1543` turn 1 with `reasoning_chars = 162`, `item6v4_pr1624` turn 1 with `reasoning_chars = 126`) stopped with `finish_reason = "stop"` and zero visible content (`raw_snippet = ""`). Their cause and impact on the 12-turn budget (notably `pr1624`, which hit `max_turns`) are **unmeasured**.
+3. **One-Line Prompt on `item6v4_pr1641` (GitHub 404, Unmeasured)**: As recorded in Sections 18.4–18.5 and 18.7, GitHub returned HTTP 404 for PR `#1641`, leaving only the commit subject as prompt text; whether a full issue/PR body would have changed `pr1641`'s outcome is **unmeasured**.
+4. **Small Sample ($n = 7$) & Single Repository (`lark-parser/lark`)**: v4 tests 7 PRs from one external Python repository with no cloud-seat baseline on that repo and no post-review repair turn; `v4` (`4/7` tests, `2/7` approvals, `INCONCLUSIVE -> DROP`) vs. `v3` (`1/7` tests, `1/7` approvals, `DROP`) also changed repositories (`more-itertools` $\to$ `lark`), so the effect of the four v4 harness fixes vs. repository/PR difficulty is **confounded and unmeasured**.
+5. **Pre-Registered Default Stands**: Under Section 18.1, `INCONCLUSIVE` defaults to **DROP** unless AJ explicitly decides on a bounded extension.
+
 
 
 

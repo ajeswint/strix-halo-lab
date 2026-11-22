@@ -1,0 +1,72 @@
+diff --git a/lark/visitors.py b/lark/visitors.py
+index ff6e262..bd91e10 100644
+--- a/lark/visitors.py
++++ b/lark/visitors.py
+@@ -310,25 +310,33 @@ class Transformer_NonRecursive(Transformer[_Leaf_T, _Return_T]):
+             if isinstance(x, Tree):
+                 size = len(x.children)
+                 if size:
+-                    args = stack[-size:]
++                    args_raw = stack[-size:]
+                     del stack[-size:]
++                    # Filter out Discard placeholders so only kept children reach the callback
++                    args = [a for a in args_raw if a is not Discard]
+                 else:
+                     args = []
+ 
+                 res = self._call_userfunc(x, args)
+                 if res is not Discard:
+                     stack.append(res)
++                else:
++                    stack.append(Discard)
+ 
+             elif self.__visit_tokens__ and isinstance(x, Token):
+                 res = self._call_userfunc_token(x)
+                 if res is not Discard:
+                     stack.append(res)
++                else:
++                    stack.append(Discard)
+             else:
+                 stack.append(x)
+ 
+         if not stack:
+             return None     # type: ignore[return-value]
+         result, = stack  # We should have only one tree remaining
++        if result is Discard:
++            return None     # type: ignore[return-value]
+         # There are no guarantees on the type of the value produced by calling a user func for a
+         # child will produce. This means type system can't statically know that the final result is
+         # _Return_T. As a result a cast is required.
+diff --git a/tests/test_trees.py b/tests/test_trees.py
+index 7433ad1..b1ed0b3 100644
+--- a/tests/test_trees.py
++++ b/tests/test_trees.py
+@@ -424,6 +424,28 @@ class TestTrees(TestCase):
+             result = T().transform(copied)
+             self.assertEqual(result, Tree('start', [3, 7]))
+ 
++    def test_transformer_variants_discard_with_preceding_sibling(self):
++        """Discard on a non-last child must not corrupt the tree for any transformer variant."""
++        tree = Tree('start', [
++            Tree('keep', ['a']),
++            Tree('discard', ['b']),
++            Tree('keep', ['c']),
++        ])
++        for base in (Transformer, Transformer_InPlace, Transformer_NonRecursive, Transformer_InPlaceRecursive):
++            class T(base):
++                def start(self, children):
++                    return children
++
++                def keep(self, children):
++                    return children[0]
++
++                def discard(self, children):
++                    return Discard
++
++            copied = copy.deepcopy(tree)
++            result = T().transform(copied)
++            self.assertEqual(result, Tree('start', ['a', 'c']))
++
+     def test_transformer_discard_root(self):
+         """Transformer_NonRecursive should return None (not crash) when the root node is discarded."""
+         for base in (Transformer, Transformer_NonRecursive):

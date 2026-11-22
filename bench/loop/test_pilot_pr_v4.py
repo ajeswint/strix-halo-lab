@@ -896,6 +896,138 @@ class TestPilotPrV4(unittest.TestCase):
             shutil.rmtree(results_dir, ignore_errors=True)
             shutil.rmtree(run_dir, ignore_errors=True)
 
+    def test_v4_committed_results_sha256sums_grade_and_reviews(self):
+        """Committed item6-pilot-v4 results match frozen & final SHA256SUMS, exclude run.pid/leaks, and encode official INCONCLUSIVE grade."""
+        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+        res_dir = os.path.join(repo_root, "bench", "loop", "results")
+        frozen_sums_path = os.path.join(res_dir, "item6-pilot-v4.SHA256SUMS")
+        final_sums_path = os.path.join(res_dir, "item6-pilot-v4.final.SHA256SUMS")
+        self.assertTrue(os.path.isfile(frozen_sums_path), f"Missing v4 frozen SHA256SUMS: {frozen_sums_path}")
+        self.assertTrue(os.path.isfile(final_sums_path), f"Missing v4 final SHA256SUMS: {final_sums_path}")
+
+        # Must never commit run.pid or leak histories
+        run1_dir = os.path.join(res_dir, "item6-pilot-v4.run1")
+        self.assertTrue(os.path.isdir(run1_dir))
+        self.assertFalse(os.path.exists(os.path.join(run1_dir, "run.pid")), "run.pid must not be committed")
+        for fn in os.listdir(run1_dir):
+            self.assertFalse(fn.startswith("leak_history_"), f"leak history must not be committed: {fn}")
+
+        def _verify_sums(path):
+            entries = {}
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    digest, rel = line.split(None, 1)
+                    entries[rel] = digest
+                    full_p = os.path.join(res_dir, rel)
+                    self.assertTrue(os.path.isfile(full_p), f"Missing file listed in {os.path.basename(path)}: {rel}")
+                    with open(full_p, "rb") as rf:
+                        raw = rf.read()
+                    self.assertEqual(hashlib.sha256(raw).hexdigest(), digest, f"SHA256 mismatch on {rel}")
+                    text = raw.decode("utf-8")
+                    self.assertNotIn("104729", text, f"Forbidden literal seed in {rel}")
+                    self.assertNotIn("PILOT-RUN-SENTINEL", text, f"Forbidden run sentinel in {rel}")
+            return entries
+
+        expected_tids = [t["id"] for t in tasks_item6_v4.load_tasks()]
+        frozen_entries = _verify_sums(frozen_sums_path)
+        self.assertEqual(len(frozen_entries), 9)
+        self.assertIn("item6-pilot-v4.jsonl", frozen_entries)
+        self.assertIn("item6-pilot-v4.grade.json", frozen_entries)
+        for tid in expected_tids:
+            self.assertIn(f"item6-pilot-v4.diffs/{tid}.diff", frozen_entries)
+
+        final_entries = _verify_sums(final_sums_path)
+        self.assertEqual(len(final_entries), 15)
+        for required in (
+            "item6-pilot-v4.jsonl",
+            "item6-pilot-v4.grade.json",
+            "item6-pilot-v4.reviews.json",
+            "item6-pilot-v4.official-grade.json",
+            "item6-pilot-v4.run1/run.log",
+            "item6-pilot-v4.run1/run.status",
+            "item6-pilot-v4.run1/turn_events.jsonl",
+            "item6-pilot-v4.run1/AJ-GO-COUNTED.txt",
+        ):
+            self.assertIn(required, final_entries)
+
+        # Verify JSONL completeness & zero overflow / harness failures
+        with open(os.path.join(res_dir, "item6-pilot-v4.jsonl"), "r", encoding="utf-8") as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        self.assertEqual([r["task_id"] for r in rows], expected_tids)
+        for r in rows:
+            self.assertEqual(r.get("schema_version"), 2)
+            self.assertNotEqual(r.get("stop_reason"), "context_overflow")
+            self.assertFalse(r.get("harness_failure"))
+
+        # Verify verbatim Tier 2 reviews structure
+        with open(os.path.join(res_dir, "item6-pilot-v4.reviews.json"), "r", encoding="utf-8") as f:
+            rev_doc = json.load(f)
+        reviews = rev_doc["reviews"]
+        self.assertEqual(
+            set(reviews.keys()),
+            {"item6v4_pr1543", "item6v4_pr1619", "item6v4_pr1624", "item6v4_pr1632", "item6v4_pr1641"},
+        )
+        self.assertEqual(set(rev_doc["meta"]["auto_non_approval"].keys()), {"item6v4_pr1601", "item6v4_pr1613"})
+        self.assertEqual(reviews["item6v4_pr1543"]["verdict"], "APPROVE-WITH-NITS")
+        self.assertEqual(reviews["item6v4_pr1543"]["hand_fix_lines"], 0)
+        self.assertEqual(reviews["item6v4_pr1619"]["verdict"], "APPROVE-WITH-NITS")
+        self.assertEqual(reviews["item6v4_pr1619"]["hand_fix_lines"], 0)
+        self.assertEqual(reviews["item6v4_pr1624"]["verdict"], "REQUEST-CHANGES")
+        self.assertEqual(reviews["item6v4_pr1624"]["hand_fix_lines"], 1)
+        self.assertEqual(reviews["item6v4_pr1632"]["verdict"], "REQUEST-CHANGES")
+        self.assertEqual(reviews["item6v4_pr1632"]["hand_fix_lines"], 5)
+        self.assertEqual(reviews["item6v4_pr1641"]["verdict"], "REQUEST-CHANGES")
+        self.assertEqual(reviews["item6v4_pr1641"]["hand_fix_lines"], 15)
+        for tid, rv in reviews.items():
+            self.assertIs(rv["tamper"], False, f"{tid} tamper must be False")
+            self.assertIs(rv["fresh_session"], True, f"{tid} fresh_session must be True")
+
+        # Verify frozen unofficial run-time grade.json stays untouched (PENDING_REVIEW)
+        with open(os.path.join(res_dir, "item6-pilot-v4.grade.json"), "r", encoding="utf-8") as f:
+            rt_grade = json.load(f)
+        self.assertFalse(rt_grade["reviews_complete"])
+        self.assertEqual(rt_grade["decision"], "PENDING_REVIEW")
+        self.assertEqual(rt_grade["testable_passed"], 4)
+
+        # Verify official post-review grade under Section 18.1 bars
+        with open(os.path.join(res_dir, "item6-pilot-v4.official-grade.json"), "r", encoding="utf-8") as f:
+            grade = json.load(f)
+        self.assertEqual(grade["schema_version"], 2)
+        self.assertEqual(grade["label"], "item6-pilot-v4")
+        self.assertEqual(grade["tasks_evaluated"], 7)
+        self.assertEqual(grade["testable_tasks"], 7)
+        self.assertEqual(grade["testable_passed"], 4)
+        self.assertEqual(grade["test_pass_rate"], 0.5714)
+        self.assertTrue(grade["reviews_complete"])
+        self.assertEqual(grade["approved_first_pass"], 2)
+        self.assertEqual(grade["approved_final"], 2)
+        self.assertEqual(grade["final_approve_rate"], 0.2857)
+        self.assertEqual(grade["avg_hand_fix_lines_per_approved"], 0.0)
+        self.assertEqual(grade["decision"], "INCONCLUSIVE")
+
+        by_tid = {p["task_id"]: p for p in grade["per_task"]}
+        self.assertEqual(list(by_tid.keys()), expected_tids)
+        # In-loop vs authoritative discrepancies
+        for tid in ("item6v4_pr1543", "item6v4_pr1619"):
+            self.assertIs(by_tid[tid]["in_loop_passed"], True)
+            self.assertIs(by_tid[tid]["test_passed"], True)
+            self.assertEqual(by_tid[tid]["final_verdict"], "APPROVE-WITH-NITS")
+        for tid in ("item6v4_pr1624", "item6v4_pr1632"):
+            self.assertIs(by_tid[tid]["in_loop_passed"], False)
+            self.assertIs(by_tid[tid]["test_passed"], True)
+            self.assertEqual(by_tid[tid]["final_verdict"], "REQUEST-CHANGES")
+        self.assertIs(by_tid["item6v4_pr1641"]["in_loop_passed"], True)
+        self.assertIs(by_tid["item6v4_pr1641"]["test_passed"], False)
+        self.assertEqual(by_tid["item6v4_pr1641"]["final_verdict"], "REQUEST-CHANGES")
+        for empty_tid in ("item6v4_pr1601", "item6v4_pr1613"):
+            self.assertIs(by_tid[empty_tid]["diff_empty"], True)
+            self.assertIsNone(by_tid[empty_tid]["tamper"])
+            self.assertEqual(by_tid[empty_tid]["final_verdict"], "NON-APPROVAL")
+            self.assertIsNone(by_tid[empty_tid]["hand_fix_lines"])
+
 
 if __name__ == "__main__":
     unittest.main()
