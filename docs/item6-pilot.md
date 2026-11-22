@@ -810,19 +810,21 @@ Implemented in `bench/loop/select_v4.py` and verified by CPU tests in `bench/loo
   4. At least one `run_tests` call (or `finish` test run / end-of-loop `auto_run_tests`) per task.
 - **Budget & Ceiling**: Same per-task ceiling as v3 (`TASK_WALL_BUDGET = 617` s; total ceiling `CEILING_SECONDS = 4,320` s = 1.2 GPU-hours).
 - **Post-Practice Freeze Rule**: Parameters may be adjusted after inspecting the practice run, **but any adjustments must be committed and frozen in a dated v4 pre-run note in `docs/item6-pilot.md` (verified pushed via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`) before launching Step 2 (the counted v4 run).**
-- **Launcher**: `bench/loop/runs/item6-v4-practice/run.sh` (waits for PR merge and AJ's go):
+- **Launcher**: `bench/loop/runs/item6-v4-practice/run.sh` (runs from a fresh detached worktree at `origin/main`, not AJ's main checkout `/home/aj/projects/strix-halo-lab`; executed in Section 18.7):
 
 ```bash
-WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-v4-practice/run.sh >/dev/null 2>&1 &
+git -C /home/aj/projects/strix-halo-lab fetch origin main && git -C /home/aj/projects/strix-halo-lab worktree add --detach /tmp/wt-item6-v4-practice origin/main
+WT=/tmp/wt-item6-v4-practice EXPECT_HEAD=$(git -C /tmp/wt-item6-v4-practice rev-parse HEAD) TARGET_REPO=/data/datasets/item6-v3-repos/more-itertools.git nohup bash /tmp/wt-item6-v4-practice/bench/loop/runs/item6-v4-practice/run.sh >/dev/null 2>&1 &
 ```
 
 #### Step 2: Counted Unseen v4 Pilot Run (`item6-pilot-v4` on `lark-parser/lark`)
 
 - Runs **only** after Step 1 passes, the practice note and final v4 pre-run parameter freeze are committed and pushed to `origin/main`, and AJ gives a separate yes.
-- **Launcher**: `bench/loop/runs/item6-pilot-v4/run.sh`:
+- **Launcher**: `bench/loop/runs/item6-pilot-v4/run.sh` (runs from a fresh detached worktree at `origin/main`, not AJ's main checkout `/home/aj/projects/strix-halo-lab`):
 
 ```bash
-WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix-halo-lab rev-parse origin/main) TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /home/aj/projects/strix-halo-lab/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
+git -C /home/aj/projects/strix-halo-lab fetch origin main && git -C /home/aj/projects/strix-halo-lab worktree add --detach /tmp/wt-item6-pilot-v4 origin/main
+WT=/tmp/wt-item6-pilot-v4 EXPECT_HEAD=$(git -C /tmp/wt-item6-pilot-v4 rev-parse HEAD) TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /tmp/wt-item6-pilot-v4/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
 ```
 
 - If the external bare mirror does not yet exist on disk, populate it read-only before launching:
@@ -830,6 +832,53 @@ WT=/home/aj/projects/strix-halo-lab EXPECT_HEAD=$(git -C /home/aj/projects/strix
 ```bash
 mkdir -p /data/datasets/item6-v4-repos && git clone --bare https://github.com/lark-parser/lark.git /data/datasets/item6-v4-repos/lark.git
 ```
+
+### 18.7 Step 1 Practice Run Result Note & Final v4 Pre-Run Parameter Freeze (2026-11-22 CT)
+
+**Practice run complete (PASS on all 4 Section 18 practice criteria); NOT counting as a pilot result (no KEEP/DROP verdict computed, no Tier 2 Grok review run, and no practice transcripts, diffs, or artifacts committed to the repo). No GPU session starts in this docs-only commit. The counted `item6-pilot-v4` run on `lark-parser/lark` still requires AJ's separate yes; no Step 2 authorization is recorded here.**
+
+- **AJ Practice Authorization (Verbatim from `/tmp/lab-seats/item6-v4-practice/AJ-GO.txt`)**:
+  > `AJ go for v4 practice: Nov 22 2026 3:04 AM CST, widget answer: "Build v4 with the telemetry and all four fixes, prereg it, and do a practice run on the v3 tasks."`
+  > `PR #32 merged ce0807c (head 615dc27); Grok APPROVE 811a1ed..615dc27; Claude packet 14 review 20261122-062415.`
+- **Provenance & Execution Summary** (read-only from uncommitted `/tmp/lab-seats/item6-v4-practice/{run.status,run.log,AJ-GO.txt,turn_events.jsonl,results/item6-v4-practice.jsonl}`):
+  - **Task Set**: 7 retired v3 `more-itertools/more-itertools` dev PRs (`target_repo=/data/datasets/item6-v3-repos/more-itertools.git`, non-counting development set).
+  - **Practice Head SHA**: `ce0807c1a4d2dbb8ead883b641fe5ec38722e41d` (`ce0807c`, PR #32 merge commit, verified reachable from `origin/main` by `scripts/prereg-guard.sh`, run from fresh worktree `/tmp/wt-item6-v4-practice`).
+  - **Window & Serving**: Launched `2026-11-22T06:52:53-06:00` (6:52 AM CST Nov 22 2026) and finished `2026-11-22T07:08:57-06:00` (`llmctl` session 86, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, build `b11669-620d2225c`, GTT `23.5 GiB`, GTT after stop `1.2 GiB`, `ceiling_seconds=4320`, `resume=0`).
+  - **Status & Wall Time**: `run.status`: `done rc=0 wall_s=964 end=2026-11-22T07:08:57-06:00` (~16.1 min, well under the `4,320 s` ceiling; sum of per-task `wall_s = 951.82 s`; total completion tokens `39,451`; `76` total turns executed).
+- **Section 18 Practice Pass Criteria (`practice_criteria_passed = true`, `practice_run = true`, `counts_as_pilot = false`)**:
+  1. **Zero `context_overflow` across all 7 dev tasks**: **PASS** (`0 / 7`, `context_overflow_tasks: []`; highest observed prompt across all 7 tasks was `16,032` `usage` / `16,382` `/tokenize` preflight on `item6v3_pr1260` vs. the `57,344`-token cap and `28,672`-token Stage 1 trigger; `1` `turn_feedback_truncate` compaction on `item6v3_pr1260` turn 3 saving `1,999` chars, `0` Stage 1 or Stage 2 history compactions).
+  2. **Zero `harness_failure` / `task_error` across all 7 dev tasks**: **PASS** (`0 / 7`, `harness_failure_tasks: []`; every task recorded `harness_failure = false` and `abort_reason = null`).
+  3. **Telemetry present in every model-reply turn**: **PASS** (`76 / 76` model-reply turn events in `turn_events.jsonl` matching `76 / 76` `history` turns in `item6-v4-practice.jsonl`, `missing_telemetry_turns: []`, `telemetry_complete = true`: `72` `turn_tools` + `3` `turn_parse_error` + `1` `turn_repeat_code`, every turn carrying `reasoning_chars`, `content_chars`, and `finish_reason`, plus `raw_snippet` and `error` on all `3` `turn_parse_error` turns and `matched_turn`, `reply_hash`, and `repeat_read_only` on the `1` `turn_repeat_code` turn).
+  4. **At least one `run_tests` call or end-of-loop `auto_run_tests` per task**: **PASS** (`7 / 7`, `tasks_missing_test_run: []`; `3` tasks called `run_tests` in-loop for `5` total calls — `item6v3_pr1305` (1), `item6v3_pr1322` (1), `item6v3_pr1345` (3) — and `5` tasks ran end-of-loop `auto_run_tests` — `item6v3_pr1260`, `item6v3_pr1269`, `item6v3_pr1305`, `item6v3_pr1342`, `item6v3_pr1311`; `finish_tests_calls = 0` on all 7).
+- **Per-Task Practice Outcomes (Descriptive Only; Not a Pilot Result)**:
+
+| Task ID | PR # | `stop_reason` | Turns | `run_tests_calls` | `auto_run_tests` | `end_of_loop_test_passed` | `diff_empty` (Lines) | Completion Tok | Peak Prompt Tok (`usage` / `/tokenize` vs. `57,344`) | Wall (s) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1260` | #1260 | `max_turns` | 12 | 0 | `true` | `true` | `false` (`28`) | 10,382 | `16,032` / `16,382` | `249.73` |
+| `item6v3_pr1269` | #1269 | `max_turns` | 12 | 0 | `true` | `false` | `false` (`45`) | 9,840 | `8,423` / `8,773` | `225.28` |
+| `item6v3_pr1305` | #1305 | `max_turns` | 12 | 1 | `true` | `true` | `false` (`32`) | 2,516 | `6,289` / `6,639` | `66.21` |
+| `item6v3_pr1322` | #1322 | `max_turns` | 12 | 1 | `false` | `None` | `false` (`18`) | 10,434 | `9,683` / `10,033` | `240.29` |
+| `item6v3_pr1342` | #1342 | `repeat_code` | 4 | 0 | `true` | `true` | `true` (`0`) | 350 | `2,154` / `2,312` | `12.76` |
+| `item6v3_pr1345` | #1345 | `max_turns` | 12 | 3 | `false` | `None` | `false` (`24`) | 4,381 | `10,931` / `11,281` | `114.03` |
+| `item6v3_pr1311` | #1311 | `max_turns` | 12 | 0 | `true` | `true` | `false` (`48`) | 1,548 | `5,968` / `6,318` | `43.52` |
+
+  - Six tasks (`pr1260`, `pr1269`, `pr1305`, `pr1322`, `pr1345`, `pr1311`) ended `max_turns` at 12 turns with non-empty diffs; `item6v3_pr1342` ended `repeat_code` at 4 turns with an empty diff (`diff_empty = true`, `0` lines; turn 3 matched turn 2's non-read-only parse error, `repeat_read_only = false`).
+  - `end_of_loop_test_passed` is `None` (`null` in JSONL) for `item6v3_pr1322` and `item6v3_pr1345` because no end-of-loop auto-run occurred (`auto_run_tests = false`: each called `run_tests` during the loop with no subsequent untested edits).
+  - All 7 tasks recorded `passed = false`, `harness_failure = false`, and `abort_reason = null`, confirming Rank 3's separation of end-of-loop diagnostic tests from `stop_reason` and `passed`. No KEEP/DROP computation and no Tier 2 Grok review were performed.
+- **Recorded Caveats Carried Into Counted v4**:
+  1. **`item6v4_pr1641` One-Line Commit-Subject Prompt (GitHub 404)**: As recorded in Sections 18.4–18.5, GitHub returned HTTP 404 for PR `#1641`, so the rule-built prompt for `item6v4_pr1641` is strictly the one-line verbatim git commit subject (`Fix InteractiveParser.copy() sharing the lexer thread with the original (#1641)`).
+  2. **Host-Dependent `python-markdown/markdown` Audit Count**: As recorded in Section 18.4, because outer `/usr/bin/bwrap` bind-mounts `/usr` read-only, the Phase 2 fallback audit count for `python-markdown/markdown` (and `pyparsing/pyparsing`) depends on host `/usr` packages (`1` bwrap-verified PR `#1621` on `aj-Ryzen-AI-MAX` with Debian/Ubuntu `python3-markdown` 3.10.2 installed in `/usr`, vs. `0` on hosts without it). Either way (`0` or `1`, both `< 7`), the frozen `lark-parser/lark` selection and 7-task list are unchanged.
+- **Final Frozen v4 Pre-Run Parameters (All Unchanged from Section 18 at `ce0807c1`)**:
+  - **No parameter adjustments after practice**: Every parameter below is copied verbatim from Sections 18.1–18.3 and remains **unchanged** for Step 2 (`item6-pilot-v4`); no code, `bench/loop/results/`, or `SHA256SUMS` files are modified.
+  - **Model & Serving (unchanged)**: `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (single-model loop; no DeepSeek arm), `scripts/llmctl.py invite qwen --ctx 65536 --np 1` (`total_slots 1 n_ctx 65536`, `slot_ctx = 65,536`, `RESERVED_OUTPUT_TOKENS = 8,192`, `max_prompt_tokens = 57,344`).
+  - **Sampling & Budgets (unchanged)**: `temperature = 0.6`, `top_p = 0.95`, `top_k = 20`, `REASONING_BUDGET = 4,096`, `MAX_TOKENS = 8,192`, `MAX_TURNS_DEFAULT = 12`, `TASK_BUDGET_TOKENS = 32,768`, `TASK_WALL_BUDGET = 617` s (`floor(4320 / 7)`), `CEILING_SECONDS = 4,320` s (1.2 GPU-hours).
+  - **Telemetry & Rank 2 Parsing Caps (unchanged)**: `reasoning_chars`, `content_chars`, `finish_reason` on every model-reply turn; `matched_turn`, `reply_hash`, `repeat_read_only`, `compaction_count` on `turn_repeat_code`; `read_only_repeat_matched_turn`, `reply_hash` on allowed read-only repeats; `error` (500-char cap) and redacted `raw_snippet` (`PARSE_ERROR_RAW_SNIPPET_MAX_CHARS = 500`) on `turn_parse_error`; `strict=False` decoder (`json.JSONDecoder(strict=False).raw_decode`) with string-escape-aware trailing-comma stripping; `auto_run_tests`, `end_of_loop_test_passed`, `run_tests_calls`, `finish_tests_calls`.
+  - **Rank 1a Compaction Thresholds (unchanged)**: `COMPACT_STAGE1_TRIGGER_RATIO = 0.50` (`28,672` tokens at `57,344` max prompt tokens), `COMPACT_KEEP_RECENT_TURNS = 2`, `COMPACT_MIN_RECENT_TURNS = 1`, `COMPACT_TARGET_CTX_RATIO = 0.75` (`43,008` tokens), `STALE_ASSISTANT_MAX_CHARS = 1,200`.
+  - **Rank 1b Read-Only `repeat_code` Guard (unchanged)**: `READ_ONLY_TOOLS = {"read_file", "grep", "list_files"}`, `MAX_CONSECUTIVE_READ_ONLY_REPEATS = 2`, `MAX_TOTAL_READ_ONLY_REPEATS = 3`.
+  - **Rank 4 Tool & Turn Truncation Caps (unchanged)**: `READ_FILE_MAX_LINES = TOOL_RESULT_MAX_LINES = 250` (`HEAD = 160`, `TAIL = 90`), `TOOL_RESULT_MAX_CHARS = 12,000`, `TURN_FEEDBACK_MAX_LINES = 300` (`HEAD = 200`, `TAIL = 100`), `TURN_FEEDBACK_MAX_CHARS = 16,000`, `TEST_OUTPUT_MAX_LINES = 80` (`HEAD = 30`, `TAIL = 50`), `TEST_OUTPUT_MAX_CHARS = 3,500`.
+  - **Task List, Grading & Absolute KEEP / DROP Bars (unchanged)**: Same 7 frozen `lark-parser/lark` PRs (Section 18.5, pinned HEAD `9a4fb9c7458e8155636773a3cded0016d52516da`), same outer `/usr/bin/bwrap` read-only authoritative grading, schema v2, and Section 15.5 / 18.1 absolute bars (`KEEP`: $\ge 4/7$ tests AND $\ge 3/7$ blind Grok 4.7 high approvals AND avg `hand_fix_lines` $\le 20$; `DROP`: $\le 2/7$ tests OR $< 2/7$ approvals; `INCONCLUSIVE` defaults to `DROP`).
+- **Step 2 Authorization Gate (Still Pending AJ's Separate Yes)**:
+  - The counted 7-task `lark-parser/lark` run (`item6-pilot-v4`, Section 18.6 Step 2) **still requires AJ's separate yes** after this PR is merged to `main` and verified via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`. No authorization for Step 2 is recorded in this commit.
 
 
 
