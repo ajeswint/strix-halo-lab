@@ -472,8 +472,9 @@ def analyze_v3_records(
                     "nearest_token_earlier_turns": nearest_tok_turns,
                     "proxy_caveat": (
                         "Exact reply text and code_hash are not recorded in committed files. "
-                        "usage.completion_tokens combines unrecorded reasoning tokens plus visible content, "
-                        "whereas repeat_code hashes visible content + tool_calls only; token count is a proxy, not proof."
+                        "usage.completion_tokens can exceed the visible reply (consistent with but not proof of "
+                        "unrecorded reasoning tokens), whereas repeat_code hashes visible content + tool_calls only; "
+                        "token count is a proxy, not proof."
                     ),
                 },
                 "preceding_tool_calls": {
@@ -954,9 +955,10 @@ def analyze_v3_records(
             "visible_vs_reasoning_note": (
                 "Visible vs reasoning tokens are not recorded separately in any committed v3 record. "
                 "server_ask() computes reasoning_chars from msg.get('reasoning_content'), but _run_task_loop_turns() "
-                "discards reasoning_chars and finish_reason and logs only combined usage.completion_tokens "
+                "discards reasoning_chars and finish_reason and logs only usage.completion_tokens "
                 "(as history[turn].tokens and turn_events.completion_tokens). "
-                "Two direct observations show that usage.completion_tokens includes unrecorded reasoning tokens: "
+                "Two observations show the count exceeds the visible reply; consistent with but not proof of "
+                "unrecorded reasoning tokens: "
                 "(1) item6v3_pr1311 turn 7 logged 497 completion tokens yet matched an earlier turn's visible code_hash "
                 "when the maximum earlier turn was 210 tokens; "
                 "(2) item6v3_pr1269 turns 5-6 logged 4,171 and 4,213 completion tokens (just above REASONING_BUDGET=4096) "
