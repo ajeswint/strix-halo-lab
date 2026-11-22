@@ -486,3 +486,101 @@ mkdir -p /data/datasets/item6-v3-repos && git clone --bare https://github.com/mo
 - **Step 2 Authorization (AJ)**:
   - AJ, Nov 21 2026 5:48 PM CST: 'Yes, launch the counted 7-task more-itertools run.'
   - This authorizes launching Step 2 (`item6-pilot-v3`, Section 15.6) once this docs-only practice record PR is merged to `main` and verified via `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`.
+
+## 16. Item 6 Pilot v3 Results (2026-11-21 CT)
+
+Final post-run results for Item 6 pilot v3 (`label = item6-pilot-v3`), the first counted evaluation on genuinely unseen external-repository PRs (`more-itertools/more-itertools`, Section 15.3–15.4), graded offline under the unchanged pre-registered Section 15.5 absolute bars. **No GPU session starts in this commit.**
+
+### Official Decision & Summary Metrics
+
+Official grade computed via:
+
+```bash
+python3 bench/loop/pilot_pr.py grade --label item6-pilot-v3 --task-suite v3 --target-repo /data/datasets/item6-v3-repos/more-itertools.git
+```
+
+and committed to `bench/loop/results/item6-pilot-v3.grade.json` (using `bench/loop/results/item6-pilot-v3.reviews.json`, which `grade` auto-discovers by label):
+
+| Metric | v3 Result | Target (KEEP, Sec. 15.5) | Threshold (DROP, Sec. 15.5) |
+| :--- | :--- | :--- | :--- |
+| **Schema Version** | `2` (Section 14) | — | — |
+| **Tasks Evaluated** | 7 | 7 | 7 |
+| **Testable Tasks** | 7 | — | — |
+| **In-Loop Test Passes** *(non-authoritative)* | **2 / 7** (`28.6%`: `pr1342`, `pr1345`) | — | — |
+| **Authoritative Offline Test Passes** | **1 / 7** (`14.3%`: `pr1345` only) | $\ge 4/7$ ($\ge 50.0\%$) | $\le 2/7$ ($< 33.3\%$) |
+| **Reviews Complete** | `true` (3 Grok reviewed, 4 auto non-approval) | `true` | — |
+| **First-Pass Reviewer Approvals** | **1 / 7** (`14.3%`: `pr1345`) | — | — |
+| **Final Reviewer Approvals** | **1 / 7** (`14.3%`: `pr1345`) | $\ge 3/7$ ($\ge 42.9\%$) | $< 2/7$ ($< 28.6\%$) |
+| **Avg Hand-Fix Lines / Approved** | **`0.0`** (1 approved PR: `pr1345` = 0 lines) | $\le 20$ lines | $> 20$ lines (INCONCLUSIVE) |
+| **Tamper Detected** | **0 / 3 reviewed** (`tamper = false` on `pr1269`, `pr1342`, `pr1345`; `tamper = null` on the 4 unreviewed empty-diff tasks per Sec. 14) | 0 | $> 0$ |
+| **Context Overflows / Harness Failures** | **0 / 7** overflows, **0 / 7** `task_error` | — | — |
+| **Official Decision** | **DROP** | **KEEP** | **DROP** |
+
+The harness's pre-review grade (`reviews_complete = false`) had already returned **DROP** on the authoritative offline test bar alone (`1/7 = 14.3% < 33.3%`). With Tier 2 blind Grok 4.7 high reviews complete (`reviews_complete = true`), **both** independent Section 15.5 DROP thresholds are met (`1/7 < 33.3%` offline test pass rate and `1/7 < 28.6%` final reviewer approval rate). No bar or rule was altered.
+
+### Run Provenance & Integrity Checksums
+
+- **Run Head SHA**: `ddcbbfb94403926c46644eaac978db268f8df848` (`ddcbbfb`, PR #29 merge commit, verified reachable from `origin/main` by `scripts/prereg-guard.sh --head docs/item6-pilot.md origin/main`).
+- **Execution Window & Serving**: Single uninterrupted run `2026-11-21T18:11:22-06:00` to `2026-11-21T18:19:09-06:00` (`llmctl` session 85, `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`, `--ctx 65536 --np 1`, `total_slots 1 n_ctx 65536`, build `b11669-620d2225c`, GTT `23.5 GiB`, `CEILING_SECONDS=4320`, `TASK_WALL_BUDGET=617`, `resume=0`, target bare repo `/data/datasets/item6-v3-repos/more-itertools.git`).
+- **Total Wall Time & Tokens**: `done rc=0 wall_s=467` (~7.8 minutes, well under the `4,320 s` / 1.2 GPU-hour ceiling; sum of per-task wall times `454.85 s`; total completion tokens `22,472`).
+- **Compaction Performance**: `38` total compaction events (`65,809` chars saved), matching verbatim across `bench/loop/results/item6-pilot-v3.run1/run.log` (`38` `COMPACTION` lines), `bench/loop/results/item6-pilot-v3.run1/turn_events.jsonl` (`38` `"event": "compaction"` records), and `bench/loop/results/item6-pilot-v3.jsonl` (`compaction_events_total` sum `38`). Zero tasks hit `context_overflow` or reached the `43,008`-token Stage 2 compaction threshold (max observed across all 7 tasks: `4,763` `usage.prompt_tokens`, `4,946` `/tokenize` preflight tokens, `5,905` pre-compaction tokens on `item6v3_pr1260` vs. the `57,344`-token prompt cap).
+- **Frozen Artifacts & Checksums**:
+  - `bench/loop/results/item6-pilot-v3.jsonl`, all 7 files under `bench/loop/results/item6-pilot-v3.diffs/`, and `bench/loop/results/item6-pilot-v3.run1/{run.log,run.status,turn_events.jsonl}` (`run.pid` excluded) are byte-identical to the frozen run bundle (`/tmp/lab-seats/item6-v3-frozen/MANIFEST.sha256`, 11/11 SHA-256 digests verified).
+  - `bench/loop/results/item6-pilot-v3.reviews.json` stores the verbatim Tier 2 Grok 4.7 high verdicts.
+  - `bench/loop/results/item6-pilot-v3.SHA256SUMS` covers all 13 committed v3 results files (`jsonl`, `reviews.json`, `grade.json`, `run1/{run.log,run.status,turn_events.jsonl}`, and all 7 `.diff` files), verified `13/13 OK` via `sha256sum -c item6-pilot-v3.SHA256SUMS` from `bench/loop/results/`.
+
+### Per-Task Results
+
+| Task ID | PR # | Prompt Source | Stop Reason | Turns | Completion Tokens | Wall (s) | Diff Lines | Hidden Jaccard | In-Loop Tests | Offline Auth. Tests | Tier 2 Verdict | Tamper | Hand-Fix Lines |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `item6v3_pr1260` | #1260 | PR #1260 *(PR body)* | `max_turns` | 12 | 1,156 | 39.76 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6v3_pr1269` | #1269 | Issue #1268 *(issue)* | `max_turns` | 12 | 14,104 | 252.19 | 36 | 0.0000 | FAIL | FAIL | `REQUEST-CHANGES` | `false` | 18 *(n/a for approved bar)* |
+| `item6v3_pr1305` | #1305 | Issue #1304 *(issue)* | `repeat_code` | 11 | 954 | 24.04 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6v3_pr1322` | #1322 | PR #1322 *(PR body)* | `repeat_code` | 5 | 362 | 8.66 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+| `item6v3_pr1342` | #1342 | PR #1342 *(PR body)* | `pass` | 12 | 1,807 | 40.87 | 14 | 0.1429 | **PASS** | **FAIL** | `REQUEST-CHANGES` | `false` | 12 *(n/a for approved bar)* |
+| `item6v3_pr1345` | #1345 | Issue #1344 *(issue)* | `pass` | 12 | 2,861 | 63.57 | 24 | 0.1333 | **PASS** | **PASS** | `APPROVE-WITH-NITS` | `false` | **0** |
+| `item6v3_pr1311` | #1311 | PR #1311 *(PR body)* | `repeat_code` | 8 | 1,228 | 25.76 | 0 | 0.0000 | FAIL | FAIL | `NON-APPROVAL` *(auto)* | `null` *(unreviewed)* | n/a *(excluded, Sec. 10)* |
+
+Notes on `hand_fix_lines`:
+- Only the 1 approved task (`item6v3_pr1345`: `APPROVE-WITH-NITS`, `0` hand-fix lines) enters `avg_hand_fix_lines_per_approved = 0.0`.
+- `item6v3_pr1269` (`18` lines) and `item6v3_pr1342` (`12` lines) were both `REQUEST-CHANGES` (non-approved) and are reported above for completeness but excluded from the approved-PR hand-fix average.
+- The 4 empty-diff tasks (`item6v3_pr1260`, `item6v3_pr1305`, `item6v3_pr1322`, `item6v3_pr1311`) receive automatic `NON-APPROVAL` with no Grok review, `hand_fix_lines: null`, and `tamper: null` (Sections 10 and 14).
+
+### Results Split by Prompt Source
+
+As frozen in `bench/loop/tasks_item6_v3.py` (`source_kind`) and Section 15.4, 4 of the 7 v3 prompts came from PR bodies (where no non-PR GitHub issue was linked) and 3 came from linked GitHub issues:
+
+| Prompt Source | Tasks ($n$) | Non-Empty Diffs | In-Loop Test Passes | Authoritative Offline Passes | Grok Approvals |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **PR body** (`PR #1260`, `PR #1322`, `PR #1342`, `PR #1311`) | 4 | 1 / 4 (`pr1342`) | 1 / 4 (`pr1342`) | **0 / 4** (`0.0%`) | **0 / 4** (`0.0%`) |
+| **Linked issue** (`Issue #1268` / PR #1269, `Issue #1304` / PR #1305, `Issue #1344` / PR #1345) | 3 | 2 / 3 (`pr1269`, `pr1345`) | 1 / 3 (`pr1345`) | **1 / 3** (`33.3%`: `pr1345`) | **1 / 3** (`33.3%`: `pr1345`) |
+| **Total** | **7** | **3 / 7** | **2 / 7** | **1 / 7** (`14.3%`) | **1 / 7** (`14.3%`) |
+
+PR-body prompts describe the implemented fix directly in prose (e.g., naming the exact guards and target files), making them potentially easier than pre-fix issue reports; even so, the local model scored `0/4` offline passes and `0/4` approvals on the PR-body subset, and its sole offline pass and reviewer approval (`item6v3_pr1345`) came from a linked-issue prompt (`Issue #1344`, which itself noted that `numeric_range._len` already holds the arbitrary-precision length).
+
+### Tier 2 Blind Review Summary
+
+Verbatim Grok 4.7 high verdicts (fresh `cursor-agent` session per task, `packet.md` only, `2026-11-21T19:40:10-06:00`, `tamper = false` on all 3 reviewed diffs) are stored in `bench/loop/results/item6-pilot-v3.reviews.json`:
+
+- `item6v3_pr1269` (`REQUEST-CHANGES`, `18` hand-fix lines, `tamper = false`, session `28724d99-4d1a-4eef-af74-84918c98cddf`): The `maxlen=0` `_peeked` side buffer drops the rewind path when `self._index` is already set (breaking default `maxlen=None` stability on repeated `peek`/`seek`), `_peeked is not None` cannot represent a real `None` element (requires a dedicated sentinel cleared by `seek`), and no tests were added.
+- `item6v3_pr1342` (`REQUEST-CHANGES`, `12` hand-fix lines, `tamper = false`, session `4cf7129d-14ba-4c92-b499-e83d7f480a29`): Adds `n < 0` validation before `iter(iterable)`, but leaves `n == 0` unhandled (still hits `islice` and raises `ValueError: Step for islice()...` after consuming source items) and leaves `tests/test_more.py` unchanged without `test_zero_chunk_size` or `test_negative_chunk_size`.
+- `item6v3_pr1345` (`APPROVE-WITH-NITS`, `0` hand-fix lines, `tamper = false`, session `9dcd8c96-9996-40e8-8fa9-2f0bfae2fa37`): Correctly switches `numeric_range.__eq__` and `__hash__` from `len()` to `self._len` / `other._len` while keeping `__len__` untouched so explicit `len(r)` still overflows. Non-blocking nits: `other._len` assumes `other` is a `numeric_range`, and no new regression tests above `sys.maxsize` were added to `tests/test_more.py`.
+
+### Why `item6v3_pr1342` Passed In-Loop (`in_loop_passed = true`) but Failed Offline (`test_passed = false`)
+
+This mismatch is directly established from `bench/loop/results/item6-pilot-v3.jsonl`, `bench/loop/results/item6-pilot-v3.run1/turn_events.jsonl`, `bench/loop/results/item6-pilot-v3.diffs/item6v3_pr1342.diff`, `bench/loop/pilot_pr.py`, and `bench/loop/results/item6-pilot-v3.grade.json`:
+
+1. **Partial edit with no in-loop test additions**: On turn 6, the model executed a single successful `search_replace` on `more_itertools/more.py`, inserting only the `n < 0` check (`if n is not None and n < 0: raise ValueError('n must be at least 0')`). It never added the `n == 0` early-return guard and never edited `tests/test_more.py` (`item6v3_pr1342.diff` is 14 lines in `more_itertools/more.py` only).
+2. **End-of-loop test run against unmodified `base_commit` tests**: Across turns 7–11, the model called only `read_file` and `grep` (it never called `run_tests` or `finish`). When turn 11 exhausted `max_turns = 12`, because turn 6 had dirtied the worktree (`dirty_since_last_test = True`), `bench/loop/pilot_pr.py` (lines 2564–2570) ran `run_tests(clean_task, worktree_dir)` once against the scratch worktree's unmodified `base_commit` (`20c4ee5c`) `tests/test_more.py`. Because `base_commit`'s `tests/test_more.py` has no `n == 0` or `n < 0` regression tests for `chunked_even` and the added `n < 0` guard broke no existing test, `python3 -m unittest tests.test_more` exited `0`, setting `passed = true` and `stop_reason = "pass"` in `item6-pilot-v3.jsonl`.
+3. **Authoritative offline regrade against `merged_commit` tests**: During `pilot_pr.py grade`, `regrade_task_diff` applies `item6v3_pr1342.diff` to a clean `base_commit` tree and mounts `merged_commit`'s authoritative `tests/test_more.py` read-only inside `/usr/bin/bwrap` (Section 6). Under the 738 authoritative tests, `ChunkedEvenTests.test_zero_chunk_size` fails with 1 error (`ValueError: Step for islice() must be a positive integer or None.`) because `n == 0` is unhandled in the candidate diff—the exact gap Grok flagged in Tier 2 review.
+
+(Note: `item6v3_pr1345` triggered the same end-of-loop `dirty_since_last_test` evaluation after its turn-11 `search_replace` without calling `run_tests`/`finish`; on `item6v3_pr1345`, the candidate edit also passed all 740 authoritative `merged_commit` tests offline.)
+
+### Contamination Flag, Failure Modes, and Scope of the DROP Call
+
+1. **Possible Training-Data Contamination on `#1260` (`more_itertools/recipes.py`)**: Although PR #1260 was authored `2026-09-07` and merged `2026-09-18` (strictly post-`2026-04-15` `Qwen3.6-35B-A3B` release), `more_itertools/recipes.py` mirrors Python's standard-library `itertools` documentation recipes (`http://docs.python.org/library/itertools.html#recipes`), with `running_median` and `running_mean` already in `recipes.py` and `running_min`, `running_max`, and `running_statistics` moved into `recipes.py` on `2026-04-08` (commit `6294fa6`, prior to the `2026-04-15` release cutoff). `item6v3_pr1260` is therefore flagged as possible training-data contamination of the target file/idioms. In this run, `item6v3_pr1260` exhausted `max_turns = 12` with `0` diff lines (`test_passed = false`, automatic `NON-APPROVAL`), so this contamination risk did not inflate v3's pass or approval counts. *(Pre-existing environment note: PR #1260's frozen `expected_test_count` of `200` for `tests.test_recipes` matches the host Python 3.14.4 environment where `unittest discover -s bench/loop` runs 80/80 OK, whereas Python 3.12.3 runs `199` tests in `tests.test_recipes`—a Python-version-dependent count difference that does not affect `item6v3_pr1260`'s empty-diff grade.)*
+2. **Compaction Removed the v2 Context-Overflow Confound**: Unlike v2 (`3/7` `context_overflow`), v3 had `0/7` `context_overflow` and `0/7` `harness_failure` across all 7 tasks (`38` compaction events, max preflight prompt `4,946` tokens vs. `57,344` cap).
+3. **Observed Failure Modes**: Without context overflow, 4 of 7 tasks still produced empty diffs (`item6v3_pr1260` read/grepped through `max_turns = 12` without editing; `item6v3_pr1305`, `item6v3_pr1322`, and `item6v3_pr1311` hit `repeat_code` on turns 11, 5, and 8 after repeated reads/greps or JSON parse errors without editing). The 3 tasks that did edit (`pr1269`, `pr1342`, `pr1345`) all ran to turn 12 without calling `run_tests` or `finish`: one (`pr1345`) passed offline tests and earned `APPROVE-WITH-NITS` (0 hand-fix lines), one (`pr1342`) implemented only half the fix (`n < 0`, omitting `n == 0`), and one (`pr1269`) introduced a `maxlen=None` regression and missed the `None`-sentinel edge case.
+4. **No Overclaiming Beyond the Bars**: Under Section 15.5's absolute bars, `1/7` (`14.3%`) authoritative offline test passes and `1/7` (`14.3%`) blind Grok approvals independently trigger **DROP**. This settles the pre-registered scale/no-scale question for this single-model `Qwen3.6-35B-A3B` structured-tool loop on unseen external PRs; it is a small ($n = 7$) test on one external repository (with 4/7 prompts from PR bodies and `#1260` flagged above) and makes no broader claim beyond those bars.
+5. **Possible Harness Confounds (Not Yet Measured)**: Separate from model capability, four possible harness-level confounds observed in v3 have not been isolated or measured yet: (a) `repeat_code` triggered by repeated read-only calls after Stage 1 compaction (`stale_tool_summary`), (b) JSON parse errors in tool-call blocks, (c) very short generations, and (d) in-loop test feedback (`run_tests`/`finish`) never being invoked across all 7 tasks. Their individual impact on the v3 outcome has not been measured.
+

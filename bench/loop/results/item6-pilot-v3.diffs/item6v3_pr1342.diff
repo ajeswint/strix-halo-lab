@@ -1,0 +1,14 @@
+diff --git a/more_itertools/more.py b/more_itertools/more.py
+index f2c9dfc..bdab54c 100755
+--- a/more_itertools/more.py
++++ b/more_itertools/more.py
+@@ -4637,6 +4637,9 @@ def chunked_even(iterable, n):
+     [[1, 2, 3], [4, 5, 6], [7]]
+ 
+     """
++    if n is not None and n < 0:
++        raise ValueError('n must be at least 0')
++
+     iterator = iter(iterable)
+ 
+     # Initialize a buffer to process the chunks while keeping
