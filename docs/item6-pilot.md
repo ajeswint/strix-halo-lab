@@ -827,6 +827,8 @@ git -C /home/aj/projects/strix-halo-lab fetch origin main && git -C /home/aj/pro
 WT=/tmp/wt-item6-pilot-v4 EXPECT_HEAD=<40-hex SHA typed by hand, verified against git rev-parse HEAD> TARGET_REPO=/data/datasets/item6-v4-repos/lark.git nohup bash /tmp/wt-item6-pilot-v4/bench/loop/runs/item6-pilot-v4/run.sh >/dev/null 2>&1 &
 ```
 
+- In both Step 1 and Step 2 above, the `EXPECT_HEAD` placeholder is deliberately not runnable as pasted; the 40-hex SHA must be typed by hand and verified against `git rev-parse HEAD`.
+
 - If the external bare mirror does not yet exist on disk, populate it read-only before launching:
 
 ```bash
@@ -971,7 +973,7 @@ An earlier informal handoff mixed the two Tier 1 metrics ("4/7" alongside only 3
 
 ### Peak Prompt Tokens, Compaction Counts, and Test Invocation Telemetry per Task
 
-Measured verbatim from `bench/loop/results/item6-pilot-v4.run1/turn_events.jsonl`, `bench/loop/results/item6-pilot-v4.run1/run.log`, and `bench/loop/results/item6-pilot-v4.jsonl` (prompt cap `57,344` tokens; Stage 1 trigger `28,672` tokens; Stage 2 target `43,008` tokens):
+Measured verbatim from `bench/loop/results/item6-pilot-v4.run1/turn_events.jsonl`, `bench/loop/results/item6-pilot-v4.run1/run.log`, and `bench/loop/results/item6-pilot-v4.jsonl` (prompt cap `57,344` tokens; Stage 1 trigger `28,672` tokens; Stage 2 target `43,008` tokens). In the peak-prompt column, the first figure (`usage` `prompt_tokens`, e.g., `13,342` on `pr1543` and `14,456` on `pr1624`) comes from `turn_events.jsonl` (matching `item6-pilot-v4.jsonl` `history[t].prompt_tokens`), and the second figure (`/tokenize` preflight `preflight_prompt_tokens`, e.g., `13,668` on `pr1543` and `14,806` on `pr1624`) comes from `item6-pilot-v4.jsonl`:
 
 | Task ID | Peak Prompt Tok (`usage` / `/tokenize` preflight; peak turn) | Total Compactions (`tool_truncate` / `turn_feedback_truncate` / `history_compact`) | Compaction Chars Saved | `run_tests_calls` | `finish_tests_calls` | `auto_run_tests` (`end_of_loop_test_passed`) | Reasoning Chars (sum / max) | Content Chars (sum / max) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -1085,7 +1087,3 @@ Verbatim Grok 4.7 high verdicts (fresh `cursor-agent` session per task, `packet.
 3. **One-Line Prompt on `item6v4_pr1641` (GitHub 404, Unmeasured)**: As recorded in Sections 18.4–18.5 and 18.7, GitHub returned HTTP 404 for PR `#1641`, leaving only the commit subject as prompt text; whether a full issue/PR body would have changed `pr1641`'s outcome is **unmeasured**.
 4. **Small Sample ($n = 7$) & Single Repository (`lark-parser/lark`)**: v4 tests 7 PRs from one external Python repository with no cloud-seat baseline on that repo and no post-review repair turn; `v4` (`4/7` tests, `2/7` approvals, `INCONCLUSIVE -> DROP`) vs. `v3` (`1/7` tests, `1/7` approvals, `DROP`) also changed repositories (`more-itertools` $\to$ `lark`), so the effect of the four v4 harness fixes vs. repository/PR difficulty is **confounded and unmeasured**.
 5. **Pre-Registered Default Stands**: Under Section 18.1, `INCONCLUSIVE` defaults to **DROP** unless AJ explicitly decides on a bounded extension.
-
-
-
-

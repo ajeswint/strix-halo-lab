@@ -1006,7 +1006,39 @@ class TestPilotPrV4(unittest.TestCase):
         self.assertEqual(grade["approved_final"], 2)
         self.assertEqual(grade["final_approve_rate"], 0.2857)
         self.assertEqual(grade["avg_hand_fix_lines_per_approved"], 0.0)
-        self.assertEqual(grade["decision"], "INCONCLUSIVE")
+        derived_decision = pilot_pr.compute_keep_drop(
+            testable_passed=grade["testable_passed"],
+            testable_total=grade["testable_tasks"],
+            approved_final=grade["approved_final"],
+            total_tasks=grade["tasks_evaluated"],
+            avg_hand_fix_lines=grade["avg_hand_fix_lines_per_approved"],
+        )
+        self.assertEqual(derived_decision, "INCONCLUSIVE")
+        self.assertEqual(grade["decision"], derived_decision)
+
+        # Re-run grade_subcommand into a temp dir (leaving committed results untouched) and verify parity
+        lark_mirror = os.path.join(tasks_item6_v4.DEFAULT_V4_REPOS_DIR, "lark.git")
+        self.assertTrue(os.path.isdir(lark_mirror), f"External bare mirror missing: {lark_mirror}")
+        grade_tmp = tempfile.mkdtemp(prefix="pilot_v4_regrade_chk_")
+        try:
+            shutil.copy2(
+                os.path.join(res_dir, "item6-pilot-v4.jsonl"),
+                os.path.join(grade_tmp, "item6-pilot-v4.jsonl"),
+            )
+            import io
+            from contextlib import redirect_stdout
+            with redirect_stdout(io.StringIO()):
+                recomputed = pilot_pr.grade_subcommand(
+                    label="item6-pilot-v4",
+                    reviews_file=os.path.join(res_dir, "item6-pilot-v4.reviews.json"),
+                    results_dir=grade_tmp,
+                    task_suite="v4",
+                    target_repo=lark_mirror,
+                )
+            self.assertEqual(recomputed["decision"], grade["decision"])
+            self.assertEqual(recomputed, grade)
+        finally:
+            shutil.rmtree(grade_tmp, ignore_errors=True)
 
         by_tid = {p["task_id"]: p for p in grade["per_task"]}
         self.assertEqual(list(by_tid.keys()), expected_tids)
