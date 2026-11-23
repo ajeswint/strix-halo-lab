@@ -1,0 +1,13 @@
+diff --git a/lark/lexer.py b/lark/lexer.py
+index a45a42c..97e0a03 100644
+--- a/lark/lexer.py
++++ b/lark/lexer.py
+@@ -643,7 +643,7 @@ class BasicLexer(AbstractBasicLexer):
+         for type_, f in self.user_callbacks.items():
+             if type_ in self.callback:
+                 # Already a callback there, probably UnlessCallback
+-                self.callback[type_] = CallChain(self.callback[type_], f, lambda t: t.type == type_)
++                self.callback[type_] = CallChain(self.callback[type_], f, lambda t, type_=type_: t.type == type_)
+             else:
+                 self.callback[type_] = f
+ 

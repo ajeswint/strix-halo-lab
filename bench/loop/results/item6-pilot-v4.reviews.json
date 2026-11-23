@@ -1,0 +1,55 @@
+{
+  "meta": {
+    "label": "item6-pilot-v4",
+    "reviewer": "grok-4.7-high",
+    "protocol": "Tier 2 blind review, fresh cursor-agent session per task, packet.md only",
+    "reviewed_at": "2026-11-22T15:58:39-06:00",
+    "source_dir": "/tmp/lab-seats/item6-v4-tier2",
+    "auto_non_approval": {
+      "item6v4_pr1601": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded",
+      "item6v4_pr1613": "empty diff; automatic non-approval with no Grok review; hand_fix_lines excluded"
+    }
+  },
+  "reviews": {
+    "item6v4_pr1543": {
+      "verdict": "APPROVE-WITH-NITS",
+      "hand_fix_lines": 0,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` in the current directory and follow only what it says.The documentation updates are accurate, and the `TypeError` guard in `visit_children_decor` is in the right place. No test-runner, unittest, builtins, `exec`, `sys.stdout`, `atexit`, frame-inspection, or `/proc` tampering appears in the diff.\n\nThe new `Interpreter.visit` docstring overstates what that method does. It dispatches to the handler for the current node and returns; it does not itself walk from the root through the leaves. `visit_children_decor` is described as replacing the `tree.children` argument, but the wrapper actually replaces the tree with the list returned by `visit_children`. The `TypeError` is raised when the wrapper is called with a non-`Interpreter` receiver, not when the decorator is applied, and the message says \u201csubclasses\u201d even though an `Interpreter` instance is accepted. `tests/test_trees.py` is listed as a target, but the diff adds no test for the new error.\n\n```json\n{\"verdict\": \"APPROVE-WITH-NITS\", \"hand_fix_lines\": 0, \"tamper\": false}\n```",
+      "session_id": "3c245659-7832-46fe-b5f0-cadf94a147b4"
+    },
+    "item6v4_pr1619": {
+      "verdict": "APPROVE-WITH-NITS",
+      "hand_fix_lines": 0,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The closure fix is correct. Binding `type_` as a default argument captures each terminal name when the lambda is created, so each `CallChain` gate compares against its own terminal instead of the last name left in the loop variable. A single-argument call still works because the extra parameter is defaulted. The diff does not touch the test runner, unittest, builtins, `exec`, `sys.stdout`, `atexit`, frame inspection, or `/proc`.\n\nThe patch adds no regression test. Two keyword terminals that both have an `UnlessCallback` and a `lexer_callbacks` entry should be covered, since the tokens still lex correctly when the callbacks are dropped.\n\n```json\n{\"verdict\": \"APPROVE-WITH-NITS\", \"hand_fix_lines\": 0, \"tamper\": false}\n```",
+      "session_id": "449ce409-49f8-4317-9dc7-73b135aa9514"
+    },
+    "item6v4_pr1624": {
+      "verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 1,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The stack fix in `Transformer_NonRecursive.transform` is right: every child, including a `Discard` result, now occupies one slot, and parents drop those placeholders before the callback. A discarded root returns `None`. Nothing in the diff touches the test runner, unittest, builtins, `exec`, `sys.stdout`, `atexit`, frame inspection, or `/proc`.\n\nThe new test does not pass. `start` returns the children list, so `transform` yields `['a', 'c']`, but the assertion expects `Tree('start', ['a', 'c'])`. That fails for all four variants, including the ones that were already correct. Change the assertion to `['a', 'c']`, or make `start` return `Tree('start', children)`.\n\n```json\n{\"verdict\": \"REQUEST-CHANGES\", \"hand_fix_lines\": 1, \"tamper\": false}\n```",
+      "session_id": "96946c6e-04f6-417f-883f-97d04188d787"
+    },
+    "item6v4_pr1632": {
+      "verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 5,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The production change is the right check. `Template.match()` returns `{}` when a template with no placeholders matches, and `None` when it does not. `search()` used to treat that result as a boolean, so `{}` was dropped and `translate()` never rewrote a zero-variable pattern. `if res is not None` keeps a real match and still skips a miss.\n\nOnly one of the two tests that encoded the old behavior was updated. `test_template_search__same_tree_no_template` now expects `[(SOME_NON_TEMPLATE_TREE, {})]`. `test_template_search__same_tree_as_child__empty_generator` is unchanged and still expects an empty iterator. After this fix that search yields `(subtree, {})`, so that assertion fails. It needs the same correction: expect the match and the empty binding dict.\n\nThe diff does not touch the test runner, unittest, builtins, `exec`, `sys.stdout`, `atexit`, stack-frame inspection, or `/proc`.\n\n```json\n{\"verdict\": \"REQUEST-CHANGES\", \"hand_fix_lines\": 5, \"tamper\": false}\n```",
+      "session_id": "65ce44be-64bc-49f9-82a3-bd18c06bccaa"
+    },
+    "item6v4_pr1641": {
+      "verdict": "REQUEST-CHANGES",
+      "hand_fix_lines": 15,
+      "tamper": false,
+      "fresh_session": true,
+      "review_text": "I'll read `packet.md` and follow only what it says.The one-line `copy(self.lexer)` in `ParserState.copy()` is the right kind of copy (shallow, same as `state_stack`), and `copy` is already in scope. It does not fix `InteractiveParser.copy()` sharing its lexer thread.\n\n`InteractiveParser` keeps `lexer_thread` separately and still passes the original object into the copy. After this change, `parser_state.lexer` is a new `LexerThread` while `lexer_thread` stays shared with the original parser. Paths that pull tokens from `lexer_thread` (`exhaust_lexer`, iteration, resume) still advance the original, and those two references no longer alias the same thread.\n\nWire the copied thread through, for example by taking the lexer from the copied state:\n\n```python\nparser_state = self.parser_state.copy()\nreturn type(self)(self.parser, parser_state, parser_state.lexer)\n```\n\nA second `copy(self.lexer_thread)` would desync them again. Add a regression test that copies an interactive parse, advances one side, and asserts the other side\u2019s `lex_pos` is unchanged and that `lexer_thread is parser_state.lexer`.\n\nNo test-runner, `unittest`, builtins, `exec`, `sys.stdout`, `atexit`, frame-inspection, or `/proc` tampering in this diff.\n\n```json\n{\"verdict\": \"REQUEST-CHANGES\", \"hand_fix_lines\": 15, \"tamper\": false}\n```",
+      "session_id": "d1efabd4-6955-4f24-b42f-3c53ebd33ad9"
+    }
+  }
+}

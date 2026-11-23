@@ -1,0 +1,73 @@
+diff --git a/docs/visitors.rst b/docs/visitors.rst
+index 323c183..6da66f6 100644
+--- a/docs/visitors.rst
++++ b/docs/visitors.rst
+@@ -19,7 +19,7 @@ Visitor
+ 
+ Visitors visit each node of the tree, and run the appropriate method on it according to the node's data.
+ 
+-They work bottom-up, starting with the leaves and ending at the root of the tree.
++They can traverse the tree in either direction: bottom-up (starting with the leaves and ending at the root) or top-down (starting at the root and ending at the leaves).
+ 
+ There are two classes that implement the visitor interface:
+ 
+@@ -98,11 +98,13 @@ Example:
+ 
+ .. autoclass:: lark.visitors.Transformer_InPlaceRecursive
+ 
+-v_args
+-------
++Utilities
++---------
+ 
+ .. autofunction:: lark.visitors.v_args
+ 
++.. autofunction:: lark.visitors.visit_children_decor
++
+ merge_transformers
+ ------------------
+ 
+diff --git a/lark/visitors.py b/lark/visitors.py
+index 34b7274..bdb801f 100644
+--- a/lark/visitors.py
++++ b/lark/visitors.py
+@@ -417,6 +417,7 @@ class Interpreter(_Decoratable, ABC, Generic[_Leaf_T, _Return_T]):
+     """
+ 
+     def visit(self, tree: Tree[_Leaf_T]) -> _Return_T:
++        """Visits the tree, starting at the root and ending at the leaves (top-down)."""
+         # There are no guarantees on the type of the value produced by calling a user func for a
+         # child will produce. So only annotate the public method and use an internal method when
+         # visiting child trees.
+@@ -431,6 +432,7 @@ class Interpreter(_Decoratable, ABC, Generic[_Leaf_T, _Return_T]):
+             return f(tree)
+ 
+     def visit_children(self, tree: Tree[_Leaf_T]) -> List:
++        """Visits the children of the tree, returning a list of their results."""
+         return [self._visit_tree(child) if isinstance(child, Tree) else child
+                 for child in tree.children]
+ 
+@@ -444,9 +446,22 @@ class Interpreter(_Decoratable, ABC, Generic[_Leaf_T, _Return_T]):
+ _InterMethod = Callable[[Type[Interpreter], _Return_T], _R]
+ 
+ def visit_children_decor(func: _InterMethod) -> _InterMethod:
+-    "See Interpreter"
++    """Decorator for Interpreter methods that automatically visits children.
++    
++    When applied to a method of an ``Interpreter`` subclass, it replaces the
++    ``tree.children`` argument with the results of visiting each child tree.
++    
++    This is equivalent to calling ``self.visit_children(tree)`` and passing
++    the result to the decorated function.
++    
++    Note:
++        This decorator can only be used with methods of ``Interpreter`` subclasses.
++        Using it on methods of other classes will raise a ``TypeError``.
++    """
+     @wraps(func)
+     def inner(cls, tree):
++        if not isinstance(cls, Interpreter):
++            raise TypeError("@visit_children_decor can only be used on methods of Interpreter subclasses")
+         values = cls.visit_children(tree)
+         return func(cls, values)
+     return inner

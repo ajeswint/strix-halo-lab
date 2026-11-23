@@ -1,0 +1,96 @@
+=== start v4 unseen pilot 2026-11-22T15:10:58-06:00 pwd=/tmp/wt-item6-pilot-v4 head=3122610984447d7010a75a08be56c0eac6ec6dc1 target_repo=/data/datasets/item6-v4-repos/lark.git ceiling_seconds=4320 resume=0 ===
+prereg guard OK: commit 3122610984447d7010a75a08be56c0eac6ec6dc1 is reachable from origin/main
+  commit:     3122610984447d7010a75a08be56c0eac6ec6dc1
+  remote_ref: origin/main
+  file:       docs/item6-pilot.md
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=96.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+=== Inviting qwen with --ctx 65536 --np 1 ===
+llmctl: session 87: INVITE qwen
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=96.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+Running as unit: llm-8081.service; invocation ID: 9447f02b5c8443a9ab6b156d7c1235eb
+up: qwen3.6-35b-a3b on vk, ctx 65536, parallel 1, http://127.0.0.1:8081/v1
+gtt_used=1.2GiB gtt_total=108.0GiB mem_available=96.6GiB swap_free=7.4GiB llama-deepseek=inactive
+model=Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf size=20.8GiB need=36.8GiB gtt_free=106.8GiB
+READY
+llmctl: session 87: ACTIVE qwen on :8081, GTT 23.5 GiB
+props: total_slots 1 n_ctx 65536 build b11669-620d2225c
+=== Starting task item6v4_pr1543 2026-11-22T15:11:08-06:00 (remaining_ceiling=4320s) ===
+STEP_START item6-pilot-v4 item6v4_pr1543 2026-11-22T21:11:08Z 1795381868.508898957
+COMPACTION task=item6v4_pr1543 turn=0 stage=tool_truncate tool=read_file lines=252->251 elided_lines=2 chars=11207->11103
+COMPACTION task=item6v4_pr1543 turn=0 stage=tool_truncate tool=read_file lines=252->251 elided_lines=2 chars=9300->9247
+COMPACTION task=item6v4_pr1543 turn=0 stage=turn_feedback_truncate lines=631->301 elided_lines=331 chars=24192->10005
+COMPACTION task=item6v4_pr1543 turn=2 stage=tool_truncate tool=read_file lines=252->251 elided_lines=2 chars=10307->10241
+COMPACTION task=item6v4_pr1543 turn=2 stage=turn_feedback_truncate lines=482->301 elided_lines=182 chars=19396->11706
+item6v4_pr1543 pr=#1543 has_tests=True  passed=True  stop=pass             turns=11 tok=4853 diff_lines=73
+llmctl: run python3 rc=0 memory.peak=66 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1543 2026-11-22T21:13:08Z 1795381988.226201259
+STEP_WALL item6-pilot-v4 item6v4_pr1543 119.7 s
+=== Completed task item6v4_pr1543 2026-11-22T15:13:08-06:00 ===
+=== Starting task item6v4_pr1601 2026-11-22T15:13:08-06:00 (remaining_ceiling=4200s) ===
+STEP_START item6-pilot-v4 item6v4_pr1601 2026-11-22T21:13:08Z 1795381988.244399519
+item6v4_pr1601 pr=#1601 has_tests=True  passed=False stop=repeat_error     turns=3 tok=287 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=103 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1601 2026-11-22T21:13:19Z 1795381999.375561367
+STEP_WALL item6-pilot-v4 item6v4_pr1601 11.1 s
+=== Completed task item6v4_pr1601 2026-11-22T15:13:19-06:00 ===
+=== Starting task item6v4_pr1619 2026-11-22T15:13:19-06:00 (remaining_ceiling=4189s) ===
+STEP_START item6-pilot-v4 item6v4_pr1619 2026-11-22T21:13:19Z 1795381999.391513797
+item6v4_pr1619 pr=#1619 has_tests=True  passed=True  stop=pass             turns=7 tok=1078 diff_lines=13
+llmctl: run python3 rc=0 memory.peak=60 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1619 2026-11-22T21:13:47Z 1795382027.827430562
+STEP_WALL item6-pilot-v4 item6v4_pr1619 28.4 s
+=== Completed task item6v4_pr1619 2026-11-22T15:13:47-06:00 ===
+=== Starting task item6v4_pr1613 2026-11-22T15:13:47-06:00 (remaining_ceiling=4161s) ===
+STEP_START item6-pilot-v4 item6v4_pr1613 2026-11-22T21:13:47Z 1795382027.843406757
+COMPACTION task=item6v4_pr1613 turn=0 stage=tool_truncate tool=read_file lines=252->251 elided_lines=2 chars=10609->10593
+COMPACTION task=item6v4_pr1613 turn=0 stage=turn_feedback_truncate lines=605->301 elided_lines=305 chars=22547->10071
+item6v4_pr1613 pr=#1613 has_tests=True  passed=False stop=repeat_code      turns=9 tok=3587 diff_lines=0
+llmctl: run python3 rc=0 memory.peak=60 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1613 2026-11-22T21:15:15Z 1795382115.287904834
+STEP_WALL item6-pilot-v4 item6v4_pr1613 87.4 s
+=== Completed task item6v4_pr1613 2026-11-22T15:15:15-06:00 ===
+=== Starting task item6v4_pr1624 2026-11-22T15:15:15-06:00 (remaining_ceiling=4073s) ===
+STEP_START item6-pilot-v4 item6v4_pr1624 2026-11-22T21:15:15Z 1795382115.304482508
+COMPACTION task=item6v4_pr1624 turn=2 stage=turn_feedback_truncate lines=308->301 elided_lines=8 chars=12611->12314
+item6v4_pr1624 pr=#1624 has_tests=True  passed=False stop=max_turns        turns=12 tok=6778 diff_lines=72
+llmctl: run python3 rc=0 memory.peak=59 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1624 2026-11-22T21:17:58Z 1795382278.408105959
+STEP_WALL item6-pilot-v4 item6v4_pr1624 163.1 s
+=== Completed task item6v4_pr1624 2026-11-22T15:17:58-06:00 ===
+=== Starting task item6v4_pr1632 2026-11-22T15:17:58-06:00 (remaining_ceiling=3910s) ===
+STEP_START item6-pilot-v4 item6v4_pr1632 2026-11-22T21:17:58Z 1795382278.425609841
+COMPACTION task=item6v4_pr1632 turn=0 stage=turn_feedback_truncate lines=417->301 elided_lines=117 chars=17372->12269
+item6v4_pr1632 pr=#1632 has_tests=True  passed=False stop=repeat_code      turns=6 tok=2546 diff_lines=31
+llmctl: run python3 rc=0 memory.peak=58 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1632 2026-11-22T21:18:59Z 1795382339.549410906
+STEP_WALL item6-pilot-v4 item6v4_pr1632 61.1 s
+=== Completed task item6v4_pr1632 2026-11-22T15:18:59-06:00 ===
+=== Starting task item6v4_pr1641 2026-11-22T15:18:59-06:00 (remaining_ceiling=3849s) ===
+STEP_START item6-pilot-v4 item6v4_pr1641 2026-11-22T21:18:59Z 1795382339.568504619
+item6v4_pr1641 pr=#1641 has_tests=True  passed=True  stop=pass             turns=8 tok=2925 diff_lines=13
+llmctl: run python3 rc=0 memory.peak=99 MiB cap=8192 MiB as=16384 MiB
+STEP_END item6-pilot-v4 item6v4_pr1641 2026-11-22T21:20:15Z 1795382415.953082404
+STEP_WALL item6-pilot-v4 item6v4_pr1641 76.4 s
+=== Completed task item6v4_pr1641 2026-11-22T15:20:15-06:00 ===
+llmctl: session 87: ENDED qwen; GTT after stop 1.2 GiB
+=== Offline grading and report 2026-11-22T15:20:16-06:00 ===
+{
+  "schema_version": 2,
+  "label": "item6-pilot-v4",
+  "tasks_evaluated": 7,
+  "testable_tasks": 7,
+  "testable_passed": 4,
+  "test_pass_rate": 0.5714,
+  "reviews_complete": false,
+  "approved_first_pass": null,
+  "approved_final": null,
+  "final_approve_rate": null,
+  "avg_hand_fix_lines_per_approved": null,
+  "decision": "PENDING_REVIEW"
+}
+=== Item 6 pilot v4 (item6-pilot-v4) completed 2026-11-22T15:20:20-06:00 ===
+=== end 2026-11-22T15:20:20-06:00 rc=0 wall_s=562 ===
